@@ -38,8 +38,8 @@ env/
 config.json
 
 # Project specific - Service account credentials
-credentials/
-*.json
+credentials/*
+!credentials/.gitkeep
 !config.example.json
 !examples/*.json
 

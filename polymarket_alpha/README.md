@@ -79,13 +79,23 @@ This system:
     │       └── sample_wallet_activity.json
     ├── prompts/
     │       └── Claude_Wallet_Analysis_Prompt.md
-    ├── data/           (empty; Manus drops JSON here)
-    └── output/         (empty; reports/logs saved here)
+    ├── credentials/
+    ├── data/
+    │       └── .gitkeep
+    └── output/
+            └── .gitkeep
 ```
 
-`data/` and `output/` should initially be empty directories that the code writes into at runtime.
+The `credentials/` directory is for local Google service account files and must be gitignored.
 
-`.gitignore` should at minimum ignore: `config.json`, service account credential files, `data/`, `output/`, and any virtualenv directories.
+The `.gitkeep` files in `data/` and `output/` are empty placeholders so those runtime directories exist in version control.
+
+The `.gitignore` file should at minimum ignore:
+- `config.json`
+- the contents of `credentials/` (e.g. `credentials/*.json`)
+- any other Google service account credential JSON files
+- the contents of `data/` and `output/` (but not `data/.gitkeep` or `output/.gitkeep`)
+- common virtualenv directories (`venv/`, `.venv/`, `env/`, `.virtualenv/`, etc.)
 
 ## Quick Start
 
