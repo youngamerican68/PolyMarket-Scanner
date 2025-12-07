@@ -92,9 +92,8 @@ The `.gitkeep` files in `data/` and `output/` are empty placeholders so those ru
 
 The `.gitignore` file should at minimum ignore:
 - `config.json`
-- the contents of `credentials/` (e.g. `credentials/*.json`)
-- any other Google service account credential JSON files
-- the contents of `data/` and `output/` (but not `data/.gitkeep` or `output/.gitkeep`)
+- the contents of `credentials/` (e.g. `credentials/*`) but keep `credentials/.gitkeep`
+- the contents of `data/` and `output/` (e.g. `data/*`, `output/*`) but keep their `.gitkeep` files
 - common virtualenv directories (`venv/`, `.venv/`, `env/`, `.virtualenv/`, etc.)
 
 ## Quick Start
