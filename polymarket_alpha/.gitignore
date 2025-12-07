@@ -25,6 +25,7 @@ venv/
 ENV/
 env/
 .venv/
+.virtualenv/
 
 # IDE
 .idea/
@@ -33,11 +34,22 @@ env/
 *.swo
 *~
 
-# Project specific
+# Project specific - Configuration
 config.json
+
+# Project specific - Service account credentials
 credentials/
-data/
-output/
+*.json
+!config.example.json
+!examples/*.json
+
+# Project specific - Runtime directories
+data/*
+!data/.gitkeep
+output/*
+!output/.gitkeep
+
+# Logs
 *.log
 
 # Keep example files

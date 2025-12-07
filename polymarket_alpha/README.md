@@ -60,27 +60,32 @@ This system:
 ## Folder Structure
 
 ```
-polymarket_alpha/
-├── README.md                 # This file
-├── config.example.json       # Example configuration (copy to config.json)
-├── main_runner.py            # Main entry point for daily pipeline
-├── utils/
-│   ├── __init__.py
-│   ├── sheets.py             # Google Sheets integration
-│   ├── profit_calc.py        # PnL, ROI, win rate calculations
-│   └── normalize.py          # Data normalization and CSV parsing
-├── scraping/
-│   ├── __init__.py
-│   ├── get_top_traders.py    # Process Manus trader list JSON
-│   └── get_wallet_activity.py # Process Manus wallet activity JSON
-├── examples/
-│   ├── sample_trader_list.json    # Sample input for testing
-│   └── sample_wallet_activity.json # Sample activity for testing
-├── prompts/
-│   └── Claude_Wallet_Analysis_Prompt.md # Prompt for Claude analysis
-├── data/                     # Manus drops JSON files here (gitignored)
-└── output/                   # Reports saved here (gitignored)
+/polymarket_alpha/
+    ├── README.md
+    ├── config.example.json
+    ├── main_runner.py
+    ├── .gitignore
+    ├── utils/
+    │       ├── __init__.py
+    │       ├── sheets.py
+    │       ├── profit_calc.py
+    │       └── normalize.py
+    ├── scraping/
+    │       ├── __init__.py
+    │       ├── get_top_traders.py
+    │       └── get_wallet_activity.py
+    ├── examples/
+    │       ├── sample_trader_list.json
+    │       └── sample_wallet_activity.json
+    ├── prompts/
+    │       └── Claude_Wallet_Analysis_Prompt.md
+    ├── data/           (empty; Manus drops JSON here)
+    └── output/         (empty; reports/logs saved here)
 ```
+
+`data/` and `output/` should initially be empty directories that the code writes into at runtime.
+
+`.gitignore` should at minimum ignore: `config.json`, service account credential files, `data/`, `output/`, and any virtualenv directories.
 
 ## Quick Start
 
