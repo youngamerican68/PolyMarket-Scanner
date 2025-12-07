@@ -1,0 +1,37 @@
+{
+    "LOCAL_DEBUG": true,
+    "google_sheets": {
+        "credentials_path": "./credentials/service_account.json",
+        "spreadsheet_id": "YOUR_SPREADSHEET_ID_HERE",
+        "worksheet_name": "wallets",
+        "data_range": "A:H"
+    },
+    "data_paths": {
+        "top_traders": "./data/top_traders.json",
+        "wallet_activity_dir": "./data/",
+        "wallet_activity_pattern": "wallet_activity_{wallet}.json"
+    },
+    "example_paths": {
+        "sample_traders": "./examples/sample_trader_list.json",
+        "sample_activity": "./examples/sample_wallet_activity.json"
+    },
+    "output": {
+        "markdown_report_path": "./output/daily_report.md",
+        "csv_output_path": "./output/wallet_metrics.csv"
+    },
+    "claude": {
+        "prompt_path": "./prompts/Claude_Wallet_Analysis_Prompt.md",
+        "model": "claude-opus-4-5-20251101"
+    },
+    "thresholds": {
+        "high_profit_usd": 500.0,
+        "high_consistency_score": 80,
+        "min_trades_for_emerging": 3,
+        "min_trades_for_suspicious": 10,
+        "suspicious_win_rate": 0.95
+    },
+    "polymarket": {
+        "traders_url": "https://polymarket.com/traders",
+        "profile_base_url": "https://polymarket.com/@"
+    }
+}

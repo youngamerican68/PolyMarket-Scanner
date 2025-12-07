@@ -1,0 +1,32 @@
+[
+  {
+    "wallet_address": "0xABC123def456789abcdef123456789abcdef1234",
+    "username": "trader_alpha",
+    "volume_24h_usd": 15000.50,
+    "profile_url": "https://polymarket.com/@trader_alpha"
+  },
+  {
+    "wallet_address": "0xDEF789ghi012345abcdef789012345abcdef7890",
+    "username": "whale_trader",
+    "volume_24h_usd": 250000.00,
+    "profile_url": "https://polymarket.com/@whale_trader"
+  },
+  {
+    "wallet_address": "0x123456789abcdef0123456789abcdef012345678",
+    "username": "consistent_winner",
+    "volume_24h_usd": 8500.25,
+    "profile_url": "https://polymarket.com/@consistent_winner"
+  },
+  {
+    "wallet_address": "0x987654321fedcba987654321fedcba9876543210",
+    "username": "emerging_star",
+    "volume_24h_usd": 2500.00,
+    "profile_url": "https://polymarket.com/@emerging_star"
+  },
+  {
+    "wallet_address": "0xfedcba9876543210fedcba9876543210fedcba98",
+    "username": "suspicious_oracle",
+    "volume_24h_usd": 45000.00,
+    "profile_url": "https://polymarket.com/@suspicious_oracle"
+  }
+]
