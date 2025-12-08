@@ -51,20 +51,66 @@ export async function GET(req: NextRequest) {
       walletProfiles
     );
 
-    // Top individual trades by value - include trader profile
-    const topLongshots = trades
-      .slice()
-      .sort((a, b) => a.price - b.price) // lowest odds first
+    // Aggregate trades by wallet + market + outcome to avoid duplicates
+    const aggregatedTrades = new Map<string, {
+      wallet: string;
+      name: string;
+      marketId: string;
+      title: string;
+      outcome: string;
+      totalSize: number;
+      totalValue: number;
+      avgPrice: number;
+      tradeCount: number;
+    }>();
+
+    for (const t of trades) {
+      const key = `${t.wallet}:${t.marketId}:${t.outcome}`;
+      const existing = aggregatedTrades.get(key);
+      const value = t.price * t.size;
+
+      if (existing) {
+        existing.totalSize += t.size;
+        existing.totalValue += value;
+        existing.tradeCount += 1;
+        // Weighted average price
+        existing.avgPrice = existing.totalValue / existing.totalSize;
+      } else {
+        aggregatedTrades.set(key, {
+          wallet: t.wallet,
+          name: t.name,
+          marketId: t.marketId,
+          title: t.title,
+          outcome: t.outcome,
+          totalSize: t.size,
+          totalValue: value,
+          avgPrice: t.price,
+          tradeCount: 1,
+        });
+      }
+    }
+
+    // Top aggregated positions by lowest odds, include trader profile
+    const topLongshots = Array.from(aggregatedTrades.values())
+      .sort((a, b) => a.avgPrice - b.avgPrice) // lowest odds first
       .slice(0, 50)
       .map((t) => {
         const profile = walletProfiles.get(t.wallet);
         return {
-          ...t,
-          value: t.price * t.size,
-          potential: t.size,
-          oddsFormatted: formatOdds(t.price),
-          valueFormatted: formatMoney(t.price * t.size),
-          potentialFormatted: formatMoney(t.size),
+          id: `${t.wallet}:${t.marketId}:${t.outcome}`,
+          wallet: t.wallet,
+          name: t.name,
+          marketId: t.marketId,
+          title: t.title,
+          outcome: t.outcome,
+          price: t.avgPrice,
+          size: t.totalSize,
+          value: t.totalValue,
+          potential: t.totalSize,
+          oddsFormatted: formatOdds(t.avgPrice),
+          valueFormatted: formatMoney(t.totalValue),
+          potentialFormatted: formatMoney(t.totalSize),
+          tradeCount: t.tradeCount,
           // Trader's historical longshot record
           longshotWins: profile?.longshotWins ?? null,
           longshotLosses: profile?.longshotLosses ?? null,
