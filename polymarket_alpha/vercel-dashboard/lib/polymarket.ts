@@ -37,6 +37,16 @@ export type ClosedPosition = {
   won: boolean;
 };
 
+export type WalletProfile = {
+  wallet: string;
+  name: string;
+  totalPnl: number;
+  totalPositions: number;
+  longshotWins: number;
+  longshotLosses: number;
+  longshotPnl: number;
+};
+
 const DATA_API = "https://data-api.polymarket.com";
 
 /**
@@ -178,6 +188,75 @@ export async function fetchLast24hLongshots(now: Date = new Date()): Promise<Tra
 }
 
 /**
+ * Fetch wallet profile with overall PnL stats.
+ */
+export async function fetchWalletProfile(wallet: string): Promise<WalletProfile | null> {
+  try {
+    // Fetch all closed positions to calculate historical stats
+    const url = `${DATA_API}/closed-positions?user=${wallet}&limit=500&sortBy=REALIZEDPNL&sortDirection=DESC`;
+
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      return null;
+    }
+
+    const positions = await res.json();
+
+    if (!Array.isArray(positions) || positions.length === 0) {
+      return null;
+    }
+
+    let totalPnl = 0;
+    let longshotWins = 0;
+    let longshotLosses = 0;
+    let longshotPnl = 0;
+    let name = "Anonymous";
+
+    for (const p of positions) {
+      const pnl = Number(p.realizedPnl ?? 0);
+      const avgPrice = Number(p.avgPrice ?? 0);
+      const curPrice = Number(p.curPrice ?? 0);
+      const settled = curPrice >= 0.99 || curPrice <= 0.01;
+      const won = curPrice >= 0.99;
+
+      totalPnl += pnl;
+
+      if (p.name && p.name !== "Anonymous") {
+        name = p.name;
+      }
+
+      // Track longshot stats (entry < 25%)
+      if (avgPrice < 0.25 && settled) {
+        longshotPnl += pnl;
+        if (won) {
+          longshotWins++;
+        } else {
+          longshotLosses++;
+        }
+      }
+    }
+
+    return {
+      wallet,
+      name,
+      totalPnl,
+      totalPositions: positions.length,
+      longshotWins,
+      longshotLosses,
+      longshotPnl,
+    };
+  } catch (err) {
+    console.error("Error fetching wallet profile:", err);
+    return null;
+  }
+}
+
+/**
  * Enrich trades with settlement info from closed positions.
  * Groups by wallet and fetches their closed positions.
  */
@@ -225,4 +304,23 @@ export async function enrichTradesWithSettlement(trades: Trade[]): Promise<Trade
 
     return t;
   });
+}
+
+/**
+ * Fetch wallet profiles for multiple wallets.
+ */
+export async function fetchWalletProfiles(wallets: string[]): Promise<Map<string, WalletProfile>> {
+  const profiles = new Map<string, WalletProfile>();
+
+  // Limit to avoid rate limits
+  const walletsToFetch = wallets.slice(0, 30);
+
+  for (const wallet of walletsToFetch) {
+    const profile = await fetchWalletProfile(wallet);
+    if (profile) {
+      profiles.set(wallet, profile);
+    }
+  }
+
+  return profiles;
 }

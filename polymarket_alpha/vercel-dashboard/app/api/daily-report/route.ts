@@ -2,7 +2,7 @@
 // Thin wrapper around lib/ for daily report generation
 
 import { NextRequest, NextResponse } from "next/server";
-import { fetchTrades, enrichTradesWithSettlement } from "@/lib/polymarket";
+import { fetchTrades, enrichTradesWithSettlement, fetchWalletProfiles } from "@/lib/polymarket";
 import { rankAnomalousWallets, formatMoney, formatOdds } from "@/lib/scoring";
 
 // Force dynamic rendering
@@ -35,11 +35,19 @@ export async function GET(req: NextRequest) {
     // Enrich with settlement data for z-score calculation
     const trades = await enrichTradesWithSettlement(rawTrades);
 
-    // Rank wallets by anomaly score
-    const anomalousWallets = rankAnomalousWallets(trades, {
-      minLongshots: 5,
-      maxPrice: 0.25,
-    });
+    // Fetch wallet profiles for historical context
+    const uniqueWallets = Array.from(new Set(trades.map((t) => t.wallet)));
+    const walletProfiles = await fetchWalletProfiles(uniqueWallets);
+
+    // Rank wallets by anomaly score with historical context
+    const anomalousWallets = rankAnomalousWallets(
+      trades,
+      {
+        minLongshots: 5,
+        maxPrice: 0.25,
+      },
+      walletProfiles
+    );
 
     // Top individual trades by value
     const topLongshots = trades
@@ -78,6 +86,7 @@ export async function GET(req: NextRequest) {
         name: w.name,
         anomalyScore: w.anomalyScore,
         level: w.level,
+        levelReason: w.levelReason,
         longshotCount: w.longshotCount,
         expectedWins: w.expectedWins,
         actualWins: w.actualWins,
@@ -86,6 +95,14 @@ export async function GET(req: NextRequest) {
         totalValue: w.totalValue,
         totalValueFormatted: formatMoney(w.totalValue),
         totalStakeFormatted: formatMoney(w.totalStake),
+        // Historical context
+        historicalPnl: w.historicalPnl,
+        historicalPnlFormatted: w.historicalPnl != null ? formatMoney(w.historicalPnl) : null,
+        historicalLongshotWins: w.historicalLongshotWins,
+        historicalLongshotLosses: w.historicalLongshotLosses,
+        historicalLongshotPnl: w.historicalLongshotPnl,
+        historicalLongshotPnlFormatted: w.historicalLongshotPnl != null ? formatMoney(w.historicalLongshotPnl) : null,
+        totalPositions: w.totalPositions,
         topTrades: w.topTrades.map((t) => ({
           title: t.title,
           outcome: t.outcome,

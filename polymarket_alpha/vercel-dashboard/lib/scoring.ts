@@ -1,7 +1,7 @@
 // lib/scoring.ts
 // Statistical analysis: z-scores and anomaly detection
 
-import type { Trade } from "./polymarket";
+import type { Trade, WalletProfile } from "./polymarket";
 
 export type WalletStats = {
   wallet: string;
@@ -18,8 +18,15 @@ export type WalletStats = {
 
 export type AnomalousWallet = WalletStats & {
   anomalyScore: number;
-  level: "low" | "medium" | "high";
+  level: "low" | "medium" | "high" | "watch";
+  levelReason: string;
   topTrades: Trade[];
+  // Historical context from wallet profile
+  historicalPnl?: number;
+  historicalLongshotWins?: number;
+  historicalLongshotLosses?: number;
+  historicalLongshotPnl?: number;
+  totalPositions?: number;
 };
 
 /**
@@ -104,16 +111,19 @@ export function computeWalletStats(
 }
 
 /**
- * Calculate anomaly score from wallet stats.
+ * Calculate anomaly score from wallet stats with historical context.
  *
  * Formula: anomalyScore = max(0, z) * log(1 + longshotCount) * log(1 + totalValue)
  *
- * This weighs:
+ * Level assignment considers:
  * - Statistical overperformance (z-score)
- * - Number of longshot trades (more = more signal)
- * - Total money at stake (more = more meaningful)
+ * - Historical profitability (must be profitable for HIGH)
+ * - Overall longshot win rate across history
  */
-function scoreWallet(stat: WalletStats): AnomalousWallet {
+function scoreWallet(
+  stat: WalletStats,
+  profile?: WalletProfile
+): AnomalousWallet {
   const { zScore, longshotCount, totalValue, trades } = stat;
 
   // Only positive z-scores indicate overperformance
@@ -125,22 +135,74 @@ function scoreWallet(stat: WalletStats): AnomalousWallet {
 
   const anomalyScore = positiveZ * countFactor * valueFactor;
 
-  // Determine alert level
-  let level: "low" | "medium" | "high" = "low";
-  if (anomalyScore >= 10) level = "high";
-  else if (anomalyScore >= 5) level = "medium";
-
   // Get top trades by value
   const topTrades = trades
     .slice()
     .sort((a, b) => b.price * b.size - a.price * a.size)
     .slice(0, 5);
 
+  // Determine alert level with PnL context
+  let level: "low" | "medium" | "high" | "watch" = "low";
+  let levelReason = "";
+
+  const historicalPnl = profile?.totalPnl ?? 0;
+  const historicalLongshotPnl = profile?.longshotPnl ?? 0;
+  const historicalLongshotWins = profile?.longshotWins ?? 0;
+  const historicalLongshotLosses = profile?.longshotLosses ?? 0;
+  const totalHistoricalLongshots = historicalLongshotWins + historicalLongshotLosses;
+
+  // Calculate historical longshot win rate
+  const historicalWinRate = totalHistoricalLongshots > 0
+    ? historicalLongshotWins / totalHistoricalLongshots
+    : 0;
+
+  if (anomalyScore >= 10) {
+    // High z-score in short window - but check historical context
+    if (historicalPnl < -1000) {
+      // Strongly negative overall PnL - this is noise, not skill
+      level = "watch";
+      levelReason = `High recent win streak but ${formatMoney(historicalPnl)} overall loss`;
+    } else if (historicalLongshotPnl < -500 && totalHistoricalLongshots > 10) {
+      // Losing on longshots historically
+      level = "watch";
+      levelReason = `Recent streak, but ${historicalLongshotWins}/${totalHistoricalLongshots} lifetime longshot record`;
+    } else if (historicalPnl > 1000 && historicalWinRate > 0.3) {
+      // Actually profitable with good historical win rate - this is notable
+      level = "high";
+      levelReason = `Profitable (${formatMoney(historicalPnl)}) with ${(historicalWinRate * 100).toFixed(0)}% longshot win rate`;
+    } else if (historicalPnl > 0) {
+      level = "medium";
+      levelReason = `Positive PnL (${formatMoney(historicalPnl)}) - monitoring`;
+    } else {
+      level = "watch";
+      levelReason = `Recent win streak, limited historical data`;
+    }
+  } else if (anomalyScore >= 5) {
+    if (historicalPnl > 500 && historicalWinRate > 0.25) {
+      level = "medium";
+      levelReason = `Moderate anomaly, profitable overall`;
+    } else {
+      level = "low";
+      levelReason = `Moderate score but ${historicalPnl > 0 ? "marginal" : "negative"} PnL`;
+    }
+  } else {
+    level = "low";
+    levelReason = anomalyScore > 0
+      ? "Low anomaly score"
+      : "No statistical anomaly detected";
+  }
+
   return {
     ...stat,
     anomalyScore,
     level,
+    levelReason,
     topTrades,
+    historicalPnl: profile?.totalPnl,
+    historicalLongshotWins: profile?.longshotWins,
+    historicalLongshotLosses: profile?.longshotLosses,
+    historicalLongshotPnl: profile?.longshotPnl,
+    totalPositions: profile?.totalPositions,
   };
 }
 
@@ -149,6 +211,7 @@ function scoreWallet(stat: WalletStats): AnomalousWallet {
  *
  * @param trades - Array of trades to analyze
  * @param opts - Filtering options
+ * @param walletProfiles - Optional map of wallet -> profile for historical context
  * @returns Sorted array of anomalous wallets (highest score first)
  */
 export function rankAnomalousWallets(
@@ -158,7 +221,8 @@ export function rankAnomalousWallets(
     minAnomalyScore?: number;
     minPrice?: number;
     maxPrice?: number;
-  }
+  },
+  walletProfiles?: Map<string, WalletProfile>
 ): AnomalousWallet[] {
   const {
     minLongshots = 5,
@@ -171,7 +235,7 @@ export function rankAnomalousWallets(
 
   const scored = stats
     .filter((s) => s.longshotCount >= minLongshots)
-    .map((s) => scoreWallet(s))
+    .map((s) => scoreWallet(s, walletProfiles?.get(s.wallet)))
     .filter((s) => s.anomalyScore >= minAnomalyScore);
 
   // Sort by anomaly score descending

@@ -16,7 +16,8 @@ interface AnomalousWallet {
   wallet: string
   name: string
   anomalyScore: number
-  level: 'low' | 'medium' | 'high'
+  level: 'low' | 'medium' | 'high' | 'watch'
+  levelReason: string
   longshotCount: number
   expectedWins: number
   actualWins: number
@@ -25,6 +26,14 @@ interface AnomalousWallet {
   totalValue: number
   totalValueFormatted: string
   totalStakeFormatted: string
+  // Historical context
+  historicalPnl?: number
+  historicalPnlFormatted?: string
+  historicalLongshotWins?: number
+  historicalLongshotLosses?: number
+  historicalLongshotPnl?: number
+  historicalLongshotPnlFormatted?: string
+  totalPositions?: number
   topTrades: TopTrade[]
 }
 
@@ -71,18 +80,21 @@ function formatMoney(value: number): string {
 function getLevelColor(level: string): string {
   if (level === 'high') return 'text-red-400'
   if (level === 'medium') return 'text-orange-400'
+  if (level === 'watch') return 'text-blue-400'
   return 'text-yellow-400'
 }
 
 function getLevelBg(level: string): string {
   if (level === 'high') return 'bg-red-900/30 border-red-500/50'
   if (level === 'medium') return 'bg-orange-900/30 border-orange-500/50'
+  if (level === 'watch') return 'bg-blue-900/30 border-blue-500/50'
   return 'bg-yellow-900/30 border-yellow-500/50'
 }
 
 function getLevelLabel(level: string): string {
   if (level === 'high') return 'HIGH ANOMALY'
   if (level === 'medium') return 'MODERATE'
+  if (level === 'watch') return 'WATCH'
   return 'LOW'
 }
 
@@ -229,6 +241,9 @@ export default function ReportPage() {
                       </span>
                     </div>
                     <p className="text-poly-muted font-mono text-sm mt-1">{wallet.wallet}</p>
+                    {wallet.levelReason && (
+                      <p className="text-poly-muted text-xs mt-1 italic">{wallet.levelReason}</p>
+                    )}
                   </div>
                   <a
                     href={`https://polymarket.com/profile/${wallet.wallet}`}
@@ -239,36 +254,71 @@ export default function ReportPage() {
                   </a>
                 </div>
 
-                <div className="grid grid-cols-2 md:grid-cols-6 gap-4 mb-4">
-                  <div>
-                    <p className="text-poly-muted text-xs">Anomaly Score</p>
-                    <p className={`font-bold text-lg ${getLevelColor(wallet.level)}`}>
-                      {wallet.anomalyScore.toFixed(2)}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-poly-muted text-xs">Longshot Trades</p>
-                    <p className="font-bold">{wallet.longshotCount}</p>
-                  </div>
-                  <div>
-                    <p className="text-poly-muted text-xs">Expected Wins</p>
-                    <p className="font-bold">{wallet.expectedWins.toFixed(2)}</p>
-                  </div>
-                  <div>
-                    <p className="text-poly-muted text-xs">Actual Wins</p>
-                    <p className="font-bold text-poly-green">{wallet.actualWins}</p>
-                  </div>
-                  <div>
-                    <p className="text-poly-muted text-xs">z-Score</p>
-                    <p className="font-bold">
-                      {wallet.zScore != null ? wallet.zScore.toFixed(2) : '—'}
-                    </p>
-                  </div>
-                  <div>
-                    <p className="text-poly-muted text-xs">Total Volume</p>
-                    <p className="font-bold text-poly-green">{wallet.totalValueFormatted}</p>
+                {/* 24h Window Stats */}
+                <div className="mb-4">
+                  <p className="text-poly-muted text-xs mb-2 font-medium">24h Window Stats:</p>
+                  <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+                    <div>
+                      <p className="text-poly-muted text-xs">Anomaly Score</p>
+                      <p className={`font-bold text-lg ${getLevelColor(wallet.level)}`}>
+                        {wallet.anomalyScore.toFixed(2)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-poly-muted text-xs">Longshot Trades</p>
+                      <p className="font-bold">{wallet.longshotCount}</p>
+                    </div>
+                    <div>
+                      <p className="text-poly-muted text-xs">Expected Wins</p>
+                      <p className="font-bold">{wallet.expectedWins.toFixed(2)}</p>
+                    </div>
+                    <div>
+                      <p className="text-poly-muted text-xs">Actual Wins</p>
+                      <p className="font-bold text-poly-green">{wallet.actualWins}</p>
+                    </div>
+                    <div>
+                      <p className="text-poly-muted text-xs">z-Score</p>
+                      <p className="font-bold">
+                        {wallet.zScore != null ? wallet.zScore.toFixed(2) : '—'}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-poly-muted text-xs">24h Volume</p>
+                      <p className="font-bold text-poly-green">{wallet.totalValueFormatted}</p>
+                    </div>
                   </div>
                 </div>
+
+                {/* Historical Context */}
+                {wallet.historicalPnl != null && (
+                  <div className="mb-4 bg-black/20 rounded p-3">
+                    <p className="text-poly-muted text-xs mb-2 font-medium">Historical Context (All Time):</p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      <div>
+                        <p className="text-poly-muted text-xs">Total PnL</p>
+                        <p className={`font-bold ${wallet.historicalPnl >= 0 ? 'text-poly-green' : 'text-red-400'}`}>
+                          {wallet.historicalPnlFormatted}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-poly-muted text-xs">Lifetime Longshots</p>
+                        <p className="font-bold">
+                          {(wallet.historicalLongshotWins ?? 0) + (wallet.historicalLongshotLosses ?? 0)} trades
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-poly-muted text-xs">Longshot Record</p>
+                        <p className="font-bold">
+                          {wallet.historicalLongshotWins ?? 0}W / {wallet.historicalLongshotLosses ?? 0}L
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-poly-muted text-xs">Total Positions</p>
+                        <p className="font-bold">{wallet.totalPositions ?? '—'}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {wallet.topTrades.length > 0 && (
                   <div>

@@ -2,7 +2,7 @@
 // Real-time anomaly detection API - refactored to use lib/
 
 import { NextRequest, NextResponse } from "next/server";
-import { fetchTrades } from "@/lib/polymarket";
+import { fetchTrades, fetchWalletProfiles } from "@/lib/polymarket";
 import { rankAnomalousWallets, formatMoney, formatOdds } from "@/lib/scoring";
 
 // Force dynamic rendering
@@ -26,11 +26,19 @@ export async function GET(req: NextRequest) {
       maxPrice: 0.25, // <25% odds
     });
 
+    // Fetch wallet profiles for historical context
+    const uniqueWallets = Array.from(new Set(trades.map((t) => t.wallet)));
+    const walletProfiles = await fetchWalletProfiles(uniqueWallets);
+
     // Rank wallets - more lenient for shorter time windows
-    const anomalousWallets = rankAnomalousWallets(trades, {
-      minLongshots: 3, // more lenient for real-time
-      maxPrice: 0.25,
-    }).slice(0, 50); // top 50
+    const anomalousWallets = rankAnomalousWallets(
+      trades,
+      {
+        minLongshots: 3, // more lenient for real-time
+        maxPrice: 0.25,
+      },
+      walletProfiles
+    ).slice(0, 50); // top 50
 
     // Recent trades for feed
     const recentTrades = trades
@@ -72,9 +80,10 @@ export async function GET(req: NextRequest) {
         name: w.name,
         suspicionScore: w.anomalyScore,
         level: w.level,
+        levelReason: w.levelReason,
         longshotWins: w.actualWins,
         longshotLosses: w.longshotCount - w.actualWins,
-        totalProfit: 0, // TODO: calculate from realizedPnl when available
+        totalProfit: w.historicalPnl ?? 0,
         winRate: w.longshotCount > 0 ? w.actualWins / w.longshotCount : 0,
         longshotCount: w.longshotCount,
         expectedWins: w.expectedWins,
@@ -82,6 +91,12 @@ export async function GET(req: NextRequest) {
         zScore: w.zScore,
         totalStake: w.totalStake,
         totalValue: w.totalValue,
+        // Historical context
+        historicalPnl: w.historicalPnl,
+        historicalPnlFormatted: w.historicalPnl != null ? formatMoney(w.historicalPnl) : null,
+        historicalLongshotWins: w.historicalLongshotWins,
+        historicalLongshotLosses: w.historicalLongshotLosses,
+        totalPositions: w.totalPositions,
         topWins: w.topTrades.map((t) => ({
           title: t.title,
           outcome: t.outcome,
