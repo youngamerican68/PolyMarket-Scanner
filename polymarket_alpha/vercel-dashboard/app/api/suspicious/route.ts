@@ -31,11 +31,13 @@ export async function GET(req: NextRequest) {
     const walletProfiles = await fetchWalletProfiles(uniqueWallets);
 
     // Rank wallets - more lenient for shorter time windows
+    // Only include wallets with anomalyScore > 0 (actual statistical anomalies)
     const anomalousWallets = rankAnomalousWallets(
       trades,
       {
         minLongshots: 3, // more lenient for real-time
         maxPrice: 0.25,
+        minAnomalyScore: 0.01, // Filter out wallets with no anomaly
       },
       walletProfiles
     ).slice(0, 50); // top 50

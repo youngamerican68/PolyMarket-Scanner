@@ -40,11 +40,13 @@ export async function GET(req: NextRequest) {
     const walletProfiles = await fetchWalletProfiles(uniqueWallets);
 
     // Rank wallets by anomaly score with historical context
+    // Only include wallets with anomalyScore > 0 (actual statistical anomalies)
     const anomalousWallets = rankAnomalousWallets(
       trades,
       {
         minLongshots: 5,
         maxPrice: 0.25,
+        minAnomalyScore: 0.01, // Filter out wallets with no anomaly
       },
       walletProfiles
     );
