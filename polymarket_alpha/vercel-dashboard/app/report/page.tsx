@@ -92,10 +92,10 @@ function getLevelBg(level: string): string {
 }
 
 function getLevelLabel(level: string): string {
-  if (level === 'high') return 'HIGH ANOMALY'
-  if (level === 'medium') return 'MODERATE'
-  if (level === 'watch') return 'WATCH'
-  return 'LOW'
+  if (level === 'high') return 'High settlement anomaly'
+  if (level === 'medium') return 'Moderate settlement'
+  if (level === 'watch') return 'Watch (negative PnL)'
+  return 'Mild settlement'
 }
 
 export default function ReportPage() {
@@ -130,7 +130,7 @@ export default function ReportPage() {
   if (loading && !report) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Daily Longshot Anomaly Report</h1>
+        <h1 className="text-2xl font-bold">Daily Settlement Anomaly Report</h1>
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-poly-green"></div>
           <span className="ml-4 text-poly-muted">Generating report from live data...</span>
@@ -142,7 +142,7 @@ export default function ReportPage() {
   if (error) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Daily Longshot Anomaly Report</h1>
+        <h1 className="text-2xl font-bold">Daily Settlement Anomaly Report</h1>
         <div className="bg-red-900/30 border border-red-500 rounded-lg p-4">
           <p className="text-red-400">Error: {error}</p>
           <button
@@ -166,8 +166,11 @@ export default function ReportPage() {
       <header className="space-y-2">
         <div className="flex justify-between items-start">
           <div>
-            <h1 className="text-2xl font-bold">Daily Longshot Anomaly Report</h1>
+            <h1 className="text-2xl font-bold">Daily Settlement Anomaly Report</h1>
             <p className="text-poly-muted text-sm">
+              Based on positions that settled in the last 24h (not when bets were placed)
+            </p>
+            <p className="text-poly-muted text-xs">
               Window: {new Date(report.window.from).toLocaleString()} → {new Date(report.window.to).toLocaleString()}
             </p>
           </div>
@@ -186,10 +189,15 @@ export default function ReportPage() {
             )}
           </div>
         </div>
-        <p className="text-xs text-poly-muted bg-poly-card border border-poly-border rounded p-2">
-          This dashboard highlights wallets with statistically unusual longshot performance.
-          It is not evidence of insider trading or other misconduct.
-        </p>
+        <div className="text-xs text-poly-muted bg-poly-card border border-poly-border rounded p-2 space-y-1">
+          <p>
+            <strong>Important:</strong> This report uses settlement-time windows. A cluster of wins can appear
+            anomalous even for wallets that are long-term losers. Always check historical PnL before interpreting.
+          </p>
+          <p>
+            Statistical outliers are not evidence of insider trading or other misconduct.
+          </p>
+        </div>
       </header>
 
       {/* Summary Cards */}
@@ -216,8 +224,8 @@ export default function ReportPage() {
       <section className="space-y-4">
         <h2 className="text-xl font-bold flex items-center">
           <span className="w-3 h-3 bg-poly-yellow rounded-full mr-3"></span>
-          Anomalous Wallets
-          <span className="text-sm font-normal text-poly-muted ml-2">(Statistical Outliers)</span>
+          Settlement Anomalies
+          <span className="text-sm font-normal text-poly-muted ml-2">(Statistical Outliers - check PnL)</span>
         </h2>
 
         {report.anomalousWallets.length === 0 ? (

@@ -158,10 +158,11 @@ function scoreWallet(
 
   if (anomalyScore >= 10) {
     // High z-score in short window - but check historical context
-    if (historicalPnl < -1000) {
-      // Strongly negative overall PnL - this is noise, not skill
+    // CRITICAL: Negative PnL = NEVER allow HIGH (settlement window issue)
+    if (historicalPnl < 0) {
+      // Wallet is losing money overall - this is noise, not skill
       level = "watch";
-      levelReason = `High recent win streak but ${formatMoney(historicalPnl)} overall loss`;
+      levelReason = `High settlement streak but ${formatMoney(historicalPnl)} overall loss`;
     } else if (historicalLongshotPnl < -500 && totalHistoricalLongshots > 10) {
       // Losing on longshots historically
       level = "watch";
@@ -170,25 +171,29 @@ function scoreWallet(
       // Actually profitable with good historical win rate - this is notable
       level = "high";
       levelReason = `Profitable (${formatMoney(historicalPnl)}) with ${(historicalWinRate * 100).toFixed(0)}% longshot win rate`;
-    } else if (historicalPnl > 0) {
+    } else if (historicalPnl > 0 && historicalPnl <= 1000) {
       level = "medium";
-      levelReason = `Positive PnL (${formatMoney(historicalPnl)}) - monitoring`;
+      levelReason = `Modest profit (${formatMoney(historicalPnl)}) - monitoring`;
     } else {
+      // No historical data available
       level = "watch";
-      levelReason = `Recent win streak, limited historical data`;
+      levelReason = `Recent settlement streak, limited historical data`;
     }
   } else if (anomalyScore >= 5) {
     if (historicalPnl > 500 && historicalWinRate > 0.25) {
       level = "medium";
       levelReason = `Moderate anomaly, profitable overall`;
+    } else if (historicalPnl < 0) {
+      level = "low";
+      levelReason = `Moderate settlement score but ${formatMoney(historicalPnl)} overall loss`;
     } else {
       level = "low";
-      levelReason = `Moderate score but ${historicalPnl > 0 ? "marginal" : "negative"} PnL`;
+      levelReason = `Moderate score with marginal PnL`;
     }
   } else {
     level = "low";
     levelReason = anomalyScore > 0
-      ? "Low anomaly score"
+      ? "Low settlement anomaly score"
       : "No statistical anomaly detected";
   }
 

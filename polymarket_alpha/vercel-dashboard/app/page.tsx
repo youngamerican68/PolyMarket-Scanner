@@ -21,7 +21,8 @@ interface Trader {
   wallet: string
   name: string
   suspicionScore: number
-  level: 'low' | 'medium' | 'high'
+  level: 'low' | 'medium' | 'high' | 'watch'
+  levelReason?: string
   longshotWins: number
   longshotLosses: number
   totalProfit: number
@@ -30,6 +31,8 @@ interface Trader {
   expectedWins: number
   actualWins: number
   zScore: number | null
+  historicalPnl?: number
+  historicalPnlFormatted?: string
   topWins: { title: string; outcome: string; entryPrice: number; profit: number }[]
   recentTrades: any[]
 }
@@ -61,9 +64,10 @@ function formatTime(timestamp: number): string {
 }
 
 function getLevelInfo(level: string): { color: string; bg: string; label: string } {
-  if (level === 'high') return { color: 'text-red-400', bg: 'bg-red-500', label: 'HIGH ANOMALY' }
-  if (level === 'medium') return { color: 'text-orange-400', bg: 'bg-orange-500', label: 'MODERATE' }
-  return { color: 'text-yellow-400', bg: 'bg-yellow-500', label: 'MONITOR' }
+  if (level === 'high') return { color: 'text-red-400', bg: 'bg-red-500', label: 'High settlement' }
+  if (level === 'medium') return { color: 'text-orange-400', bg: 'bg-orange-500', label: 'Moderate' }
+  if (level === 'watch') return { color: 'text-blue-400', bg: 'bg-blue-500', label: 'Watch (neg PnL)' }
+  return { color: 'text-yellow-400', bg: 'bg-yellow-500', label: 'Mild' }
 }
 
 export default function Home() {
@@ -98,10 +102,13 @@ export default function Home() {
   return (
     <div className="space-y-8">
       {/* Disclaimer */}
-      <p className="text-xs text-poly-muted bg-poly-card border border-poly-border rounded p-2">
-        This dashboard highlights wallets with unusual short-term longshot activity.
-        Statistical outliers are not proof of misconduct.
-      </p>
+      <div className="text-xs text-poly-muted bg-poly-card border border-poly-border rounded p-2 space-y-1">
+        <p>
+          <strong>Note:</strong> This uses settlement-time windows. Win clusters can appear anomalous
+          even for wallets that are long-term losers. Always check historical PnL.
+        </p>
+        <p>Statistical outliers are not proof of misconduct.</p>
+      </div>
 
       {/* Header Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -140,8 +147,8 @@ export default function Home() {
       <div>
         <h2 className="text-2xl font-bold mb-4 flex items-center">
           <span className="w-3 h-3 bg-poly-yellow rounded-full mr-3 alert-pulse"></span>
-          Anomalous Wallets
-          <span className="text-sm font-normal text-poly-muted ml-2">(Last Hour)</span>
+          Settlement Anomalies
+          <span className="text-sm font-normal text-poly-muted ml-2">(Last Hour - check PnL)</span>
         </h2>
 
         {data?.suspiciousTraders.length === 0 && !loading && (
@@ -173,6 +180,9 @@ export default function Home() {
 
                     <h3 className="text-lg font-bold mb-1">{trader.name}</h3>
                     <p className="text-poly-muted text-sm font-mono">{trader.wallet.slice(0, 20)}...</p>
+                    {trader.levelReason && (
+                      <p className="text-poly-muted text-xs mt-1 italic">{trader.levelReason}</p>
+                    )}
 
                     <div className="grid grid-cols-4 gap-4 mt-4">
                       <div>
