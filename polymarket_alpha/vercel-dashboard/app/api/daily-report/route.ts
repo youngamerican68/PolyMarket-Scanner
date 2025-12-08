@@ -51,19 +51,28 @@ export async function GET(req: NextRequest) {
       walletProfiles
     );
 
-    // Top individual trades by value
+    // Top individual trades by value - include trader profile
     const topLongshots = trades
       .slice()
       .sort((a, b) => a.price - b.price) // lowest odds first
       .slice(0, 50)
-      .map((t) => ({
-        ...t,
-        value: t.price * t.size,
-        potential: t.size,
-        oddsFormatted: formatOdds(t.price),
-        valueFormatted: formatMoney(t.price * t.size),
-        potentialFormatted: formatMoney(t.size),
-      }));
+      .map((t) => {
+        const profile = walletProfiles.get(t.wallet);
+        return {
+          ...t,
+          value: t.price * t.size,
+          potential: t.size,
+          oddsFormatted: formatOdds(t.price),
+          valueFormatted: formatMoney(t.price * t.size),
+          potentialFormatted: formatMoney(t.size),
+          // Trader's historical longshot record
+          longshotWins: profile?.longshotWins ?? null,
+          longshotLosses: profile?.longshotLosses ?? null,
+          longshotRecord: profile
+            ? `${profile.longshotWins}W/${profile.longshotLosses}L`
+            : null,
+        };
+      });
 
     // Summary stats
     const summary = {

@@ -65,6 +65,7 @@ interface ReportData {
     oddsFormatted: string
     valueFormatted: string
     potentialFormatted: string
+    longshotRecord: string | null
   }>
 }
 
@@ -361,6 +362,7 @@ export default function ReportPage() {
                 <tr>
                   <th className="text-left p-3 text-poly-muted font-medium">Market</th>
                   <th className="text-left p-3 text-poly-muted font-medium">Trader</th>
+                  <th className="text-center p-3 text-poly-muted font-medium">Longshot Record</th>
                   <th className="text-right p-3 text-poly-muted font-medium">Odds</th>
                   <th className="text-right p-3 text-poly-muted font-medium">Value</th>
                   <th className="text-right p-3 text-poly-muted font-medium">Potential</th>
@@ -369,7 +371,7 @@ export default function ReportPage() {
               <tbody>
                 {report.topLongshots.length === 0 ? (
                   <tr>
-                    <td className="p-4 text-center text-poly-muted" colSpan={5}>
+                    <td className="p-4 text-center text-poly-muted" colSpan={6}>
                       No longshot trades found in this window.
                     </td>
                   </tr>
@@ -378,6 +380,9 @@ export default function ReportPage() {
                     <tr key={i} className="border-t border-poly-border hover:bg-poly-border/30">
                       <td className="p-3 max-w-xs truncate">{trade.title?.slice(0, 40) || trade.marketId}</td>
                       <td className="p-3 text-sm">{trade.name || trade.wallet.slice(0, 10) + '...'}</td>
+                      <td className="p-3 text-center text-poly-muted text-xs">
+                        {trade.longshotRecord || '—'}
+                      </td>
                       <td className="p-3 text-right text-poly-yellow">{trade.oddsFormatted}</td>
                       <td className="p-3 text-right text-poly-green">{trade.valueFormatted}</td>
                       <td className="p-3 text-right text-poly-blue">{trade.potentialFormatted}</td>
