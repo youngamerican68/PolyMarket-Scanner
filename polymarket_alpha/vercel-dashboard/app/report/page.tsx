@@ -405,7 +405,16 @@ export default function ReportPage() {
                   }
                   return filteredTrades.map((trade, i) => (
                     <tr key={i} className="border-t border-poly-border hover:bg-poly-border/30">
-                      <td className="p-3 max-w-xs truncate">{trade.title?.slice(0, 40) || trade.marketId}</td>
+                      <td className="p-3 max-w-xs truncate">
+                        <a
+                          href={`https://polymarket.com/event/${trade.marketId}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-poly-blue hover:underline"
+                        >
+                          {trade.title?.slice(0, 40) || trade.marketId}
+                        </a>
+                      </td>
                       <td className="p-3 text-sm">
                         <a
                           href={`https://polymarket.com/profile/${trade.wallet}`}
