@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  background-color: #0d0d0d;
+  color: #ffffff;
+}
+
+.gradient-border {
+  background: linear-gradient(135deg, #ff4757, #ffc107, #00d26a);
+  padding: 2px;
+  border-radius: 12px;
+}
+
+.gradient-border-inner {
+  background: #1a1a1a;
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.alert-pulse {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+
+.hover-card:hover {
+  background-color: #222222;
+  transform: translateY(-2px);
+  transition: all 0.2s ease;
+}
