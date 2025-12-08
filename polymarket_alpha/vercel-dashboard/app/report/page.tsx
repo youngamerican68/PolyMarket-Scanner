@@ -379,7 +379,16 @@ export default function ReportPage() {
                   report.topLongshots.slice(0, 20).map((trade, i) => (
                     <tr key={i} className="border-t border-poly-border hover:bg-poly-border/30">
                       <td className="p-3 max-w-xs truncate">{trade.title?.slice(0, 40) || trade.marketId}</td>
-                      <td className="p-3 text-sm">{trade.name || trade.wallet.slice(0, 10) + '...'}</td>
+                      <td className="p-3 text-sm">
+                        <a
+                          href={`https://polymarket.com/profile/${trade.wallet}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-poly-blue hover:underline"
+                        >
+                          {trade.name || trade.wallet.slice(0, 10) + '...'}
+                        </a>
+                      </td>
                       <td className="p-3 text-center text-poly-muted text-xs">
                         {trade.longshotRecord || '—'}
                       </td>
