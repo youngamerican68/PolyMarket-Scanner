@@ -56,6 +56,7 @@ interface ReportData {
     wallet: string
     name: string
     marketId: string
+    eventSlug: string
     title: string
     outcome: string
     price: number
@@ -407,17 +408,17 @@ export default function ReportPage() {
                     <tr key={i} className="border-t border-poly-border hover:bg-poly-border/30">
                       <td className="p-3 max-w-xs truncate">
                         <a
-                          href={`https://polymarket.com/event/${trade.marketId}`}
+                          href={`https://polymarket.com/event/${trade.eventSlug}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-poly-blue hover:underline"
                         >
-                          {trade.title?.slice(0, 40) || trade.marketId}
+                          {trade.title?.slice(0, 40) || trade.eventSlug}
                         </a>
                       </td>
                       <td className="p-3 text-sm">
                         <a
-                          href={`https://polymarket.com/profile/${trade.wallet}`}
+                          href={`https://polymarket.com/@${trade.name}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-poly-blue hover:underline"

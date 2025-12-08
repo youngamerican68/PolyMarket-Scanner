@@ -56,6 +56,7 @@ export async function GET(req: NextRequest) {
       wallet: string;
       name: string;
       marketId: string;
+      eventSlug: string;
       title: string;
       outcome: string;
       totalSize: number;
@@ -80,6 +81,7 @@ export async function GET(req: NextRequest) {
           wallet: t.wallet,
           name: t.name,
           marketId: t.marketId,
+          eventSlug: t.eventSlug,
           title: t.title,
           outcome: t.outcome,
           totalSize: t.size,
@@ -101,6 +103,7 @@ export async function GET(req: NextRequest) {
           wallet: t.wallet,
           name: t.name,
           marketId: t.marketId,
+          eventSlug: t.eventSlug,
           title: t.title,
           outcome: t.outcome,
           price: t.avgPrice,

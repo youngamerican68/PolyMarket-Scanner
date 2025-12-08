@@ -6,6 +6,7 @@ export type Trade = {
   wallet: string;
   name: string;
   marketId: string;
+  eventSlug: string; // URL-safe slug for polymarket.com/event/{slug}
   title: string;
   outcome: string;
   timestamp: string; // ISO
@@ -102,7 +103,8 @@ export async function fetchTrades(params: FetchTradesParams): Promise<Trade[]> {
           id: String(t.id ?? `${t.proxyWallet}-${ts}`),
           wallet: String(t.proxyWallet ?? ""),
           name: String(t.name ?? t.pseudonym ?? "Anonymous"),
-          marketId: String(t.marketSlug ?? t.conditionId ?? ""),
+          marketId: String(t.conditionId ?? ""),
+          eventSlug: String(t.eventSlug ?? t.slug ?? ""), // URL slug for market links
           title: String(t.title ?? ""),
           outcome: String(t.outcome ?? ""),
           timestamp: new Date(ts * 1000).toISOString(),
