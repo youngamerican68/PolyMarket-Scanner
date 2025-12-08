@@ -385,7 +385,7 @@ export default function ReportPage() {
                 <tr>
                   <th className="text-left p-3 text-poly-muted font-medium">Market</th>
                   <th className="text-left p-3 text-poly-muted font-medium">Trader</th>
-                  <th className="text-center p-3 text-poly-muted font-medium">Longshot Record</th>
+                  <th className="text-center p-3 text-poly-muted font-medium" title="Wins/Losses held to settlement (positions sold early)">Settled Record</th>
                   <th className="text-right p-3 text-poly-muted font-medium">Odds</th>
                   <th className="text-right p-3 text-poly-muted font-medium">Value</th>
                   <th className="text-right p-3 text-poly-muted font-medium">Potential</th>

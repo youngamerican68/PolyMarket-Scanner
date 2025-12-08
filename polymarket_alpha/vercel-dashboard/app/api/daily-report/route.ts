@@ -111,11 +111,15 @@ export async function GET(req: NextRequest) {
           valueFormatted: formatMoney(t.totalValue),
           potentialFormatted: formatMoney(t.totalSize),
           tradeCount: t.tradeCount,
-          // Trader's historical longshot record
+          // Trader's historical longshot record (held to settlement only)
           longshotWins: profile?.longshotWins ?? null,
           longshotLosses: profile?.longshotLosses ?? null,
+          longshotSoldEarly: profile?.longshotSoldEarly ?? null,
+          // Format: "5W/3L (2 sold)" or "5W/3L" if no sold early
           longshotRecord: profile
-            ? `${profile.longshotWins}W/${profile.longshotLosses}L`
+            ? profile.longshotSoldEarly > 0
+              ? `${profile.longshotWins}W/${profile.longshotLosses}L (${profile.longshotSoldEarly} sold)`
+              : `${profile.longshotWins}W/${profile.longshotLosses}L`
             : null,
         };
       });

@@ -42,8 +42,9 @@ export type WalletProfile = {
   name: string;
   totalPnl: number;
   totalPositions: number;
-  longshotWins: number;
-  longshotLosses: number;
+  longshotWins: number;      // Held to settlement and won
+  longshotLosses: number;    // Held to settlement and lost
+  longshotSoldEarly: number; // Sold before settlement
   longshotPnl: number;
 };
 
@@ -214,6 +215,7 @@ export async function fetchWalletProfile(wallet: string): Promise<WalletProfile 
     let totalPnl = 0;
     let longshotWins = 0;
     let longshotLosses = 0;
+    let longshotSoldEarly = 0;
     let longshotPnl = 0;
     let name = "Anonymous";
 
@@ -221,8 +223,11 @@ export async function fetchWalletProfile(wallet: string): Promise<WalletProfile 
       const pnl = Number(p.realizedPnl ?? 0);
       const avgPrice = Number(p.avgPrice ?? 0);
       const curPrice = Number(p.curPrice ?? 0);
+      const size = Number(p.size ?? 0);
+
+      // Market is settled if final price is at extreme (0 or 1)
       const settled = curPrice >= 0.99 || curPrice <= 0.01;
-      const won = curPrice >= 0.99;
+      const outcomeWon = curPrice >= 0.99;
 
       totalPnl += pnl;
 
@@ -231,12 +236,33 @@ export async function fetchWalletProfile(wallet: string): Promise<WalletProfile 
       }
 
       // Track longshot stats (entry < 25%)
-      if (avgPrice < 0.25 && settled) {
+      if (avgPrice < 0.25) {
         longshotPnl += pnl;
-        if (won) {
-          longshotWins++;
+
+        if (settled) {
+          // Market has resolved - check if they held or sold early
+          // Expected PnL if held to settlement:
+          // - If won: size * (1 - avgPrice) = profit from $1 payout minus cost
+          // - If lost: -size * avgPrice = lost their stake
+          const expectedPnlIfHeld = outcomeWon
+            ? size * (1 - avgPrice)  // Won: get $1 per share minus cost
+            : -size * avgPrice;       // Lost: lose entire stake
+
+          // If actual PnL is significantly different from expected, they sold early
+          // Use 20% tolerance to account for fees and rounding
+          const tolerance = Math.abs(expectedPnlIfHeld) * 0.2 + 1; // 20% or $1 minimum
+          const soldEarly = Math.abs(pnl - expectedPnlIfHeld) > tolerance;
+
+          if (soldEarly) {
+            longshotSoldEarly++;
+          } else if (outcomeWon) {
+            longshotWins++;
+          } else {
+            longshotLosses++;
+          }
         } else {
-          longshotLosses++;
+          // Market not settled yet but position is closed = sold early
+          longshotSoldEarly++;
         }
       }
     }
@@ -248,6 +274,7 @@ export async function fetchWalletProfile(wallet: string): Promise<WalletProfile 
       totalPositions: positions.length,
       longshotWins,
       longshotLosses,
+      longshotSoldEarly,
       longshotPnl,
     };
   } catch (err) {
