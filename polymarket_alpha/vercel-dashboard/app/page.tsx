@@ -64,10 +64,10 @@ function formatTime(timestamp: number): string {
 }
 
 function getLevelInfo(level: string): { color: string; bg: string; label: string } {
-  if (level === 'high') return { color: 'text-red-400', bg: 'bg-red-500', label: 'High settlement' }
-  if (level === 'medium') return { color: 'text-orange-400', bg: 'bg-orange-500', label: 'Moderate' }
-  if (level === 'watch') return { color: 'text-blue-400', bg: 'bg-blue-500', label: 'Watch (neg PnL)' }
-  return { color: 'text-yellow-400', bg: 'bg-yellow-500', label: 'Mild' }
+  if (level === 'high') return { color: 'text-red-400', bg: 'bg-red-500/80', label: 'High settlement' }
+  if (level === 'medium') return { color: 'text-amber-400', bg: 'bg-amber-500/70', label: 'Moderate' }
+  if (level === 'watch') return { color: 'text-slate-300', bg: 'bg-slate-600/70', label: 'Watch' }
+  return { color: 'text-slate-400', bg: 'bg-slate-700/60', label: 'Mild' }
 }
 
 export default function Home() {

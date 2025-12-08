@@ -79,16 +79,16 @@ function formatMoney(value: number): string {
 
 function getLevelColor(level: string): string {
   if (level === 'high') return 'text-red-400'
-  if (level === 'medium') return 'text-orange-400'
-  if (level === 'watch') return 'text-blue-400'
-  return 'text-yellow-400'
+  if (level === 'medium') return 'text-amber-400'
+  if (level === 'watch') return 'text-slate-400'
+  return 'text-slate-500'
 }
 
 function getLevelBg(level: string): string {
-  if (level === 'high') return 'bg-red-900/30 border-red-500/50'
-  if (level === 'medium') return 'bg-orange-900/30 border-orange-500/50'
-  if (level === 'watch') return 'bg-blue-900/30 border-blue-500/50'
-  return 'bg-yellow-900/30 border-yellow-500/50'
+  if (level === 'high') return 'bg-red-900/20 border-red-500/40'
+  if (level === 'medium') return 'bg-amber-900/20 border-amber-500/30'
+  if (level === 'watch') return 'bg-slate-800/50 border-slate-600/30'
+  return 'bg-slate-800/30 border-slate-700/30'
 }
 
 function getLevelLabel(level: string): string {
