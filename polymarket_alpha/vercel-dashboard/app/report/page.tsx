@@ -99,11 +99,20 @@ function getLevelLabel(level: string): string {
   return 'Mild settlement'
 }
 
+const ODDS_FILTERS = [
+  { label: 'All (<25%)', value: 0.25 },
+  { label: '<20%', value: 0.20 },
+  { label: '<15%', value: 0.15 },
+  { label: '<10%', value: 0.10 },
+  { label: '<5%', value: 0.05 },
+]
+
 export default function ReportPage() {
   const [report, setReport] = useState<ReportData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
+  const [oddsFilter, setOddsFilter] = useState(0.25)
 
   const fetchReport = async () => {
     try {
@@ -354,7 +363,21 @@ export default function ReportPage() {
 
       {/* Top Longshot Trades Table */}
       <section className="space-y-4">
-        <h2 className="text-xl font-bold">Top Longshot Trades</h2>
+        <div className="flex justify-between items-center">
+          <h2 className="text-xl font-bold">Top Longshot Trades</h2>
+          <div className="flex items-center gap-2">
+            <span className="text-poly-muted text-sm">Max Odds:</span>
+            <select
+              value={oddsFilter}
+              onChange={(e) => setOddsFilter(Number(e.target.value))}
+              className="bg-poly-card border border-poly-border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-poly-green"
+            >
+              {ODDS_FILTERS.map((f) => (
+                <option key={f.value} value={f.value}>{f.label}</option>
+              ))}
+            </select>
+          </div>
+        </div>
         <div className="bg-poly-card rounded-lg border border-poly-border overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -369,14 +392,18 @@ export default function ReportPage() {
                 </tr>
               </thead>
               <tbody>
-                {report.topLongshots.length === 0 ? (
-                  <tr>
-                    <td className="p-4 text-center text-poly-muted" colSpan={6}>
-                      No longshot trades found in this window.
-                    </td>
-                  </tr>
-                ) : (
-                  report.topLongshots.slice(0, 20).map((trade, i) => (
+                {(() => {
+                  const filteredTrades = report.topLongshots.filter(t => t.price <= oddsFilter).slice(0, 50)
+                  if (filteredTrades.length === 0) {
+                    return (
+                      <tr>
+                        <td className="p-4 text-center text-poly-muted" colSpan={6}>
+                          No trades found at {(oddsFilter * 100).toFixed(0)}% odds or below.
+                        </td>
+                      </tr>
+                    )
+                  }
+                  return filteredTrades.map((trade, i) => (
                     <tr key={i} className="border-t border-poly-border hover:bg-poly-border/30">
                       <td className="p-3 max-w-xs truncate">{trade.title?.slice(0, 40) || trade.marketId}</td>
                       <td className="p-3 text-sm">
@@ -397,9 +424,12 @@ export default function ReportPage() {
                       <td className="p-3 text-right text-poly-blue">{trade.potentialFormatted}</td>
                     </tr>
                   ))
-                )}
+                })()}
               </tbody>
             </table>
+          </div>
+          <div className="px-3 py-2 border-t border-poly-border text-xs text-poly-muted">
+            Showing {report.topLongshots.filter(t => t.price <= oddsFilter).slice(0, 50).length} trades at {(oddsFilter * 100).toFixed(0)}% odds or below
           </div>
         </div>
       </section>
