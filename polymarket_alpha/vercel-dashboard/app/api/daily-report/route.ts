@@ -5,6 +5,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchTrades, enrichTradesWithSettlement } from "@/lib/polymarket";
 import { rankAnomalousWallets, formatMoney, formatOdds } from "@/lib/scoring";
 
+// Force dynamic rendering
+export const dynamic = "force-dynamic";
+
 function parseDateParam(value: string | null): Date | null {
   if (!value) return null;
   const d = new Date(value);

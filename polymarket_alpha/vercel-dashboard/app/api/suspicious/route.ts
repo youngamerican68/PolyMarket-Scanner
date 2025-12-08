@@ -5,6 +5,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { fetchTrades } from "@/lib/polymarket";
 import { rankAnomalousWallets, formatMoney, formatOdds } from "@/lib/scoring";
 
+// Force dynamic rendering
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
