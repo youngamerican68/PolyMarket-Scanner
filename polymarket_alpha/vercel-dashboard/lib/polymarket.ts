@@ -15,6 +15,7 @@ export type Trade = {
   realizedPnl?: number;
   settled?: boolean;
   won?: boolean;
+  positionStatus?: 'holding' | 'sold' | 'unknown'; // Current position status
 };
 
 export type FetchTradesParams = {
@@ -36,6 +37,15 @@ export type ClosedPosition = {
   realizedPnl: number;
   settled: boolean;
   won: boolean;
+};
+
+export type OpenPosition = {
+  wallet: string;
+  conditionId: string;
+  title: string;
+  outcome: string;
+  size: number;
+  avgPrice: number;
 };
 
 export type WalletProfile = {
@@ -172,6 +182,46 @@ export async function fetchClosedPositions(wallet: string): Promise<ClosedPositi
     }));
   } catch (err) {
     console.error("Error fetching closed positions:", err);
+    return [];
+  }
+}
+
+/**
+ * Fetch open positions for a wallet to check if they're still holding.
+ */
+export async function fetchOpenPositions(wallet: string): Promise<OpenPosition[]> {
+  try {
+    const url = `${DATA_API}/positions?user=${wallet}&limit=100`;
+
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      return [];
+    }
+
+    const positions = await res.json();
+
+    if (!Array.isArray(positions)) {
+      return [];
+    }
+
+    // Only return positions with size > 0 (still holding)
+    return positions
+      .filter((p: any) => Number(p.size ?? 0) > 0)
+      .map((p: any) => ({
+        wallet,
+        conditionId: String(p.conditionId ?? ""),
+        title: String(p.title ?? ""),
+        outcome: String(p.outcome ?? ""),
+        size: Number(p.size ?? 0),
+        avgPrice: Number(p.avgPrice ?? 0),
+      }));
+  } catch (err) {
+    console.error("Error fetching open positions:", err);
     return [];
   }
 }

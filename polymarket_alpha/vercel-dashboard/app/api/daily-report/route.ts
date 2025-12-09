@@ -2,7 +2,7 @@
 // Thin wrapper around lib/ for daily report generation
 
 import { NextRequest, NextResponse } from "next/server";
-import { fetchTrades, enrichTradesWithSettlement, fetchWalletProfiles } from "@/lib/polymarket";
+import { fetchTrades, enrichTradesWithSettlement, fetchWalletProfiles, fetchOpenPositions, OpenPosition } from "@/lib/polymarket";
 import { rankAnomalousWallets, formatMoney, formatOdds } from "@/lib/scoring";
 
 // Force dynamic rendering
@@ -92,12 +92,38 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Top aggregated positions by lowest odds, include trader profile
-    const topLongshots = Array.from(aggregatedTrades.values())
-      .sort((a, b) => a.avgPrice - b.avgPrice) // lowest odds first
-      .slice(0, 50)
-      .map((t) => {
+    // Get top 50 aggregated positions by lowest odds first
+    const topAggregated = Array.from(aggregatedTrades.values())
+      .sort((a, b) => a.avgPrice - b.avgPrice)
+      .slice(0, 50);
+
+    // Fetch open positions for wallets in topAggregated to check if still holding
+    const walletsToCheck = Array.from(new Set(topAggregated.map((t) => t.wallet))).slice(0, 20);
+    const openPositionsByWallet = new Map<string, OpenPosition[]>();
+
+    for (const wallet of walletsToCheck) {
+      const positions = await fetchOpenPositions(wallet);
+      openPositionsByWallet.set(wallet, positions);
+    }
+
+    // Helper to check if a position is still open
+    const getPositionStatus = (wallet: string, marketId: string, outcome: string): 'holding' | 'sold' | 'unknown' => {
+      const openPositions = openPositionsByWallet.get(wallet);
+      if (!openPositions) return 'unknown';
+
+      // Check if there's an open position matching this market and outcome
+      const isHolding = openPositions.some(
+        (p) => p.conditionId === marketId && p.outcome === outcome && p.size > 0
+      );
+
+      return isHolding ? 'holding' : 'sold';
+    };
+
+    // Build topLongshots with position status
+    const topLongshots = topAggregated.map((t) => {
         const profile = walletProfiles.get(t.wallet);
+        const positionStatus = getPositionStatus(t.wallet, t.marketId, t.outcome);
+
         return {
           id: `${t.wallet}:${t.marketId}:${t.outcome}`,
           wallet: t.wallet,
@@ -114,6 +140,7 @@ export async function GET(req: NextRequest) {
           valueFormatted: formatMoney(t.totalValue),
           potentialFormatted: formatMoney(t.totalSize),
           tradeCount: t.tradeCount,
+          positionStatus,
           // Trader's historical longshot record (held to settlement only)
           longshotWins: profile?.longshotWins ?? null,
           longshotLosses: profile?.longshotLosses ?? null,

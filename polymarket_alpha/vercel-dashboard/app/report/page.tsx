@@ -67,6 +67,7 @@ interface ReportData {
     valueFormatted: string
     potentialFormatted: string
     longshotRecord: string | null
+    positionStatus: 'holding' | 'sold' | 'unknown'
   }>
 }
 
@@ -387,6 +388,7 @@ export default function ReportPage() {
                   <th className="text-left p-3 text-poly-muted font-medium">Market</th>
                   <th className="text-left p-3 text-poly-muted font-medium">Trader</th>
                   <th className="text-center p-3 text-poly-muted font-medium" title="Wins/Losses held to settlement (positions sold early)">Settled Record</th>
+                  <th className="text-center p-3 text-poly-muted font-medium" title="Current position status">Status</th>
                   <th className="text-right p-3 text-poly-muted font-medium">Odds</th>
                   <th className="text-right p-3 text-poly-muted font-medium">Value</th>
                   <th className="text-right p-3 text-poly-muted font-medium">Potential</th>
@@ -398,7 +400,7 @@ export default function ReportPage() {
                   if (filteredTrades.length === 0) {
                     return (
                       <tr>
-                        <td className="p-4 text-center text-poly-muted" colSpan={6}>
+                        <td className="p-4 text-center text-poly-muted" colSpan={7}>
                           No trades found at {(oddsFilter * 100).toFixed(0)}% odds or below.
                         </td>
                       </tr>
@@ -428,6 +430,17 @@ export default function ReportPage() {
                       </td>
                       <td className="p-3 text-center text-poly-muted text-xs">
                         {trade.longshotRecord || '—'}
+                      </td>
+                      <td className="p-3 text-center text-xs">
+                        {trade.positionStatus === 'holding' && (
+                          <span className="text-poly-green" title="Still holding this position">Holding</span>
+                        )}
+                        {trade.positionStatus === 'sold' && (
+                          <span className="text-poly-red" title="Position has been sold">Sold</span>
+                        )}
+                        {trade.positionStatus === 'unknown' && (
+                          <span className="text-poly-muted">—</span>
+                        )}
                       </td>
                       <td className="p-3 text-right text-poly-yellow">{trade.oddsFormatted}</td>
                       <td className="p-3 text-right text-poly-green">{trade.valueFormatted}</td>
