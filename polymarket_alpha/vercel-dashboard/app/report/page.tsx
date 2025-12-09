@@ -109,12 +109,17 @@ const ODDS_FILTERS = [
   { label: '<5%', value: 0.05 },
 ]
 
+type SortField = 'odds' | 'value' | 'potential'
+type SortDirection = 'asc' | 'desc'
+
 export default function ReportPage() {
   const [report, setReport] = useState<ReportData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [oddsFilter, setOddsFilter] = useState(0.25)
+  const [sortField, setSortField] = useState<SortField>('odds')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
 
   const fetchReport = async () => {
     try {
@@ -138,6 +143,42 @@ export default function ReportPage() {
     const interval = setInterval(fetchReport, 10 * 60 * 1000)
     return () => clearInterval(interval)
   }, [])
+
+  const handleSort = (field: SortField) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortField(field)
+      setSortDirection(field === 'odds' ? 'asc' : 'desc') // odds default asc, others desc
+    }
+  }
+
+  const getSortedTrades = (trades: ReportData['topLongshots']) => {
+    const filtered = trades.filter(t => t.price <= oddsFilter)
+    return [...filtered].sort((a, b) => {
+      let aVal: number, bVal: number
+      switch (sortField) {
+        case 'odds':
+          aVal = a.price
+          bVal = b.price
+          break
+        case 'value':
+          aVal = a.value
+          bVal = b.value
+          break
+        case 'potential':
+          aVal = a.potential
+          bVal = b.potential
+          break
+      }
+      return sortDirection === 'asc' ? aVal - bVal : bVal - aVal
+    }).slice(0, 50)
+  }
+
+  const SortIcon = ({ field }: { field: SortField }) => {
+    if (sortField !== field) return <span className="ml-1 text-poly-muted/50">↕</span>
+    return <span className="ml-1">{sortDirection === 'asc' ? '↑' : '↓'}</span>
+  }
 
   if (loading && !report) {
     return (
@@ -389,14 +430,29 @@ export default function ReportPage() {
                   <th className="text-left p-3 text-poly-muted font-medium">Trader</th>
                   <th className="text-center p-3 text-poly-muted font-medium" title="Wins/Losses held to settlement (positions sold early)">Settled Record</th>
                   <th className="text-center p-3 text-poly-muted font-medium" title="Current position status">Status</th>
-                  <th className="text-right p-3 text-poly-muted font-medium">Odds</th>
-                  <th className="text-right p-3 text-poly-muted font-medium">Value</th>
-                  <th className="text-right p-3 text-poly-muted font-medium">Potential</th>
+                  <th
+                    className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
+                    onClick={() => handleSort('odds')}
+                  >
+                    Odds<SortIcon field="odds" />
+                  </th>
+                  <th
+                    className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
+                    onClick={() => handleSort('value')}
+                  >
+                    Value<SortIcon field="value" />
+                  </th>
+                  <th
+                    className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
+                    onClick={() => handleSort('potential')}
+                  >
+                    Potential<SortIcon field="potential" />
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {(() => {
-                  const filteredTrades = report.topLongshots.filter(t => t.price <= oddsFilter).slice(0, 50)
+                  const filteredTrades = getSortedTrades(report.topLongshots)
                   if (filteredTrades.length === 0) {
                     return (
                       <tr>
