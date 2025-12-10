@@ -74,6 +74,9 @@ export async function fetchTradesFromDB(params: FetchTradesParams): Promise<Trad
   const fromTs = Math.floor(from.getTime() / 1000);
   const toTs = Math.floor(to.getTime() / 1000);
 
+  console.log('[fetchTradesFromDB] Starting with params:', { fromTs, toTs, maxPrice });
+  console.log('[fetchTradesFromDB] POSTGRES_URL exists:', !!process.env.POSTGRES_URL);
+
   try {
     let result;
     if (maxPrice != null) {
@@ -95,6 +98,8 @@ export async function fetchTradesFromDB(params: FetchTradesParams): Promise<Trad
       `;
     }
 
+    console.log('[fetchTradesFromDB] Query returned', result.rows.length, 'rows');
+
     return result.rows.map((row) => ({
       id: row.id,
       wallet: row.wallet,
@@ -110,7 +115,8 @@ export async function fetchTradesFromDB(params: FetchTradesParams): Promise<Trad
       won: undefined,
     }));
   } catch (err) {
-    console.error('Error fetching trades from database:', err);
+    console.error('[fetchTradesFromDB] Error:', err);
+    console.log('[fetchTradesFromDB] Falling back to API');
     // Fallback to API if database fails
     return fetchTrades(params);
   }
