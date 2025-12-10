@@ -32,6 +32,7 @@ export type FetchTradesParams = {
 
 export type ClosedPosition = {
   wallet: string;
+  conditionId: string;
   title: string;
   outcome: string;
   avgPrice: number;
@@ -226,6 +227,7 @@ export async function fetchClosedPositions(wallet: string): Promise<ClosedPositi
 
     return positions.map((p: any) => ({
       wallet,
+      conditionId: String(p.conditionId ?? ""),
       title: String(p.title ?? ""),
       outcome: String(p.outcome ?? ""),
       avgPrice: Number(p.avgPrice ?? 0),
@@ -419,11 +421,11 @@ export async function enrichTradesWithSettlement(trades: Trade[]): Promise<Trade
   return trades.map((t) => {
     const positions = positionsByWallet.get(t.wallet) ?? [];
 
-    // Find a matching position (by outcome/title)
+    // Find a matching position by conditionId (marketId) and outcome
     const match = positions.find(
       (p) =>
-        p.avgPrice < 0.25 &&
-        (p.title.includes(t.title.slice(0, 20)) || t.title.includes(p.title.slice(0, 20)))
+        p.conditionId === t.marketId &&
+        p.outcome === t.outcome
     );
 
     if (match) {
