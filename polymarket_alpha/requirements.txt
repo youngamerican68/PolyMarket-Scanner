@@ -1,0 +1,23 @@
+# Polymarket Alpha Wallet Tracker - Dependencies
+# Install with: pip install -r requirements.txt
+
+# Google Sheets integration
+gspread>=6.0.0,<7.0.0
+google-auth>=2.25.0,<3.0.0
+
+# HTTP client for OpenRouter API
+httpx>=0.26.0,<1.0.0
+
+# Data validation
+pydantic>=2.5.0,<3.0.0
+
+# CLI formatting
+rich>=13.7.0,<14.0.0
+
+# Development dependencies
+pytest>=8.0.0,<9.0.0
+pytest-asyncio>=0.23.0,<1.0.0
+pytest-cov>=4.1.0,<5.0.0
+
+# Type checking
+mypy>=1.8.0,<2.0.0

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}Alerts | Polymarket Alpha{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <h1 class="text-2xl font-bold">Alerts</h1>
+    <div class="text-poly-muted">{{ alerts|length }} total alerts</div>
+</div>
+
+<!-- Alert Filters -->
+<div class="flex items-center space-x-2 mb-6">
+    <button class="px-4 py-2 rounded-lg bg-poly-card border border-poly-border hover:bg-poly-border transition">
+        All
+    </button>
+    <button class="px-4 py-2 rounded-lg bg-poly-red/20 text-poly-red border border-poly-red/30 hover:bg-poly-red/30 transition">
+        High
+    </button>
+    <button class="px-4 py-2 rounded-lg bg-poly-yellow/20 text-poly-yellow border border-poly-yellow/30 hover:bg-poly-yellow/30 transition">
+        Medium
+    </button>
+    <button class="px-4 py-2 rounded-lg bg-poly-blue/20 text-poly-blue border border-poly-blue/30 hover:bg-poly-blue/30 transition">
+        Low
+    </button>
+</div>
+
+<!-- Alerts List -->
+<div class="space-y-4">
+    {% for alert in alerts %}
+    <div class="bg-poly-card rounded-xl border border-poly-border p-4
+        {% if alert.severity == 'high' %}border-l-4 border-l-poly-red
+        {% elif alert.severity == 'medium' %}border-l-4 border-l-poly-yellow
+        {% else %}border-l-4 border-l-poly-blue{% endif %}">
+        <div class="flex items-start justify-between">
+            <div class="flex items-start space-x-4">
+                <!-- Severity Badge -->
+                <span class="inline-flex items-center justify-center w-10 h-10 rounded-full text-sm font-bold
+                    {% if alert.severity == 'high' %}badge-high
+                    {% elif alert.severity == 'medium' %}badge-medium
+                    {% else %}badge-low{% endif %}">
+                    {% if alert.severity == 'high' %}!{% else %}i{% endif %}
+                </span>
+
+                <div>
+                    <div class="font-bold text-lg">{{ alert.title }}</div>
+                    <div class="text-poly-muted mt-1">{{ alert.description }}</div>
+
+                    <div class="flex items-center space-x-4 mt-3">
+                        <a href="/trader/{{ alert.trader_id }}" class="text-poly-blue hover:underline text-sm flex items-center">
+                            <span class="mr-1">&#128100;</span>
+                            {{ alert.trader_name }}
+                        </a>
+                        <span class="text-poly-muted text-sm">{{ alert.timestamp }}</span>
+                        <span class="inline-block px-2 py-0.5 rounded-full text-xs
+                            {% if alert.severity == 'high' %}bg-poly-red/20 text-poly-red
+                            {% elif alert.severity == 'medium' %}bg-poly-yellow/20 text-poly-yellow
+                            {% else %}bg-poly-blue/20 text-poly-blue{% endif %}">
+                            {{ alert.severity|title }} Severity
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <a href="/trader/{{ alert.trader_id }}"
+               class="bg-poly-border hover:bg-poly-border/80 text-white px-4 py-2 rounded-lg transition text-sm">
+                View Trader
+            </a>
+        </div>
+    </div>
+    {% else %}
+    <div class="bg-poly-card rounded-xl border border-poly-border p-8 text-center">
+        <div class="text-4xl mb-4">&#9989;</div>
+        <div class="text-xl font-medium">No alerts</div>
+        <div class="text-poly-muted mt-2">All watched traders are showing normal patterns</div>
+    </div>
+    {% endfor %}
+</div>
+{% endblock %}

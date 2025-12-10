@@ -3,11 +3,13 @@ Normalize and clean trade data and timestamps.
 Includes robust CSV parsing for Claude's output.
 """
 
+from __future__ import annotations
+
 import re
 import csv
 import io
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 
 ALLOWED_TRADE_TYPES = {"Buy", "Sell", "Redeem"}
@@ -51,7 +53,7 @@ def normalize_timestamp(timestamp_str: str) -> datetime:
     return datetime.now(timezone.utc)
 
 
-def normalize_trade_type(trade_type: str) -> str | None:
+def normalize_trade_type(trade_type: str) -> Optional[str]:
     """
     Normalize trade type to one of the allowed types.
 
@@ -131,7 +133,7 @@ def sanitize_wallet_for_filename(wallet_address: str) -> str:
     return sanitized
 
 
-def normalize_trade_entry(trade: dict) -> dict | None:
+def normalize_trade_entry(trade: dict) -> Optional[dict]:
     """
     Normalize a single trade entry from raw Manus JSON.
 
@@ -176,7 +178,7 @@ def normalize_trader_entry(trader: dict) -> dict:
     }
 
 
-def parse_claude_csv_output(csv_text: str) -> list[list[str]]:
+def parse_claude_csv_output(csv_text: str) -> List[List[str]]:
     """
     Robustly parse CSV output from Claude's response.
 
@@ -293,7 +295,7 @@ def extract_markdown_block_from_claude_response(response_text: str) -> str:
     return markdown_part
 
 
-def build_claude_input_json(as_of_date: str, wallets_data: list[dict]) -> dict:
+def build_claude_input_json(as_of_date: str, wallets_data: List[dict]) -> dict:
     """
     Build the JSON structure expected by Claude for analysis.
 

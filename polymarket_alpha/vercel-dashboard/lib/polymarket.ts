@@ -1,5 +1,7 @@
 // lib/polymarket.ts
-// Data fetching layer for Polymarket Data API
+// Data fetching layer for Polymarket Data API and local database
+
+import { sql } from '@vercel/postgres';
 
 export type Trade = {
   id: string;
@@ -60,6 +62,58 @@ export type WalletProfile = {
 };
 
 const DATA_API = "https://data-api.polymarket.com";
+
+/**
+ * Fetch trades from local database (populated by collector script).
+ * This gives us reliable 24h coverage instead of API limitations.
+ */
+export async function fetchTradesFromDB(params: FetchTradesParams): Promise<Trade[]> {
+  const { from, to, maxPrice } = params;
+
+  const fromTs = Math.floor(from.getTime() / 1000);
+  const toTs = Math.floor(to.getTime() / 1000);
+
+  try {
+    let result;
+    if (maxPrice != null) {
+      result = await sql`
+        SELECT id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size
+        FROM trades
+        WHERE timestamp >= ${fromTs}
+          AND timestamp <= ${toTs}
+          AND price <= ${maxPrice}
+        ORDER BY timestamp DESC
+      `;
+    } else {
+      result = await sql`
+        SELECT id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size
+        FROM trades
+        WHERE timestamp >= ${fromTs}
+          AND timestamp <= ${toTs}
+        ORDER BY timestamp DESC
+      `;
+    }
+
+    return result.rows.map((row) => ({
+      id: row.id,
+      wallet: row.wallet,
+      name: row.name || 'Anonymous',
+      marketId: row.market_id,
+      eventSlug: row.event_slug || '',
+      title: row.title || '',
+      outcome: row.outcome || '',
+      timestamp: new Date(Number(row.timestamp) * 1000).toISOString(),
+      price: Number(row.price),
+      size: Number(row.size),
+      settled: false,
+      won: undefined,
+    }));
+  } catch (err) {
+    console.error('Error fetching trades from database:', err);
+    // Fallback to API if database fails
+    return fetchTrades(params);
+  }
+}
 
 /**
  * Fetch trades from Polymarket Data API with pagination.

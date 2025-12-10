@@ -3,8 +3,10 @@ Profit and metrics calculation functions for Polymarket wallet analysis.
 These functions are primarily for local debugging; Claude will also compute metrics.
 """
 
+from __future__ import annotations
+
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Dict, List
 
 from .normalize import normalize_timestamp
 
@@ -47,10 +49,10 @@ def calculate_trade_pnl(trade: dict) -> float:
 
 
 def filter_trades_by_date_range(
-    trades: list[dict],
+    trades: List[dict],
     end_date: datetime,
     days_back: int = 7
-) -> list[dict]:
+) -> List[dict]:
     """
     Filter trades to those within a specific date range.
 
@@ -78,7 +80,7 @@ def filter_trades_by_date_range(
     return filtered
 
 
-def calculate_profit_7d(trades: list[dict], as_of_date: datetime) -> float:
+def calculate_profit_7d(trades: List[dict], as_of_date: datetime) -> float:
     """
     Calculate total profit over the last 7 days.
 
@@ -99,7 +101,7 @@ def calculate_profit_7d(trades: list[dict], as_of_date: datetime) -> float:
     return round(total_profit, 2)
 
 
-def calculate_total_staked_7d(trades: list[dict], as_of_date: datetime) -> float:
+def calculate_total_staked_7d(trades: List[dict], as_of_date: datetime) -> float:
     """
     Calculate total amount staked (cost basis) in the last 7 days.
 
@@ -137,7 +139,7 @@ def calculate_roi(profit_7d: float, total_staked_7d: float) -> float:
     return round(profit_7d / total_staked_7d, 4)
 
 
-def calculate_win_rate(trades: list[dict], as_of_date: datetime) -> float:
+def calculate_win_rate(trades: List[dict], as_of_date: datetime) -> float:
     """
     Calculate win rate for resolved markets in last 7 days.
     Win = payout > 0
@@ -219,7 +221,7 @@ def determine_flags(
     win_rate: float,
     trade_count: int,
     thresholds: dict
-) -> list[str]:
+) -> List[str]:
     """
     Determine flags based on wallet metrics.
 
@@ -264,7 +266,7 @@ def determine_flags(
 
 
 def calculate_wallet_metrics(
-    trades: list[dict],
+    trades: List[dict],
     as_of_date: datetime,
     thresholds: dict
 ) -> dict:

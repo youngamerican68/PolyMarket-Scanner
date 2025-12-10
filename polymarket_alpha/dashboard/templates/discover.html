@@ -1,0 +1,310 @@
+{% extends "base.html" %}
+
+{% block title %}Discover Insiders | Polymarket Alpha{% endblock %}
+
+{% block content %}
+<div class="flex items-center justify-between mb-6">
+    <div>
+        <h1 class="text-2xl font-bold">Discover Potential Insiders</h1>
+        <p class="text-poly-muted mt-1">Scan the leaderboard to find traders with suspicious patterns</p>
+    </div>
+
+    <button
+        id="scan-btn"
+        onclick="startScan()"
+        class="bg-poly-green hover:bg-green-600 text-black font-bold px-6 py-3 rounded-lg transition inline-flex items-center space-x-2">
+        <span>&#128269;</span>
+        <span>Scan Leaderboard</span>
+    </button>
+</div>
+
+<!-- How It Works -->
+<div class="bg-poly-card rounded-xl border border-poly-border p-6 mb-6">
+    <h2 class="text-lg font-bold mb-4">How Discovery Works</h2>
+
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="text-center p-4">
+            <div class="text-3xl mb-2">1&#65039;&#8419;</div>
+            <div class="font-medium">Scrape Leaderboard</div>
+            <div class="text-poly-muted text-sm mt-1">Get top 50 traders by profit</div>
+        </div>
+        <div class="text-center p-4">
+            <div class="text-3xl mb-2">2&#65039;&#8419;</div>
+            <div class="font-medium">Analyze Profiles</div>
+            <div class="text-poly-muted text-sm mt-1">Check positions & activity</div>
+        </div>
+        <div class="text-center p-4">
+            <div class="text-3xl mb-2">3&#65039;&#8419;</div>
+            <div class="font-medium">Detect Patterns</div>
+            <div class="text-poly-muted text-sm mt-1">Category concentration, win rates</div>
+        </div>
+        <div class="text-center p-4">
+            <div class="text-3xl mb-2">4&#65039;&#8419;</div>
+            <div class="font-medium">Flag Insiders</div>
+            <div class="text-poly-muted text-sm mt-1">Score and alert on suspicious traders</div>
+        </div>
+    </div>
+</div>
+
+<!-- Detection Criteria -->
+<div class="bg-poly-card rounded-xl border border-poly-border p-6 mb-6">
+    <h2 class="text-lg font-bold mb-4">Insider Detection Criteria</h2>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div class="p-3 bg-poly-bg rounded-lg">
+            <div class="flex items-center space-x-2">
+                <span class="text-poly-red">&#9679;</span>
+                <span class="font-medium">Category Concentration</span>
+            </div>
+            <div class="text-poly-muted text-sm mt-1">>50% portfolio in one category</div>
+        </div>
+
+        <div class="p-3 bg-poly-bg rounded-lg">
+            <div class="flex items-center space-x-2">
+                <span class="text-poly-red">&#9679;</span>
+                <span class="font-medium">Longshot Wins</span>
+            </div>
+            <div class="text-poly-muted text-sm mt-1">Bought at <20% odds, won big</div>
+        </div>
+
+        <div class="p-3 bg-poly-bg rounded-lg">
+            <div class="flex items-center space-x-2">
+                <span class="text-poly-yellow">&#9679;</span>
+                <span class="font-medium">Cluster Buying</span>
+            </div>
+            <div class="text-poly-muted text-sm mt-1">3+ buys on same market</div>
+        </div>
+
+        <div class="p-3 bg-poly-bg rounded-lg">
+            <div class="flex items-center space-x-2">
+                <span class="text-poly-yellow">&#9679;</span>
+                <span class="font-medium">Large Positions</span>
+            </div>
+            <div class="text-poly-muted text-sm mt-1">>$100K on single market</div>
+        </div>
+
+        <div class="p-3 bg-poly-bg rounded-lg">
+            <div class="flex items-center space-x-2">
+                <span class="text-poly-yellow">&#9679;</span>
+                <span class="font-medium">High Win Rate</span>
+            </div>
+            <div class="text-poly-muted text-sm mt-1">5+ winning redemptions</div>
+        </div>
+
+        <div class="p-3 bg-poly-bg rounded-lg">
+            <div class="flex items-center space-x-2">
+                <span class="text-poly-yellow">&#9679;</span>
+                <span class="font-medium">Exceptional Profits</span>
+            </div>
+            <div class="text-poly-muted text-sm mt-1">>$500K total profit</div>
+        </div>
+    </div>
+</div>
+
+<!-- Scan Status -->
+<div id="scan-status" class="hidden bg-poly-card rounded-xl border border-poly-border p-6 mb-6">
+    <div class="flex items-center justify-between mb-4">
+        <h2 class="text-lg font-bold">Scanning in Progress...</h2>
+        <span id="progress-text" class="text-poly-muted">0%</span>
+    </div>
+
+    <div class="w-full bg-poly-border rounded-full h-3 mb-4">
+        <div id="progress-bar" class="bg-poly-green h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+    </div>
+
+    <div class="flex items-center justify-between text-sm">
+        <span class="text-poly-muted">Current: <span id="current-trader">-</span></span>
+        <span class="text-poly-muted">Analyzed: <span id="traders-analyzed">0</span> | Insiders Found: <span id="insiders-found" class="text-poly-red">0</span></span>
+    </div>
+</div>
+
+<!-- Discovered Insiders -->
+<div class="mb-6">
+    <h2 class="text-xl font-bold mb-4">
+        Discovered Potential Insiders
+        {% if insiders %}
+        <span class="text-poly-red">({{ insiders|length }})</span>
+        {% endif %}
+    </h2>
+
+    {% if insiders %}
+    <div class="bg-poly-card rounded-xl border border-poly-border overflow-hidden">
+        <!-- Table Header -->
+        <div class="grid grid-cols-12 gap-4 px-4 py-3 bg-poly-bg border-b border-poly-border text-poly-muted text-sm font-medium">
+            <div class="col-span-1 text-center">Score</div>
+            <div class="col-span-3">Trader</div>
+            <div class="col-span-2 text-right">Profit</div>
+            <div class="col-span-2 text-right">Portfolio</div>
+            <div class="col-span-2">Top Category</div>
+            <div class="col-span-2 text-center">Signals</div>
+        </div>
+
+        <!-- Insider Rows -->
+        {% for insider in insiders %}
+        <a href="/trader/{{ insider.address }}" class="block hover-card">
+            <div class="grid grid-cols-12 gap-4 px-4 py-4 border-b border-poly-border items-center">
+                <!-- Insider Score -->
+                <div class="col-span-1 text-center">
+                    <span class="inline-flex items-center justify-center w-10 h-10 rounded-full text-sm font-bold
+                        {% if insider.insider_score >= 70 %}badge-high
+                        {% elif insider.insider_score >= 40 %}badge-medium
+                        {% else %}badge-low{% endif %}">
+                        {{ insider.insider_score|int }}
+                    </span>
+                </div>
+
+                <!-- Trader Info -->
+                <div class="col-span-3 flex items-center space-x-3">
+                    <div class="w-10 h-10 bg-poly-border rounded-full flex items-center justify-center">
+                        <span class="text-lg">&#129413;</span>
+                    </div>
+                    <div>
+                        <div class="font-medium">{{ insider.username }}</div>
+                        {% if insider.rank %}
+                        <div class="text-poly-muted text-sm">#{{ insider.rank }} on Leaderboard</div>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <!-- Profit -->
+                <div class="col-span-2 text-right">
+                    <div class="text-poly-green font-medium">+{{ insider.profit|money }}</div>
+                </div>
+
+                <!-- Portfolio -->
+                <div class="col-span-2 text-right">
+                    <div class="font-medium">{{ insider.positions_value|money }}</div>
+                </div>
+
+                <!-- Top Category -->
+                <div class="col-span-2">
+                    {% if insider.top_category %}
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-poly-red/20 text-poly-red">
+                        {{ insider.top_category|title }}
+                    </span>
+                    {% else %}
+                    <span class="text-poly-muted">-</span>
+                    {% endif %}
+                </div>
+
+                <!-- Signals -->
+                <div class="col-span-2 text-center">
+                    {% if insider.high_severity_count > 0 %}
+                    <span class="inline-flex items-center justify-center px-2 py-1 rounded-full text-xs font-bold badge-high">
+                        {{ insider.high_severity_count }} High
+                    </span>
+                    {% endif %}
+                    {% if insider.signal_count - insider.high_severity_count > 0 %}
+                    <span class="inline-flex items-center justify-center px-2 py-1 rounded-full text-xs font-bold badge-medium ml-1">
+                        +{{ insider.signal_count - insider.high_severity_count }}
+                    </span>
+                    {% endif %}
+                </div>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="bg-poly-card rounded-xl border border-poly-border p-8 text-center">
+        <div class="text-4xl mb-4">&#128269;</div>
+        <div class="text-xl font-medium">No insiders discovered yet</div>
+        <div class="text-poly-muted mt-2">Click "Scan Leaderboard" to analyze top traders</div>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Manual Analysis -->
+<div class="bg-poly-card rounded-xl border border-poly-border p-6">
+    <h2 class="text-lg font-bold mb-4">Analyze Specific Trader</h2>
+
+    <div class="flex space-x-4">
+        <input
+            type="text"
+            id="trader-input"
+            placeholder="Enter trader address (e.g., 0xafEe)"
+            class="flex-1 bg-poly-bg border border-poly-border rounded-lg px-4 py-2 text-white placeholder-poly-muted focus:outline-none focus:border-poly-green"
+        >
+        <button
+            onclick="analyzeTrader()"
+            class="bg-poly-blue hover:bg-blue-600 text-white px-6 py-2 rounded-lg transition">
+            Analyze
+        </button>
+    </div>
+
+    <div id="analysis-result" class="mt-4 hidden">
+        <!-- Results will be inserted here -->
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+let scanInterval = null;
+
+async function startScan() {
+    const btn = document.getElementById('scan-btn');
+    const statusDiv = document.getElementById('scan-status');
+
+    btn.disabled = true;
+    btn.innerHTML = '<span class="animate-spin">&#8987;</span> <span>Scanning...</span>';
+    statusDiv.classList.remove('hidden');
+
+    // In a real implementation, this would:
+    // 1. Call Firecrawl to scrape the leaderboard
+    // 2. For each trader, scrape their profile
+    // 3. Send to /api/discovery/analyze
+
+    // For demo, show the flow
+    await simulateScan();
+
+    btn.disabled = false;
+    btn.innerHTML = '<span>&#128269;</span> <span>Scan Leaderboard</span>';
+}
+
+async function simulateScan() {
+    const traders = [
+        { name: '0xafEe', progress: 20 },
+        { name: 'whale_trader', progress: 40 },
+        { name: 'crypto_king', progress: 60 },
+        { name: 'bet_master', progress: 80 },
+        { name: 'anon_winner', progress: 100 },
+    ];
+
+    for (const trader of traders) {
+        document.getElementById('current-trader').textContent = trader.name;
+        document.getElementById('progress-bar').style.width = trader.progress + '%';
+        document.getElementById('progress-text').textContent = trader.progress + '%';
+        document.getElementById('traders-analyzed').textContent = traders.indexOf(trader) + 1;
+
+        if (trader.name === '0xafEe') {
+            document.getElementById('insiders-found').textContent = '1';
+        }
+
+        await new Promise(r => setTimeout(r, 800));
+    }
+
+    // Redirect to refresh page with results
+    setTimeout(() => {
+        window.location.reload();
+    }, 1000);
+}
+
+async function analyzeTrader() {
+    const input = document.getElementById('trader-input');
+    const resultDiv = document.getElementById('analysis-result');
+    const traderId = input.value.trim();
+
+    if (!traderId) {
+        alert('Please enter a trader address');
+        return;
+    }
+
+    resultDiv.innerHTML = '<div class="text-poly-muted">Analyzing...</div>';
+    resultDiv.classList.remove('hidden');
+
+    // Redirect to trader page if it exists
+    window.location.href = '/trader/' + traderId;
+}
+</script>
+{% endblock %}

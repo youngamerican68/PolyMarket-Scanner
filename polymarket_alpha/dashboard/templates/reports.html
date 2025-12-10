@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+
+{% block title %}Daily Reports - Polymarket Alpha{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-3xl font-bold">Daily Reports</h1>
+            <p class="text-poly-muted mt-1">Top 10 trader position breakdowns</p>
+        </div>
+        <div class="text-poly-muted text-sm">
+            {{ reports|length }} reports available
+        </div>
+    </div>
+
+    <!-- Reports List -->
+    {% if reports %}
+    <div class="grid gap-4">
+        {% for report in reports %}
+        <a href="/reports/{{ report.filename }}" class="bg-poly-card border border-poly-border rounded-lg p-4 hover-card block">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-4">
+                    <div class="w-12 h-12 bg-poly-green/20 rounded-lg flex items-center justify-center">
+                        <span class="text-poly-green text-xl">📊</span>
+                    </div>
+                    <div>
+                        <h3 class="font-semibold text-lg">{{ report.date }}</h3>
+                        <p class="text-poly-muted text-sm">{{ report.filename }}</p>
+                    </div>
+                </div>
+                <div class="text-right">
+                    <div class="text-poly-muted text-sm">{{ report.size }}</div>
+                    <div class="text-poly-green text-xs mt-1">View Report →</div>
+                </div>
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="bg-poly-card border border-poly-border rounded-lg p-12 text-center">
+        <div class="text-6xl mb-4">📋</div>
+        <h3 class="text-xl font-semibold mb-2">No Reports Yet</h3>
+        <p class="text-poly-muted">Daily reports will appear here after scraping top traders.</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

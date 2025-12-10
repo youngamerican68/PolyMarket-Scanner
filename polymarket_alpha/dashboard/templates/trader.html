@@ -1,0 +1,341 @@
+{% extends "base.html" %}
+
+{% block title %}{{ trader.username }} | Polymarket Alpha{% endblock %}
+
+{% block content %}
+<!-- Insider Alert Banner -->
+{% if trader.insider_signals %}
+{% set high_signals = trader.insider_signals|selectattr('severity', 'equalto', 'high')|list %}
+{% if high_signals %}
+<div class="bg-poly-red/10 border border-poly-red rounded-xl p-4 mb-6">
+    <div class="flex items-center space-x-3">
+        <span class="text-2xl">&#128680;</span>
+        <div>
+            <div class="font-bold text-poly-red">HIGHLY SUSPICIOUS - POTENTIAL INSIDER</div>
+            <div class="text-poly-muted">{{ high_signals|length }} high-severity signals detected</div>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endif %}
+
+<!-- Trader Header -->
+<div class="bg-poly-card rounded-xl border border-poly-border p-6 mb-6">
+    <div class="flex flex-col md:flex-row md:items-center md:justify-between">
+        <!-- Profile Info -->
+        <div class="flex items-center space-x-4 mb-4 md:mb-0">
+            <div class="w-16 h-16 bg-poly-border rounded-full flex items-center justify-center">
+                <span class="text-3xl">&#129413;</span>
+            </div>
+            <div>
+                <div class="flex items-center space-x-2">
+                    <h1 class="text-2xl font-bold">{{ trader.username }}</h1>
+                    {% if trader.rank_monthly == 1 %}
+                    <span class="bg-poly-yellow text-black text-xs font-bold px-2 py-0.5 rounded-full">#1 Monthly</span>
+                    {% elif trader.rank_monthly %}
+                    <span class="bg-poly-blue/20 text-poly-blue text-xs font-bold px-2 py-0.5 rounded-full">#{{ trader.rank_monthly }} Monthly</span>
+                    {% endif %}
+                </div>
+                <div class="text-poly-muted">Joined {{ trader.joined }} | {{ trader.views }} views</div>
+            </div>
+        </div>
+
+        <!-- Profit Chart Placeholder -->
+        <div class="flex items-center space-x-4">
+            <div class="text-right">
+                <div class="text-poly-muted text-sm">Profit/Loss</div>
+                <div class="text-2xl font-bold text-poly-green">+{{ trader.profit_1w|money }}</div>
+                <div class="text-poly-muted text-sm">Past Week</div>
+            </div>
+            <div class="w-32 h-12 profit-chart rounded-lg flex items-end px-1">
+                <!-- Simple bar chart visualization -->
+                <div class="w-3 bg-poly-green/30 rounded-t" style="height: 60%"></div>
+                <div class="w-3 bg-poly-green/40 rounded-t ml-1" style="height: 75%"></div>
+                <div class="w-3 bg-poly-green/50 rounded-t ml-1" style="height: 65%"></div>
+                <div class="w-3 bg-poly-green/60 rounded-t ml-1" style="height: 85%"></div>
+                <div class="w-3 bg-poly-green/70 rounded-t ml-1" style="height: 70%"></div>
+                <div class="w-3 bg-poly-green/80 rounded-t ml-1" style="height: 90%"></div>
+                <div class="w-3 bg-poly-green rounded-t ml-1" style="height: 100%"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Stats Row -->
+    <div class="grid grid-cols-3 gap-4 mt-6 pt-6 border-t border-poly-border">
+        <div>
+            <div class="text-poly-muted text-sm">Positions Value</div>
+            <div class="text-xl font-bold">{{ trader.positions_value|money }}</div>
+        </div>
+        <div>
+            <div class="text-poly-muted text-sm">Biggest Win</div>
+            <div class="text-xl font-bold">{{ trader.biggest_win|money }}</div>
+        </div>
+        <div>
+            <div class="text-poly-muted text-sm">Predictions</div>
+            <div class="text-xl font-bold">{{ trader.predictions }}</div>
+        </div>
+    </div>
+</div>
+
+<!-- Insider Signals -->
+{% if trader.insider_signals %}
+<div class="bg-poly-card rounded-xl border border-poly-border p-6 mb-6">
+    <h2 class="text-lg font-bold mb-4 flex items-center">
+        <span class="mr-2">&#9888;&#65039;</span> Insider Signals Detected
+    </h2>
+
+    <div class="space-y-3">
+        {% for signal in trader.insider_signals %}
+        <div class="flex items-start space-x-3 p-3 rounded-lg
+            {% if signal.severity == 'high' %}bg-poly-red/10 border border-poly-red/30
+            {% elif signal.severity == 'medium' %}bg-poly-yellow/10 border border-poly-yellow/30
+            {% else %}bg-poly-blue/10 border border-poly-blue/30{% endif %}">
+            <span class="inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold
+                {% if signal.severity == 'high' %}badge-high
+                {% elif signal.severity == 'medium' %}badge-medium
+                {% else %}badge-low{% endif %}">
+                {% if signal.severity == 'high' %}!{% else %}i{% endif %}
+            </span>
+            <div>
+                <div class="font-medium">{{ signal.title }}</div>
+                <div class="text-poly-muted text-sm">{{ signal.description }}</div>
+                {% if signal.category %}
+                <span class="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-poly-border text-poly-muted">
+                    {{ signal.category|title }}
+                </span>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Category Concentration -->
+{% if trader.category_concentration %}
+<div class="bg-poly-card rounded-xl border border-poly-border p-6 mb-6">
+    <h2 class="text-lg font-bold mb-4">Category Concentration</h2>
+
+    <div class="space-y-3">
+        {% for category, pct in trader.category_concentration.items()|sort(attribute='1', reverse=true) %}
+        <div>
+            <div class="flex justify-between mb-1">
+                <span class="font-medium">{{ category|title }}</span>
+                <span class="{% if pct > 0.8 %}text-poly-red{% elif pct > 0.5 %}text-poly-yellow{% else %}text-poly-muted{% endif %}">
+                    {{ "{:.1%}".format(pct) }}
+                </span>
+            </div>
+            <div class="w-full bg-poly-border rounded-full h-2">
+                <div class="h-2 rounded-full
+                    {% if pct > 0.8 %}bg-poly-red{% elif pct > 0.5 %}bg-poly-yellow{% else %}bg-poly-green{% endif %}"
+                    style="width: {{ pct * 100 }}%"></div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Positions Tabs -->
+<div class="bg-poly-card rounded-xl border border-poly-border overflow-hidden mb-6">
+    <!-- Tab Headers -->
+    <div class="flex border-b border-poly-border">
+        <button class="px-6 py-3 tab-active" data-tab="positions" onclick="showTab('positions')">
+            Positions
+        </button>
+        <button class="px-6 py-3 tab-inactive" data-tab="activity" onclick="showTab('activity')">
+            Activity
+        </button>
+    </div>
+
+    <!-- Positions Tab Content -->
+    <div id="positions-content" class="block">
+        <!-- Filter Buttons -->
+        <div class="flex items-center space-x-2 p-4 border-b border-poly-border">
+            <button class="px-3 py-1 rounded-full text-sm bg-poly-green/20 text-poly-green border border-poly-green/30">
+                All
+            </button>
+            <button class="px-3 py-1 rounded-full text-sm bg-poly-border text-poly-muted hover:bg-poly-border/80">
+                Won
+            </button>
+            <button class="px-3 py-1 rounded-full text-sm bg-poly-border text-poly-muted hover:bg-poly-border/80">
+                Active
+            </button>
+            <div class="flex-1"></div>
+            <span class="text-poly-muted text-sm">Sort by: Profit/Loss</span>
+        </div>
+
+        <!-- Positions List -->
+        <div class="divide-y divide-poly-border">
+            {% for pos in trader.positions|sort(attribute='profit_pct', reverse=true) %}
+            <div class="p-4 hover:bg-poly-bg/50 transition">
+                <div class="flex items-start justify-between">
+                    <div class="flex items-start space-x-3">
+                        <!-- Result Badge -->
+                        <div class="mt-1">
+                            {% if pos.result == 'Won' %}
+                            <span class="inline-flex items-center justify-center w-12 h-6 rounded text-xs font-medium bg-poly-green/20 text-poly-green border border-poly-green/30">
+                                Won
+                            </span>
+                            {% elif pos.result == 'Lost' %}
+                            <span class="inline-flex items-center justify-center w-12 h-6 rounded text-xs font-medium bg-poly-red/20 text-poly-red border border-poly-red/30">
+                                Lost
+                            </span>
+                            {% else %}
+                            <span class="inline-flex items-center justify-center w-12 h-6 rounded text-xs font-medium bg-poly-yellow/20 text-poly-yellow border border-poly-yellow/30">
+                                Active
+                            </span>
+                            {% endif %}
+                        </div>
+
+                        <!-- Market Info -->
+                        <div>
+                            <div class="font-medium">{{ pos.market }}</div>
+                            <div class="text-poly-muted text-sm mt-1">
+                                {{ "{:,.0f}".format(pos.shares) }} {{ pos.outcome }} shares at {{ "{:.0f}".format(pos.avg_price * 100) }}c
+                            </div>
+                            {% if pos.categories %}
+                            <div class="mt-2">
+                                {% for cat in pos.categories %}
+                                <span class="inline-block text-xs px-2 py-0.5 rounded-full bg-poly-border text-poly-muted mr-1">
+                                    {{ cat|title }}
+                                </span>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+
+                    <!-- Value & P/L -->
+                    <div class="text-right">
+                        <div class="font-medium">{{ pos.value|money }}</div>
+                        <div class="{% if pos.profit_pct > 0 %}text-poly-green{% else %}text-poly-red{% endif %} text-sm">
+                            {{ pos.profit_loss|money }} ({{ pos.profit_pct|percent }})
+                        </div>
+                        {% if pos.profit_pct > 100 %}
+                        <span class="inline-block mt-1 text-xs px-2 py-0.5 rounded-full bg-poly-green/20 text-poly-green">
+                            &#128293; Big Winner
+                        </span>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Activity Tab Content -->
+    <div id="activity-content" class="hidden">
+        <div class="divide-y divide-poly-border">
+            {% for trade in trader.recent_trades %}
+            <div class="p-4 hover:bg-poly-bg/50 transition">
+                <div class="flex items-start justify-between">
+                    <div class="flex items-start space-x-3">
+                        <!-- Trade Type -->
+                        <div class="mt-1">
+                            {% if trade.trade_type == 'Buy' %}
+                            <span class="inline-flex items-center justify-center w-14 h-6 rounded text-xs font-medium bg-poly-green/20 text-poly-green">
+                                Buy
+                            </span>
+                            {% elif trade.trade_type == 'Sell' %}
+                            <span class="inline-flex items-center justify-center w-14 h-6 rounded text-xs font-medium bg-poly-red/20 text-poly-red">
+                                Sell
+                            </span>
+                            {% else %}
+                            <span class="inline-flex items-center justify-center w-14 h-6 rounded text-xs font-medium bg-poly-purple/20 text-poly-purple">
+                                Redeem
+                            </span>
+                            {% endif %}
+                        </div>
+
+                        <!-- Trade Info -->
+                        <div>
+                            <div class="font-medium">{{ trade.market }}</div>
+                            <div class="text-poly-muted text-sm">
+                                {% if trade.outcome %}{{ trade.outcome }}{% endif %}
+                                {% if trade.price %}at {{ "{:.0f}".format(trade.price * 100) }}c{% endif %}
+                            </div>
+                            <div class="text-poly-muted text-xs mt-1">{{ trade.timestamp }}</div>
+                        </div>
+                    </div>
+
+                    <!-- Amount -->
+                    <div class="text-right">
+                        <div class="font-medium">{{ trade.amount|money }}</div>
+                        <div class="text-poly-muted text-sm">{{ "{:,.0f}".format(trade.shares) }} shares</div>
+                    </div>
+                </div>
+            </div>
+            {% else %}
+            <div class="p-8 text-center text-poly-muted">
+                No recent activity found.
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+
+<!-- Copy Trading Recommendations -->
+<div class="bg-poly-card rounded-xl border border-poly-border p-6">
+    <h2 class="text-lg font-bold mb-4 flex items-center">
+        <span class="mr-2">&#128161;</span> Copy-Trading Analysis
+    </h2>
+
+    {% if trader.insider_signals %}
+    <div class="bg-poly-yellow/10 border border-poly-yellow/30 rounded-lg p-4 mb-4">
+        <div class="font-medium text-poly-yellow">Potential insider activity detected</div>
+        <div class="text-poly-muted text-sm mt-1">Monitor this trader closely for new positions</div>
+    </div>
+
+    <div class="space-y-2">
+        <div class="font-medium">Current High-Conviction Positions:</div>
+        {% for pos in trader.positions[:5] %}
+        {% if pos.categories %}
+        <div class="flex items-center justify-between p-2 bg-poly-bg rounded-lg">
+            <div class="text-sm">{{ pos.market[:50] }}{% if pos.market|length > 50 %}...{% endif %}</div>
+            <div class="text-poly-green text-sm font-medium">{{ pos.value|money }}</div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="text-poly-muted">No strong insider signals detected at this time.</div>
+    {% endif %}
+</div>
+
+<!-- Refresh Button -->
+<div class="mt-6 text-center">
+    <button
+        hx-post="/scrape/{{ trader.address }}"
+        hx-swap="none"
+        class="bg-poly-blue hover:bg-blue-600 text-white px-6 py-2 rounded-lg transition inline-flex items-center space-x-2">
+        <span>&#128260;</span>
+        <span>Refresh Data</span>
+    </button>
+    <div class="text-poly-muted text-sm mt-2">Last updated: {{ trader.last_updated }}</div>
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function showTab(tabName) {
+    // Hide all tab contents
+    document.getElementById('positions-content').classList.add('hidden');
+    document.getElementById('activity-content').classList.add('hidden');
+
+    // Remove active state from all tabs
+    document.querySelectorAll('[data-tab]').forEach(tab => {
+        tab.classList.remove('tab-active');
+        tab.classList.add('tab-inactive');
+    });
+
+    // Show selected tab content
+    document.getElementById(tabName + '-content').classList.remove('hidden');
+
+    // Add active state to selected tab
+    document.querySelector(`[data-tab="${tabName}"]`).classList.add('tab-active');
+    document.querySelector(`[data-tab="${tabName}"]`).classList.remove('tab-inactive');
+}
+</script>
+{% endblock %}

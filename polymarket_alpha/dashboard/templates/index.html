@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard | Polymarket Alpha{% endblock %}
+
+{% block content %}
+<!-- Alert Banner (if high severity alerts exist) -->
+{% set high_alerts = alerts|selectattr('severity', 'equalto', 'high')|list %}
+{% if high_alerts %}
+<div class="gradient-border mb-6 alert-pulse">
+    <div class="gradient-border-inner flex items-center justify-between">
+        <div class="flex items-center space-x-3">
+            <span class="text-2xl">&#128680;</span>
+            <div>
+                <div class="font-bold text-poly-red">INSIDER ALERT</div>
+                <div class="text-poly-muted">{{ high_alerts[0].trader_name }} - {{ high_alerts[0].title }}</div>
+            </div>
+        </div>
+        <a href="/trader/{{ high_alerts[0].trader_id }}" class="bg-poly-red hover:bg-red-600 text-white px-4 py-2 rounded-lg transition">
+            View Details
+        </a>
+    </div>
+</div>
+{% endif %}
+
+<!-- Stats Overview -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
+    <div class="bg-poly-card rounded-xl p-4 border border-poly-border">
+        <div class="text-poly-muted text-sm">Watched Traders</div>
+        <div class="text-2xl font-bold">{{ traders|length }}</div>
+    </div>
+    <div class="bg-poly-card rounded-xl p-4 border border-poly-border">
+        <div class="text-poly-muted text-sm">Active Alerts</div>
+        <div class="text-2xl font-bold text-poly-yellow">{{ alerts|length }}</div>
+    </div>
+    <div class="bg-poly-card rounded-xl p-4 border border-poly-border">
+        <div class="text-poly-muted text-sm">High Severity</div>
+        <div class="text-2xl font-bold text-poly-red">{{ high_alerts|length }}</div>
+    </div>
+    <div class="bg-poly-card rounded-xl p-4 border border-poly-border">
+        <div class="text-poly-muted text-sm">Total Value Tracked</div>
+        <div class="text-2xl font-bold text-poly-green">
+            ${{ "{:,.0f}".format(traders|sum(attribute='positions_value')) }}
+        </div>
+    </div>
+</div>
+
+<!-- Watched Traders -->
+<div class="mb-6">
+    <h2 class="text-xl font-bold mb-4">Watched Traders</h2>
+
+    <div class="bg-poly-card rounded-xl border border-poly-border overflow-hidden">
+        <!-- Table Header -->
+        <div class="grid grid-cols-12 gap-4 px-4 py-3 bg-poly-bg border-b border-poly-border text-poly-muted text-sm font-medium">
+            <div class="col-span-3">Trader</div>
+            <div class="col-span-2 text-right">Portfolio</div>
+            <div class="col-span-2 text-right">Weekly P/L</div>
+            <div class="col-span-2 text-right">Monthly P/L</div>
+            <div class="col-span-2">Top Category</div>
+            <div class="col-span-1 text-center">Alerts</div>
+        </div>
+
+        <!-- Trader Rows -->
+        {% for trader in traders %}
+        <a href="/trader/{{ trader.address }}" class="block hover-card">
+            <div class="grid grid-cols-12 gap-4 px-4 py-4 border-b border-poly-border items-center">
+                <!-- Trader Info -->
+                <div class="col-span-3 flex items-center space-x-3">
+                    <div class="w-10 h-10 bg-poly-border rounded-full flex items-center justify-center">
+                        <span class="text-lg">&#129413;</span>
+                    </div>
+                    <div>
+                        <div class="font-medium">{{ trader.username }}</div>
+                        <div class="text-poly-muted text-sm">
+                            {% if trader.rank_monthly %}
+                            #{{ trader.rank_monthly }} Monthly
+                            {% else %}
+                            {{ trader.predictions }} predictions
+                            {% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Portfolio Value -->
+                <div class="col-span-2 text-right">
+                    <div class="font-medium">{{ trader.positions_value|money }}</div>
+                </div>
+
+                <!-- Weekly P/L -->
+                <div class="col-span-2 text-right">
+                    {% if trader.profit_1w > 0 %}
+                    <div class="text-poly-green font-medium">+{{ trader.profit_1w|money }}</div>
+                    {% else %}
+                    <div class="text-poly-red font-medium">{{ trader.profit_1w|money }}</div>
+                    {% endif %}
+                </div>
+
+                <!-- Monthly P/L -->
+                <div class="col-span-2 text-right">
+                    {% if trader.profit_1m > 0 %}
+                    <div class="text-poly-green font-medium">+{{ trader.profit_1m|money }}</div>
+                    {% else %}
+                    <div class="text-poly-red font-medium">{{ trader.profit_1m|money }}</div>
+                    {% endif %}
+                </div>
+
+                <!-- Top Category -->
+                <div class="col-span-2">
+                    {% if trader.top_category %}
+                    <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+                        {% if trader.category_pct > 0.8 %}bg-poly-red/20 text-poly-red{% else %}bg-poly-blue/20 text-poly-blue{% endif %}">
+                        {{ trader.top_category|title }} {{ "{:.0%}".format(trader.category_pct) }}
+                    </span>
+                    {% else %}
+                    <span class="text-poly-muted">-</span>
+                    {% endif %}
+                </div>
+
+                <!-- Alerts -->
+                <div class="col-span-1 text-center">
+                    {% if trader.high_severity %}
+                    <span class="inline-flex items-center justify-center w-8 h-8 rounded-full badge-high text-white text-sm font-bold">
+                        {{ trader.alert_count }}
+                    </span>
+                    {% elif trader.alert_count > 0 %}
+                    <span class="inline-flex items-center justify-center w-8 h-8 rounded-full badge-medium text-sm font-bold">
+                        {{ trader.alert_count }}
+                    </span>
+                    {% else %}
+                    <span class="text-poly-muted">-</span>
+                    {% endif %}
+                </div>
+            </div>
+        </a>
+        {% else %}
+        <div class="px-4 py-8 text-center text-poly-muted">
+            No traders being watched. Add traders to monitor their activity.
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Recent Alerts -->
+{% if alerts %}
+<div class="mb-6">
+    <h2 class="text-xl font-bold mb-4">Recent Alerts</h2>
+
+    <div class="space-y-3">
+        {% for alert in alerts[:5] %}
+        <div class="bg-poly-card rounded-xl border border-poly-border p-4 flex items-start justify-between">
+            <div class="flex items-start space-x-3">
+                <span class="inline-flex items-center justify-center w-8 h-8 rounded-full
+                    {% if alert.severity == 'high' %}badge-high{% elif alert.severity == 'medium' %}badge-medium{% else %}badge-low{% endif %}
+                    text-sm font-bold mt-0.5">
+                    {% if alert.severity == 'high' %}!{% else %}i{% endif %}
+                </span>
+                <div>
+                    <div class="font-medium">{{ alert.title }}</div>
+                    <div class="text-poly-muted text-sm">{{ alert.description }}</div>
+                    <div class="text-poly-muted text-xs mt-1">{{ alert.trader_name }} | {{ alert.timestamp }}</div>
+                </div>
+            </div>
+            <a href="/trader/{{ alert.trader_id }}" class="text-poly-blue hover:underline text-sm">
+                View
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+{% endblock %}

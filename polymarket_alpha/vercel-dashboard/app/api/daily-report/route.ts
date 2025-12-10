@@ -2,7 +2,7 @@
 // Thin wrapper around lib/ for daily report generation
 
 import { NextRequest, NextResponse } from "next/server";
-import { fetchTrades, enrichTradesWithSettlement, fetchWalletProfiles, fetchOpenPositions, OpenPosition } from "@/lib/polymarket";
+import { fetchTradesFromDB, enrichTradesWithSettlement, fetchWalletProfiles, fetchOpenPositions, OpenPosition } from "@/lib/polymarket";
 import { rankAnomalousWallets, formatMoney, formatOdds } from "@/lib/scoring";
 
 // Force dynamic rendering
@@ -25,8 +25,8 @@ export async function GET(req: NextRequest) {
     const to = toParam ?? new Date();
     const from = fromParam ?? new Date(to.getTime() - 24 * 60 * 60 * 1000);
 
-    // Fetch longshot trades
-    const rawTrades = await fetchTrades({
+    // Fetch longshot trades from database (populated by collector)
+    const rawTrades = await fetchTradesFromDB({
       from,
       to,
       maxPrice: 0.25, // <25% odds = longshots

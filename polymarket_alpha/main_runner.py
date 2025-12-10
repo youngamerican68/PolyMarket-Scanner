@@ -42,6 +42,7 @@ from utils.normalize import (
     extract_markdown_block_from_claude_response
 )
 from utils.sheets import SheetsClient, load_config, csv_rows_to_sheets_format
+from utils.database import DatabaseClient, get_storage_client
 from utils.profit_calc import calculate_wallet_metrics
 
 
@@ -378,13 +379,30 @@ def run_pipeline(config_path: str = "config.json") -> bool:
     print("\n--- Step 5: Processing Claude Response ---")
     markdown_report, csv_rows = process_claude_response(claude_response, config)
 
-    print("\n--- Step 6: Appending to Google Sheets ---")
-    sheets_client = SheetsClient(config)
+    print("\n--- Step 6: Storing Results ---")
+    storage_type = config.get("database", {}).get("storage_type", "sqlite")
+
     if csv_rows:
         formatted_rows = csv_rows_to_sheets_format(csv_rows)
-        sheets_client.append_rows(formatted_rows)
+
+        if storage_type == "sqlite":
+            # Use SQLite database (free, local storage)
+            db_client = get_storage_client(config)
+            db_client.append_rows(formatted_rows)
+
+            # Show database stats
+            stats = db_client.get_stats()
+            print(f"[INFO] Database stats: {stats.get('total_records', 0)} total records, "
+                  f"{stats.get('unique_wallets', 0)} unique wallets")
+            db_client.close()
+        elif storage_type == "sheets":
+            # Use Google Sheets (requires credentials)
+            sheets_client = SheetsClient(config)
+            sheets_client.append_rows(formatted_rows)
+        else:
+            print(f"[WARN] Unknown storage type: {storage_type}")
     else:
-        print("[WARN] No CSV rows to append")
+        print("[WARN] No CSV rows to store")
 
     print("\n--- Step 7: Saving Markdown Report ---")
     if markdown_report:

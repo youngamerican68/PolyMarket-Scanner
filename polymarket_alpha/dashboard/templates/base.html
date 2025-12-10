@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Polymarket Alpha{% endblock %}</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Custom Polymarket-style theme -->
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'poly-bg': '#0d0d0d',
+                        'poly-card': '#1a1a1a',
+                        'poly-border': '#2a2a2a',
+                        'poly-text': '#ffffff',
+                        'poly-muted': '#888888',
+                        'poly-green': '#00d26a',
+                        'poly-red': '#ff4757',
+                        'poly-yellow': '#ffc107',
+                        'poly-blue': '#4a9eff',
+                        'poly-purple': '#9b59b6',
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            background-color: #0d0d0d;
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+        }
+
+        .gradient-border {
+            background: linear-gradient(135deg, #ff4757, #ffc107, #00d26a);
+            padding: 2px;
+            border-radius: 12px;
+        }
+
+        .gradient-border-inner {
+            background: #1a1a1a;
+            border-radius: 10px;
+            padding: 16px;
+        }
+
+        .alert-pulse {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+
+        .profit-chart {
+            background: linear-gradient(to right, #1a1a1a, #00d26a22);
+        }
+
+        .hover-card:hover {
+            background-color: #222222;
+            transform: translateY(-2px);
+            transition: all 0.2s ease;
+        }
+
+        .tab-active {
+            border-bottom: 2px solid #00d26a;
+            color: #ffffff;
+        }
+
+        .tab-inactive {
+            border-bottom: 2px solid transparent;
+            color: #888888;
+        }
+
+        .badge-high {
+            background: linear-gradient(135deg, #ff4757, #ff6b7a);
+        }
+
+        .badge-medium {
+            background: linear-gradient(135deg, #ffc107, #ffcd38);
+            color: #000;
+        }
+
+        .badge-low {
+            background: linear-gradient(135deg, #4a9eff, #6fb3ff);
+        }
+    </style>
+
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="min-h-screen">
+    <!-- Navigation -->
+    <nav class="bg-poly-card border-b border-poly-border sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4">
+            <div class="flex items-center justify-between h-16">
+                <!-- Logo -->
+                <a href="/" class="flex items-center space-x-3">
+                    <div class="w-8 h-8 bg-poly-green rounded-lg flex items-center justify-center">
+                        <span class="text-black font-bold text-lg">P</span>
+                    </div>
+                    <span class="font-bold text-xl">Polymarket Alpha</span>
+                </a>
+
+                <!-- Nav Links -->
+                <div class="flex items-center space-x-6">
+                    <a href="/" class="text-poly-muted hover:text-white transition">Dashboard</a>
+                    <a href="/discover" class="text-poly-muted hover:text-white transition flex items-center">
+                        <span class="mr-1">&#128269;</span> Discover
+                    </a>
+                    <a href="/reports" class="text-poly-muted hover:text-white transition flex items-center">
+                        <span class="mr-1">📊</span> Reports
+                    </a>
+                    <a href="/alerts" class="text-poly-muted hover:text-white transition flex items-center">
+                        Alerts
+                        {% if alerts and alerts|length > 0 %}
+                        <span class="ml-2 bg-poly-red text-white text-xs px-2 py-0.5 rounded-full">
+                            {{ alerts|length }}
+                        </span>
+                        {% endif %}
+                    </a>
+                    <a href="https://polymarket.com" target="_blank" class="text-poly-muted hover:text-white transition">
+                        Polymarket
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Content -->
+    <main class="max-w-7xl mx-auto px-4 py-6">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="border-t border-poly-border mt-12 py-6">
+        <div class="max-w-7xl mx-auto px-4 text-center text-poly-muted text-sm">
+            Polymarket Alpha Insider Tracker | Last updated: {{ last_updated or 'N/A' }}
+        </div>
+    </footer>
+
+    <!-- HTMX for dynamic updates -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>
