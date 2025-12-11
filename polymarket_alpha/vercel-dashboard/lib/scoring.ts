@@ -274,3 +274,242 @@ export function formatMoney(value: number): string {
 export function formatOdds(price: number): string {
   return `${(price * 100).toFixed(1)}%`;
 }
+
+/**
+ * Sharp Convergence Detection
+ *
+ * Find markets where multiple "sharp" wallets (historical PnL > threshold)
+ * are all buying the same longshot outcome.
+ */
+export type SharpConvergence = {
+  marketId: string;
+  eventSlug: string;
+  title: string;
+  outcome: string;
+  avgPrice: number;
+  totalValue: number;
+  sharpCount: number;
+  sharpWallets: Array<{
+    wallet: string;
+    name: string;
+    historicalPnl: number;
+    size: number;
+    value: number;
+  }>;
+};
+
+export function detectSharpConvergence(
+  trades: Trade[],
+  walletProfiles: Map<string, WalletProfile>,
+  opts?: {
+    minSharpPnl?: number;      // Minimum historical PnL to be "sharp" (default $10K)
+    minSharpCount?: number;    // Minimum sharps on same bet (default 3)
+    maxPrice?: number;         // Max odds to consider (default 0.25)
+  }
+): SharpConvergence[] {
+  const {
+    minSharpPnl = 10000,
+    minSharpCount = 3,
+    maxPrice = 0.25,
+  } = opts ?? {};
+
+  // Filter to longshot trades only
+  const longshots = trades.filter(t => t.price <= maxPrice);
+
+  // Group by market + outcome
+  const byMarketOutcome = new Map<string, Trade[]>();
+  for (const t of longshots) {
+    const key = `${t.marketId}:${t.outcome}`;
+    const arr = byMarketOutcome.get(key) ?? [];
+    arr.push(t);
+    byMarketOutcome.set(key, arr);
+  }
+
+  const convergences: SharpConvergence[] = [];
+
+  for (const [, marketTrades] of Array.from(byMarketOutcome.entries())) {
+    // Get unique wallets and their profiles
+    const walletTrades = new Map<string, Trade[]>();
+    for (const t of marketTrades) {
+      const arr = walletTrades.get(t.wallet) ?? [];
+      arr.push(t);
+      walletTrades.set(t.wallet, arr);
+    }
+
+    // Find "sharp" wallets (PnL > threshold)
+    const sharpWallets: SharpConvergence['sharpWallets'] = [];
+
+    for (const [wallet, wTrades] of Array.from(walletTrades.entries())) {
+      const profile = walletProfiles.get(wallet);
+      const pnl = profile?.totalPnl ?? 0;
+
+      if (pnl >= minSharpPnl) {
+        const totalSize = wTrades.reduce((sum, t) => sum + t.size, 0);
+        const totalValue = wTrades.reduce((sum, t) => sum + t.price * t.size, 0);
+        const name = wTrades[0]?.name || 'Anonymous';
+
+        sharpWallets.push({
+          wallet,
+          name,
+          historicalPnl: pnl,
+          size: totalSize,
+          value: totalValue,
+        });
+      }
+    }
+
+    // Only include if enough sharps converged
+    if (sharpWallets.length >= minSharpCount) {
+      const firstTrade = marketTrades[0];
+      const totalValue = sharpWallets.reduce((sum, w) => sum + w.value, 0);
+      const avgPrice = marketTrades.reduce((sum, t) => sum + t.price, 0) / marketTrades.length;
+
+      // Sort sharps by PnL descending
+      sharpWallets.sort((a, b) => b.historicalPnl - a.historicalPnl);
+
+      convergences.push({
+        marketId: firstTrade.marketId,
+        eventSlug: firstTrade.eventSlug,
+        title: firstTrade.title,
+        outcome: firstTrade.outcome,
+        avgPrice,
+        totalValue,
+        sharpCount: sharpWallets.length,
+        sharpWallets,
+      });
+    }
+  }
+
+  // Sort by number of sharps, then by total value
+  convergences.sort((a, b) => {
+    if (b.sharpCount !== a.sharpCount) return b.sharpCount - a.sharpCount;
+    return b.totalValue - a.totalValue;
+  });
+
+  return convergences;
+}
+
+/**
+ * Dormant Sharp Detection
+ *
+ * Identify wallets that:
+ * 1. Have strong historical performance (high PnL, good longshot record)
+ * 2. Haven't traded in 7+ days (dormant)
+ * 3. Are now making longshot bets (reactivating)
+ */
+export type DormantSharp = {
+  wallet: string;
+  name: string;
+  historicalPnl: number;
+  longshotWinRate: number;
+  longshotRecord: string;
+  totalPositions: number;
+  daysSinceLastTrade: number;
+  currentTrades: Array<{
+    title: string;
+    outcome: string;
+    price: number;
+    size: number;
+    value: number;
+  }>;
+  totalCurrentValue: number;
+};
+
+export function detectDormantSharps(
+  trades: Trade[],
+  walletProfiles: Map<string, WalletProfile>,
+  walletLastActivity: Map<string, Date>,
+  opts?: {
+    minPnl?: number;           // Minimum historical PnL (default $5K)
+    minWinRate?: number;       // Minimum longshot win rate (default 25%)
+    minLongshotTrades?: number; // Minimum historical longshot trades (default 3)
+    minDormantDays?: number;   // Minimum days since last trade (default 7)
+    maxPrice?: number;         // Max odds to consider (default 0.25)
+  }
+): DormantSharp[] {
+  const {
+    minPnl = 5000,
+    minWinRate = 0.25,
+    minLongshotTrades = 3,
+    minDormantDays = 7,
+    maxPrice = 0.25,
+  } = opts ?? {};
+
+  const now = new Date();
+  const longshots = trades.filter(t => t.price <= maxPrice);
+
+  // Group by wallet
+  const byWallet = new Map<string, Trade[]>();
+  for (const t of longshots) {
+    const arr = byWallet.get(t.wallet) ?? [];
+    arr.push(t);
+    byWallet.set(t.wallet, arr);
+  }
+
+  const dormantSharps: DormantSharp[] = [];
+
+  for (const [wallet, walletTrades] of Array.from(byWallet.entries())) {
+    const profile = walletProfiles.get(wallet);
+    if (!profile) continue;
+
+    const lastActivity = walletLastActivity.get(wallet);
+    if (!lastActivity) continue;
+
+    // Calculate days since last trade (before current window)
+    const daysSinceLastTrade = Math.floor(
+      (now.getTime() - lastActivity.getTime()) / (1000 * 60 * 60 * 24)
+    );
+
+    // Must be dormant (7+ days inactive)
+    if (daysSinceLastTrade < minDormantDays) continue;
+
+    const totalLongshots = (profile.longshotWins ?? 0) + (profile.longshotLosses ?? 0);
+    const winRate = totalLongshots > 0
+      ? (profile.longshotWins ?? 0) / totalLongshots
+      : 0;
+
+    // Check if qualifies as a sharp
+    const isProfitable = profile.totalPnl >= minPnl;
+    const hasGoodWinRate = winRate >= minWinRate;
+    const hasEnoughHistory = totalLongshots >= minLongshotTrades;
+
+    if (isProfitable && hasGoodWinRate && hasEnoughHistory) {
+      const currentTrades = walletTrades.map(t => ({
+        title: t.title,
+        outcome: t.outcome,
+        price: t.price,
+        size: t.size,
+        value: t.price * t.size,
+      }));
+
+      const totalCurrentValue = currentTrades.reduce((sum, t) => sum + t.value, 0);
+      const name = walletTrades[0]?.name || profile.name || 'Anonymous';
+
+      const longshotRecord = (profile.longshotSoldEarly ?? 0) > 0
+        ? `${profile.longshotWins}W/${profile.longshotLosses}L (${profile.longshotSoldEarly} sold)`
+        : `${profile.longshotWins}W/${profile.longshotLosses}L`;
+
+      dormantSharps.push({
+        wallet,
+        name,
+        historicalPnl: profile.totalPnl,
+        longshotWinRate: winRate,
+        longshotRecord,
+        totalPositions: profile.totalPositions,
+        daysSinceLastTrade,
+        currentTrades,
+        totalCurrentValue,
+      });
+    }
+  }
+
+  // Sort by days dormant descending, then by PnL
+  dormantSharps.sort((a, b) => {
+    if (b.daysSinceLastTrade !== a.daysSinceLastTrade) {
+      return b.daysSinceLastTrade - a.daysSinceLastTrade;
+    }
+    return b.historicalPnl - a.historicalPnl;
+  });
+
+  return dormantSharps;
+}

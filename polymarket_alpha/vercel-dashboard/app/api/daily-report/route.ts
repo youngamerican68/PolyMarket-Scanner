@@ -2,8 +2,8 @@
 // Thin wrapper around lib/ for daily report generation
 
 import { NextRequest, NextResponse } from "next/server";
-import { fetchTradesFromDB, enrichTradesWithSettlement, fetchWalletProfiles, fetchOpenPositions, OpenPosition } from "@/lib/polymarket";
-import { rankAnomalousWallets, formatMoney, formatOdds } from "@/lib/scoring";
+import { fetchTradesFromDB, enrichTradesWithSettlement, fetchWalletProfiles, fetchOpenPositions, fetchWalletsLastActivity, OpenPosition } from "@/lib/polymarket";
+import { rankAnomalousWallets, formatMoney, formatOdds, detectSharpConvergence, detectDormantSharps } from "@/lib/scoring";
 
 // Force dynamic rendering
 export const dynamic = "force-dynamic";
@@ -169,6 +169,30 @@ export async function GET(req: NextRequest) {
       totalPotential: trades.reduce((sum, t) => sum + t.size, 0),
     };
 
+    // Detect sharp convergence (3+ sharps on same longshot)
+    const sharpConvergences = detectSharpConvergence(trades, walletProfiles, {
+      minSharpPnl: 10000,
+      minSharpCount: 3,
+      maxPrice,
+    });
+
+    // Fetch last activity for wallets that have profiles (potential dormant sharps)
+    const potentialDormantWallets = Array.from(walletProfiles.entries())
+      .filter(([, profile]) => profile.totalPnl >= 5000)
+      .map(([wallet]) => wallet)
+      .slice(0, 20);
+
+    const walletLastActivity = await fetchWalletsLastActivity(potentialDormantWallets, from);
+
+    // Detect dormant sharps (7+ days inactive, now trading)
+    const dormantSharps = detectDormantSharps(trades, walletProfiles, walletLastActivity, {
+      minPnl: 5000,
+      minWinRate: 0.25,
+      minLongshotTrades: 3,
+      minDormantDays: 7,
+      maxPrice,
+    });
+
     return NextResponse.json({
       window: {
         from: from.toISOString(),
@@ -212,6 +236,50 @@ export async function GET(req: NextRequest) {
         })),
       })),
       topLongshots,
+      // Sharp convergence alerts (3+ sharp wallets on same longshot)
+      sharpConvergences: sharpConvergences.map((c) => ({
+        marketId: c.marketId,
+        eventSlug: c.eventSlug,
+        title: c.title,
+        outcome: c.outcome,
+        avgPrice: c.avgPrice,
+        oddsFormatted: formatOdds(c.avgPrice),
+        totalValue: c.totalValue,
+        totalValueFormatted: formatMoney(c.totalValue),
+        sharpCount: c.sharpCount,
+        sharpWallets: c.sharpWallets.map((w) => ({
+          wallet: w.wallet,
+          name: w.name,
+          historicalPnl: w.historicalPnl,
+          historicalPnlFormatted: formatMoney(w.historicalPnl),
+          size: w.size,
+          value: w.value,
+          valueFormatted: formatMoney(w.value),
+        })),
+      })),
+      // Dormant sharp alerts (7+ days inactive, now trading)
+      dormantSharps: dormantSharps.map((d) => ({
+        wallet: d.wallet,
+        name: d.name,
+        historicalPnl: d.historicalPnl,
+        historicalPnlFormatted: formatMoney(d.historicalPnl),
+        longshotWinRate: d.longshotWinRate,
+        winRateFormatted: `${(d.longshotWinRate * 100).toFixed(0)}%`,
+        longshotRecord: d.longshotRecord,
+        totalPositions: d.totalPositions,
+        daysSinceLastTrade: d.daysSinceLastTrade,
+        currentTrades: d.currentTrades.slice(0, 3).map((t) => ({
+          title: t.title,
+          outcome: t.outcome,
+          price: t.price,
+          oddsFormatted: formatOdds(t.price),
+          size: t.size,
+          value: t.value,
+          valueFormatted: formatMoney(t.value),
+        })),
+        totalCurrentValue: d.totalCurrentValue,
+        totalCurrentValueFormatted: formatMoney(d.totalCurrentValue),
+      })),
     });
   } catch (err) {
     console.error("Error in /api/daily-report:", err);

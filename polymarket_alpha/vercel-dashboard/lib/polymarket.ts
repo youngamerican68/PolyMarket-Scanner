@@ -455,3 +455,73 @@ export async function fetchWalletProfiles(wallets: string[]): Promise<Map<string
 
   return profiles;
 }
+
+/**
+ * Fetch the last trade timestamp for a wallet.
+ * Returns the timestamp of their most recent trade (before the current window).
+ */
+export async function fetchWalletLastActivity(wallet: string, beforeDate?: Date): Promise<Date | null> {
+  try {
+    // Fetch recent trades for the wallet
+    const url = `${DATA_API}/activity?user=${wallet}&limit=10&sortBy=TIMESTAMP&sortDirection=DESC`;
+
+    const res = await fetch(url, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      return null;
+    }
+
+    const activities = await res.json();
+
+    if (!Array.isArray(activities) || activities.length === 0) {
+      return null;
+    }
+
+    // Find the most recent activity that's before the current window
+    const beforeTs = beforeDate ? Math.floor(beforeDate.getTime() / 1000) : Infinity;
+
+    for (const activity of activities) {
+      const ts = Number(activity.timestamp ?? 0);
+      if (ts > 0 && ts < beforeTs) {
+        return new Date(ts * 1000);
+      }
+    }
+
+    // If all activities are in current window, return the oldest one
+    const oldestTs = Math.min(...activities.map((a: any) => Number(a.timestamp ?? Infinity)));
+    if (oldestTs < Infinity) {
+      return new Date(oldestTs * 1000);
+    }
+
+    return null;
+  } catch (err) {
+    console.error("Error fetching wallet last activity:", err);
+    return null;
+  }
+}
+
+/**
+ * Fetch last activity for multiple wallets.
+ */
+export async function fetchWalletsLastActivity(
+  wallets: string[],
+  beforeDate?: Date
+): Promise<Map<string, Date>> {
+  const results = new Map<string, Date>();
+
+  // Limit to avoid rate limits
+  const walletsToFetch = wallets.slice(0, 30);
+
+  for (const wallet of walletsToFetch) {
+    const lastActivity = await fetchWalletLastActivity(wallet, beforeDate);
+    if (lastActivity) {
+      results.set(wallet, lastActivity);
+    }
+  }
+
+  return results;
+}

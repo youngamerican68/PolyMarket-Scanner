@@ -37,6 +37,50 @@ interface AnomalousWallet {
   topTrades: TopTrade[]
 }
 
+interface SharpConvergence {
+  marketId: string
+  eventSlug: string
+  title: string
+  outcome: string
+  avgPrice: number
+  oddsFormatted: string
+  totalValue: number
+  totalValueFormatted: string
+  sharpCount: number
+  sharpWallets: Array<{
+    wallet: string
+    name: string
+    historicalPnl: number
+    historicalPnlFormatted: string
+    size: number
+    value: number
+    valueFormatted: string
+  }>
+}
+
+interface DormantSharp {
+  wallet: string
+  name: string
+  historicalPnl: number
+  historicalPnlFormatted: string
+  longshotWinRate: number
+  winRateFormatted: string
+  longshotRecord: string
+  totalPositions: number
+  daysSinceLastTrade: number
+  currentTrades: Array<{
+    title: string
+    outcome: string
+    price: number
+    oddsFormatted: string
+    size: number
+    value: number
+    valueFormatted: string
+  }>
+  totalCurrentValue: number
+  totalCurrentValueFormatted: string
+}
+
 interface ReportData {
   window: {
     from: string
@@ -69,6 +113,8 @@ interface ReportData {
     longshotRecord: string | null
     positionStatus: 'holding' | 'sold' | 'unknown'
   }>
+  sharpConvergences: SharpConvergence[]
+  dormantSharps: DormantSharp[]
 }
 
 function formatMoney(value: number): string {
@@ -276,6 +322,141 @@ export default function ReportPage() {
           <p className="text-2xl font-bold text-poly-blue">{s.totalPotentialFormatted}</p>
         </div>
       </div>
+
+      {/* Sharp Convergence Alerts */}
+      {report.sharpConvergences && report.sharpConvergences.length > 0 && (
+        <section className="space-y-4">
+          <h2 className="text-xl font-bold flex items-center">
+            <span className="w-3 h-3 bg-red-500 rounded-full mr-3 animate-pulse"></span>
+            Sharp Convergence Alerts
+            <span className="text-sm font-normal text-poly-muted ml-2">(3+ sharps on same bet)</span>
+          </h2>
+          <div className="space-y-3">
+            {report.sharpConvergences.map((convergence, i) => (
+              <div
+                key={`${convergence.marketId}-${convergence.outcome}`}
+                className="bg-red-900/20 border border-red-500/40 rounded-lg p-4"
+              >
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <a
+                      href={`https://polymarket.com/event/${convergence.eventSlug}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-lg font-bold text-poly-blue hover:underline"
+                    >
+                      {convergence.title?.slice(0, 60) || convergence.eventSlug}
+                    </a>
+                    <p className="text-poly-muted text-sm mt-1">
+                      Outcome: <span className="text-white">{convergence.outcome}</span>
+                      <span className="mx-2">@</span>
+                      <span className="text-poly-yellow">{convergence.oddsFormatted}</span>
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-red-400 font-bold text-lg">{convergence.sharpCount} Sharps</p>
+                    <p className="text-poly-muted text-sm">Total: {convergence.totalValueFormatted}</p>
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <p className="text-poly-muted text-xs font-medium">Sharp wallets betting on this:</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {convergence.sharpWallets.map((w) => (
+                      <div key={w.wallet} className="bg-black/30 rounded p-2 text-sm">
+                        <a
+                          href={`https://polymarket.com/@${w.name}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-poly-blue hover:underline font-medium"
+                        >
+                          {w.name || w.wallet.slice(0, 10) + '...'}
+                        </a>
+                        <p className="text-poly-muted text-xs">
+                          PnL: <span className="text-poly-green">{w.historicalPnlFormatted}</span>
+                          <span className="mx-1">|</span>
+                          Bet: <span className="text-white">{w.valueFormatted}</span>
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Dormant Sharp Alerts */}
+      {report.dormantSharps && report.dormantSharps.length > 0 && (
+        <section className="space-y-4">
+          <h2 className="text-xl font-bold flex items-center">
+            <span className="w-3 h-3 bg-purple-500 rounded-full mr-3"></span>
+            Dormant Sharp Alerts
+            <span className="text-sm font-normal text-poly-muted ml-2">(inactive 7+ days, now trading)</span>
+          </h2>
+          <div className="space-y-3">
+            {report.dormantSharps.map((sharp) => (
+              <div
+                key={sharp.wallet}
+                className="bg-purple-900/20 border border-purple-500/40 rounded-lg p-4"
+              >
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <a
+                      href={`https://polymarket.com/@${sharp.name}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-lg font-bold text-poly-blue hover:underline"
+                    >
+                      {sharp.name || sharp.wallet.slice(0, 12) + '...'}
+                    </a>
+                    <p className="text-poly-muted font-mono text-xs mt-1">{sharp.wallet}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-purple-400 font-bold">{sharp.daysSinceLastTrade} days dormant</p>
+                    <p className="text-poly-muted text-sm">Now betting: {sharp.totalCurrentValueFormatted}</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                  <div>
+                    <p className="text-poly-muted text-xs">Historical PnL</p>
+                    <p className="font-bold text-poly-green">{sharp.historicalPnlFormatted}</p>
+                  </div>
+                  <div>
+                    <p className="text-poly-muted text-xs">Longshot Win Rate</p>
+                    <p className="font-bold">{sharp.winRateFormatted}</p>
+                  </div>
+                  <div>
+                    <p className="text-poly-muted text-xs">Longshot Record</p>
+                    <p className="font-bold">{sharp.longshotRecord}</p>
+                  </div>
+                  <div>
+                    <p className="text-poly-muted text-xs">Total Positions</p>
+                    <p className="font-bold">{sharp.totalPositions}</p>
+                  </div>
+                </div>
+                {sharp.currentTrades.length > 0 && (
+                  <div>
+                    <p className="text-poly-muted text-xs mb-2">Current longshot trades:</p>
+                    <div className="space-y-1">
+                      {sharp.currentTrades.map((trade, j) => (
+                        <p key={j} className="text-sm">
+                          <span className="text-poly-muted">{trade.outcome}</span>
+                          <span className="text-poly-muted mx-1">@</span>
+                          <span className="text-poly-yellow">{trade.oddsFormatted}</span>
+                          <span className="text-poly-muted mx-1">→</span>
+                          <span className="text-poly-green">{trade.valueFormatted}</span>
+                          <span className="text-poly-muted ml-2 text-xs">({trade.title.slice(0, 35)}...)</span>
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* Anomalous Wallets */}
       <section className="space-y-4">
