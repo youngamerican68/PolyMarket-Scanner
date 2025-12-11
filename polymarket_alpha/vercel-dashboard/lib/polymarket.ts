@@ -366,25 +366,47 @@ export async function fetchLast24hLongshots(now: Date = new Date()): Promise<Tra
 
 /**
  * Fetch wallet profile with overall PnL stats.
+ * Paginates through ALL closed positions to get accurate total PnL.
  */
 export async function fetchWalletProfile(wallet: string): Promise<WalletProfile | null> {
   try {
-    // Fetch all closed positions to calculate historical stats
-    const url = `${DATA_API}/closed-positions?user=${wallet}&limit=500&sortBy=REALIZEDPNL&sortDirection=DESC`;
+    // Paginate through ALL closed positions to get accurate PnL
+    // IMPORTANT: Do NOT sort by REALIZEDPNL - this biases towards winners!
+    // For wallets with >500 positions, sorting by PnL DESC misses losses.
+    const positions: any[] = [];
+    const pageSize = 500;
+    const maxPages = 10; // Cap at 5000 positions to avoid excessive API calls
 
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-    });
+    for (let page = 0; page < maxPages; page++) {
+      const offset = page * pageSize;
+      const url = `${DATA_API}/closed-positions?user=${wallet}&limit=${pageSize}&offset=${offset}`;
 
-    if (!res.ok) {
-      return null;
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+      });
+
+      if (!res.ok) {
+        if (page === 0) return null; // First page failed
+        break; // Later pages failed, use what we have
+      }
+
+      const pageData = await res.json();
+
+      if (!Array.isArray(pageData) || pageData.length === 0) {
+        break; // No more data
+      }
+
+      positions.push(...pageData);
+
+      // If we got less than pageSize, we've fetched everything
+      if (pageData.length < pageSize) {
+        break;
+      }
     }
 
-    const positions = await res.json();
-
-    if (!Array.isArray(positions) || positions.length === 0) {
+    if (positions.length === 0) {
       return null;
     }
 
