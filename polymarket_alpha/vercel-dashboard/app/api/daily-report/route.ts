@@ -280,6 +280,8 @@ export async function GET(req: NextRequest) {
           size: w.size,
           value: w.value,
           valueFormatted: formatMoney(w.value),
+          potential: w.size, // If bet wins, payout = size (shares)
+          potentialFormatted: formatMoney(w.size),
           isHedged: w.isHedged ?? false,
         })),
       })),

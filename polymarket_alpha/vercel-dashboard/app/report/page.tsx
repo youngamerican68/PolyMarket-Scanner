@@ -55,6 +55,8 @@ interface SharpConvergence {
     size: number
     value: number
     valueFormatted: string
+    potential: number
+    potentialFormatted: string
     isHedged: boolean
   }>
 }
@@ -381,6 +383,8 @@ export default function ReportPage() {
                           PnL: <span className="text-poly-green">{w.historicalPnlFormatted}</span>
                           <span className="mx-1">|</span>
                           Bet: <span className="text-white">{w.valueFormatted}</span>
+                          <span className="mx-1">→</span>
+                          <span className="text-poly-blue">{w.potentialFormatted}</span>
                         </p>
                       </div>
                     ))}
