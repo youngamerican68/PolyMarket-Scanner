@@ -102,11 +102,12 @@ function getLevelLabel(level: string): string {
 }
 
 const ODDS_FILTERS = [
-  { label: 'All (<25%)', value: 0.25 },
-  { label: '<20%', value: 0.20 },
-  { label: '<15%', value: 0.15 },
-  { label: '<10%', value: 0.10 },
-  { label: '<5%', value: 0.05 },
+  { label: 'All (<25%)', min: 0, max: 0.25 },
+  { label: '20-25%', min: 0.20, max: 0.25 },
+  { label: '15-20%', min: 0.15, max: 0.20 },
+  { label: '10-15%', min: 0.10, max: 0.15 },
+  { label: '5-10%', min: 0.05, max: 0.10 },
+  { label: '<5%', min: 0, max: 0.05 },
 ]
 
 type SortField = 'odds' | 'value' | 'potential'
@@ -117,14 +118,16 @@ export default function ReportPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
-  const [oddsFilter, setOddsFilter] = useState(0.25)
+  const [oddsFilterIndex, setOddsFilterIndex] = useState(0) // Index into ODDS_FILTERS
   const [sortField, setSortField] = useState<SortField>('odds')
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
 
-  const fetchReport = async (maxOdds?: number) => {
+  const currentFilter = ODDS_FILTERS[oddsFilterIndex]
+
+  const fetchReport = async (minOdds: number, maxOdds: number) => {
     try {
       setLoading(true)
-      const url = maxOdds ? `/api/daily-report?maxOdds=${maxOdds}` : '/api/daily-report'
+      const url = `/api/daily-report?minOdds=${minOdds}&maxOdds=${maxOdds}`
       const res = await fetch(url)
       if (!res.ok) throw new Error('Failed to fetch report')
       const data = await res.json()
@@ -139,11 +142,11 @@ export default function ReportPage() {
   }
 
   useEffect(() => {
-    fetchReport(oddsFilter)
+    fetchReport(currentFilter.min, currentFilter.max)
     // Refresh every 10 minutes
-    const interval = setInterval(() => fetchReport(oddsFilter), 10 * 60 * 1000)
+    const interval = setInterval(() => fetchReport(currentFilter.min, currentFilter.max), 10 * 60 * 1000)
     return () => clearInterval(interval)
-  }, [oddsFilter])
+  }, [oddsFilterIndex])
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -155,8 +158,8 @@ export default function ReportPage() {
   }
 
   const getSortedTrades = (trades: ReportData['topLongshots']) => {
-    const filtered = trades.filter(t => t.price <= oddsFilter)
-    return [...filtered].sort((a, b) => {
+    // Trades are already filtered by the API, just sort them
+    return [...trades].sort((a, b) => {
       let aVal: number, bVal: number
       switch (sortField) {
         case 'odds':
@@ -200,7 +203,7 @@ export default function ReportPage() {
         <div className="bg-red-900/30 border border-red-500 rounded-lg p-4">
           <p className="text-red-400">Error: {error}</p>
           <button
-            onClick={() => fetchReport(oddsFilter)}
+            onClick={() => fetchReport(currentFilter.min, currentFilter.max)}
             className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded"
           >
             Retry
@@ -230,7 +233,7 @@ export default function ReportPage() {
           </div>
           <div className="text-right">
             <button
-              onClick={() => fetchReport(oddsFilter)}
+              onClick={() => fetchReport(currentFilter.min, currentFilter.max)}
               disabled={loading}
               className="px-4 py-2 bg-poly-green text-black font-medium rounded hover:bg-poly-green/80 disabled:opacity-50"
             >
@@ -410,14 +413,14 @@ export default function ReportPage() {
         <div className="flex justify-between items-center">
           <h2 className="text-xl font-bold">Top Longshot Trades</h2>
           <div className="flex items-center gap-2">
-            <span className="text-poly-muted text-sm">Max Odds:</span>
+            <span className="text-poly-muted text-sm">Odds Range:</span>
             <select
-              value={oddsFilter}
-              onChange={(e) => setOddsFilter(Number(e.target.value))}
+              value={oddsFilterIndex}
+              onChange={(e) => setOddsFilterIndex(Number(e.target.value))}
               className="bg-poly-card border border-poly-border rounded px-3 py-1.5 text-sm focus:outline-none focus:border-poly-green"
             >
-              {ODDS_FILTERS.map((f) => (
-                <option key={f.value} value={f.value}>{f.label}</option>
+              {ODDS_FILTERS.map((f, i) => (
+                <option key={i} value={i}>{f.label}</option>
               ))}
             </select>
           </div>
@@ -458,7 +461,7 @@ export default function ReportPage() {
                     return (
                       <tr>
                         <td className="p-4 text-center text-poly-muted" colSpan={7}>
-                          No trades found at {(oddsFilter * 100).toFixed(0)}% odds or below.
+                          No trades found in {currentFilter.label} odds range.
                         </td>
                       </tr>
                     )
@@ -509,7 +512,7 @@ export default function ReportPage() {
             </table>
           </div>
           <div className="px-3 py-2 border-t border-poly-border text-xs text-poly-muted">
-            Showing {report.topLongshots.filter(t => t.price <= oddsFilter).slice(0, 50).length} trades at {(oddsFilter * 100).toFixed(0)}% odds or below
+            Showing {report.topLongshots.length} trades in {currentFilter.label} odds range
           </div>
         </div>
       </section>

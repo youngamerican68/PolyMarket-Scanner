@@ -20,19 +20,22 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const fromParam = parseDateParam(searchParams.get("from"));
     const toParam = parseDateParam(searchParams.get("to"));
+    const minOddsParam = searchParams.get("minOdds");
     const maxOddsParam = searchParams.get("maxOdds");
 
     // Default: last 24 hours
     const to = toParam ?? new Date();
     const from = fromParam ?? new Date(to.getTime() - 24 * 60 * 60 * 1000);
 
-    // Max odds filter (default 25%)
+    // Odds range filter (default 0-25%)
+    const minPrice = minOddsParam ? parseFloat(minOddsParam) : 0;
     const maxPrice = maxOddsParam ? parseFloat(maxOddsParam) : 0.25;
 
     // Fetch longshot trades from database (populated by collector)
     const rawTrades = await fetchTradesFromDB({
       from,
       to,
+      minPrice,
       maxPrice,
     });
 

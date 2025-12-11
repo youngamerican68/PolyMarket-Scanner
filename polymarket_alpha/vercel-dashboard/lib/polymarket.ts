@@ -69,34 +69,24 @@ const DATA_API = "https://data-api.polymarket.com";
  * This gives us reliable 24h coverage instead of API limitations.
  */
 export async function fetchTradesFromDB(params: FetchTradesParams): Promise<Trade[]> {
-  const { from, to, maxPrice } = params;
+  const { from, to, minPrice = 0, maxPrice = 0.25 } = params;
 
   const fromTs = Math.floor(from.getTime() / 1000);
   const toTs = Math.floor(to.getTime() / 1000);
 
-  console.log('[fetchTradesFromDB] Starting with params:', { fromTs, toTs, maxPrice });
+  console.log('[fetchTradesFromDB] Starting with params:', { fromTs, toTs, minPrice, maxPrice });
   console.log('[fetchTradesFromDB] POSTGRES_URL exists:', !!process.env.POSTGRES_URL);
 
   try {
-    let result;
-    if (maxPrice != null) {
-      result = await sql`
-        SELECT id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size
-        FROM trades
-        WHERE timestamp >= ${fromTs}
-          AND timestamp <= ${toTs}
-          AND price <= ${maxPrice}
-        ORDER BY timestamp DESC
-      `;
-    } else {
-      result = await sql`
-        SELECT id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size
-        FROM trades
-        WHERE timestamp >= ${fromTs}
-          AND timestamp <= ${toTs}
-        ORDER BY timestamp DESC
-      `;
-    }
+    const result = await sql`
+      SELECT id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size
+      FROM trades
+      WHERE timestamp >= ${fromTs}
+        AND timestamp <= ${toTs}
+        AND price >= ${minPrice}
+        AND price <= ${maxPrice}
+      ORDER BY timestamp DESC
+    `;
 
     console.log('[fetchTradesFromDB] Query returned', result.rows.length, 'rows');
 
