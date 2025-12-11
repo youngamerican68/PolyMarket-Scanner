@@ -295,6 +295,7 @@ export type SharpConvergence = {
     historicalPnl: number;
     size: number;
     value: number;
+    isHedged?: boolean;  // True if wallet has position on both sides
   }>;
 };
 

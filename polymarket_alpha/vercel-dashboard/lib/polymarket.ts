@@ -279,6 +279,59 @@ export async function fetchOpenPositions(wallet: string): Promise<OpenPosition[]
 }
 
 /**
+ * Check if a wallet has positions on both sides of a market.
+ * Returns a map of marketId -> { hasHedge: boolean, otherSideSize: number }
+ */
+export async function detectHedgedPositions(
+  wallet: string,
+  marketIds: string[]
+): Promise<Map<string, { hasHedge: boolean; otherOutcome: string; otherSideSize: number; otherSideValue: number }>> {
+  const results = new Map<string, { hasHedge: boolean; otherOutcome: string; otherSideSize: number; otherSideValue: number }>();
+
+  try {
+    const positions = await fetchOpenPositions(wallet);
+
+    // Group positions by market (conditionId)
+    const positionsByMarket = new Map<string, OpenPosition[]>();
+    for (const p of positions) {
+      const arr = positionsByMarket.get(p.conditionId) ?? [];
+      arr.push(p);
+      positionsByMarket.set(p.conditionId, arr);
+    }
+
+    // Check each market we care about
+    for (const marketId of marketIds) {
+      const marketPositions = positionsByMarket.get(marketId) ?? [];
+
+      if (marketPositions.length > 1) {
+        // Has multiple positions in same market = hedged
+        // Find the larger position (likely the "real" bet)
+        const sorted = marketPositions.sort((a, b) => (b.size * b.avgPrice) - (a.size * a.avgPrice));
+        const otherSide = sorted[1]; // Second largest position
+
+        results.set(marketId, {
+          hasHedge: true,
+          otherOutcome: otherSide.outcome,
+          otherSideSize: otherSide.size,
+          otherSideValue: otherSide.size * otherSide.avgPrice,
+        });
+      } else {
+        results.set(marketId, {
+          hasHedge: false,
+          otherOutcome: '',
+          otherSideSize: 0,
+          otherSideValue: 0,
+        });
+      }
+    }
+  } catch (err) {
+    console.error("Error detecting hedged positions:", err);
+  }
+
+  return results;
+}
+
+/**
  * Convenience: last 24h longshots (< 25% odds).
  */
 export async function fetchLast24hLongshots(now: Date = new Date()): Promise<Trade[]> {

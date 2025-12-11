@@ -2,7 +2,7 @@
 // Thin wrapper around lib/ for daily report generation
 
 import { NextRequest, NextResponse } from "next/server";
-import { fetchTradesFromDB, enrichTradesWithSettlement, fetchWalletProfiles, fetchOpenPositions, fetchWalletsLastActivity, OpenPosition } from "@/lib/polymarket";
+import { fetchTradesFromDB, enrichTradesWithSettlement, fetchWalletProfiles, fetchOpenPositions, fetchWalletsLastActivity, detectHedgedPositions, OpenPosition } from "@/lib/polymarket";
 import { rankAnomalousWallets, formatMoney, formatOdds, detectSharpConvergence, detectDormantSharps } from "@/lib/scoring";
 
 // Force dynamic rendering
@@ -170,11 +170,34 @@ export async function GET(req: NextRequest) {
     };
 
     // Detect sharp convergence (3+ sharps on same longshot)
-    const sharpConvergences = detectSharpConvergence(trades, walletProfiles, {
+    const sharpConvergencesRaw = detectSharpConvergence(trades, walletProfiles, {
       minSharpPnl: 10000,
       minSharpCount: 3,
       maxPrice,
     });
+
+    // Detect hedged positions for sharp wallets in convergences
+    // For each convergence, check if sharps have positions on both sides
+    const sharpConvergences = await Promise.all(
+      sharpConvergencesRaw.map(async (convergence) => {
+        const walletsToCheck = convergence.sharpWallets.slice(0, 10); // Limit API calls
+        const hedgeResults = new Map<string, boolean>();
+
+        for (const sw of walletsToCheck) {
+          const hedgeInfo = await detectHedgedPositions(sw.wallet, [convergence.marketId]);
+          const info = hedgeInfo.get(convergence.marketId);
+          hedgeResults.set(sw.wallet, info?.hasHedge ?? false);
+        }
+
+        return {
+          ...convergence,
+          sharpWallets: convergence.sharpWallets.map((sw) => ({
+            ...sw,
+            isHedged: hedgeResults.get(sw.wallet) ?? false,
+          })),
+        };
+      })
+    );
 
     // Fetch last activity for wallets that have profiles (potential dormant sharps)
     const potentialDormantWallets = Array.from(walletProfiles.entries())
@@ -255,6 +278,7 @@ export async function GET(req: NextRequest) {
           size: w.size,
           value: w.value,
           valueFormatted: formatMoney(w.value),
+          isHedged: w.isHedged ?? false,
         })),
       })),
       // Dormant sharp alerts (7+ days inactive, now trading)

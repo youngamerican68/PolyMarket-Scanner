@@ -55,6 +55,7 @@ interface SharpConvergence {
     size: number
     value: number
     valueFormatted: string
+    isHedged: boolean
   }>
 }
 
@@ -362,15 +363,20 @@ export default function ReportPage() {
                   <p className="text-poly-muted text-xs font-medium">Sharp wallets betting on this:</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                     {convergence.sharpWallets.map((w) => (
-                      <div key={w.wallet} className="bg-black/30 rounded p-2 text-sm">
-                        <a
-                          href={`https://polymarket.com/@${w.name}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-poly-blue hover:underline font-medium"
-                        >
-                          {w.name || w.wallet.slice(0, 10) + '...'}
-                        </a>
+                      <div key={w.wallet} className={`bg-black/30 rounded p-2 text-sm ${w.isHedged ? 'opacity-60' : ''}`}>
+                        <div className="flex items-center gap-1">
+                          <a
+                            href={`https://polymarket.com/@${w.name}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-poly-blue hover:underline font-medium"
+                          >
+                            {w.name || w.wallet.slice(0, 10) + '...'}
+                          </a>
+                          {w.isHedged && (
+                            <span className="text-amber-400 text-xs" title="Has positions on both sides - likely a hedge">⚠️ Hedged</span>
+                          )}
+                        </div>
                         <p className="text-poly-muted text-xs">
                           PnL: <span className="text-poly-green">{w.historicalPnlFormatted}</span>
                           <span className="mx-1">|</span>
