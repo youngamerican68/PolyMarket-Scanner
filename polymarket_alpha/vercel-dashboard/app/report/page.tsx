@@ -200,7 +200,7 @@ export default function ReportPage() {
         <div className="bg-red-900/30 border border-red-500 rounded-lg p-4">
           <p className="text-red-400">Error: {error}</p>
           <button
-            onClick={fetchReport}
+            onClick={() => fetchReport(oddsFilter)}
             className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded"
           >
             Retry
@@ -230,7 +230,7 @@ export default function ReportPage() {
           </div>
           <div className="text-right">
             <button
-              onClick={fetchReport}
+              onClick={() => fetchReport(oddsFilter)}
               disabled={loading}
               className="px-4 py-2 bg-poly-green text-black font-medium rounded hover:bg-poly-green/80 disabled:opacity-50"
             >
