@@ -121,10 +121,11 @@ export default function ReportPage() {
   const [sortField, setSortField] = useState<SortField>('odds')
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
 
-  const fetchReport = async () => {
+  const fetchReport = async (maxOdds?: number) => {
     try {
       setLoading(true)
-      const res = await fetch('/api/daily-report')
+      const url = maxOdds ? `/api/daily-report?maxOdds=${maxOdds}` : '/api/daily-report'
+      const res = await fetch(url)
       if (!res.ok) throw new Error('Failed to fetch report')
       const data = await res.json()
       setReport(data)
@@ -138,11 +139,11 @@ export default function ReportPage() {
   }
 
   useEffect(() => {
-    fetchReport()
+    fetchReport(oddsFilter)
     // Refresh every 10 minutes
-    const interval = setInterval(fetchReport, 10 * 60 * 1000)
+    const interval = setInterval(() => fetchReport(oddsFilter), 10 * 60 * 1000)
     return () => clearInterval(interval)
-  }, [])
+  }, [oddsFilter])
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {

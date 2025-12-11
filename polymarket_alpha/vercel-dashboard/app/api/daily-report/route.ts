@@ -20,16 +20,20 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const fromParam = parseDateParam(searchParams.get("from"));
     const toParam = parseDateParam(searchParams.get("to"));
+    const maxOddsParam = searchParams.get("maxOdds");
 
     // Default: last 24 hours
     const to = toParam ?? new Date();
     const from = fromParam ?? new Date(to.getTime() - 24 * 60 * 60 * 1000);
 
+    // Max odds filter (default 25%)
+    const maxPrice = maxOddsParam ? parseFloat(maxOddsParam) : 0.25;
+
     // Fetch longshot trades from database (populated by collector)
     const rawTrades = await fetchTradesFromDB({
       from,
       to,
-      maxPrice: 0.25, // <25% odds = longshots
+      maxPrice,
     });
 
     // Enrich with settlement data for z-score calculation
@@ -45,7 +49,7 @@ export async function GET(req: NextRequest) {
       trades,
       {
         minLongshots: 5,
-        maxPrice: 0.25,
+        maxPrice,
         minAnomalyScore: 0.01, // Filter out wallets with no anomaly
       },
       walletProfiles
