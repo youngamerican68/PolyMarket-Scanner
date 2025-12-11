@@ -280,13 +280,27 @@ export async function fetchOpenPositions(wallet: string): Promise<OpenPosition[]
 
 /**
  * Check if a wallet has positions on both sides of a market.
- * Returns a map of marketId -> { hasHedge: boolean, otherSideSize: number }
+ * Returns a map of marketId -> hedge info
+ *
+ * Note: Only detects hedges for OPEN positions. If position is closed/sold,
+ * we cannot determine if it was hedged.
  */
 export async function detectHedgedPositions(
   wallet: string,
   marketIds: string[]
-): Promise<Map<string, { hasHedge: boolean; otherOutcome: string; otherSideSize: number; otherSideValue: number }>> {
-  const results = new Map<string, { hasHedge: boolean; otherOutcome: string; otherSideSize: number; otherSideValue: number }>();
+): Promise<Map<string, { hasHedge: boolean; positionFound: boolean; otherOutcome: string; otherSideSize: number; otherSideValue: number }>> {
+  const results = new Map<string, { hasHedge: boolean; positionFound: boolean; otherOutcome: string; otherSideSize: number; otherSideValue: number }>();
+
+  // Initialize all markets as not found
+  for (const marketId of marketIds) {
+    results.set(marketId, {
+      hasHedge: false,
+      positionFound: false,
+      otherOutcome: '',
+      otherSideSize: 0,
+      otherSideValue: 0,
+    });
+  }
 
   try {
     const positions = await fetchOpenPositions(wallet);
@@ -305,24 +319,27 @@ export async function detectHedgedPositions(
 
       if (marketPositions.length > 1) {
         // Has multiple positions in same market = hedged
-        // Find the larger position (likely the "real" bet)
         const sorted = marketPositions.sort((a, b) => (b.size * b.avgPrice) - (a.size * a.avgPrice));
-        const otherSide = sorted[1]; // Second largest position
+        const otherSide = sorted[1];
 
         results.set(marketId, {
           hasHedge: true,
+          positionFound: true,
           otherOutcome: otherSide.outcome,
           otherSideSize: otherSide.size,
           otherSideValue: otherSide.size * otherSide.avgPrice,
         });
-      } else {
+      } else if (marketPositions.length === 1) {
+        // Single position = not hedged
         results.set(marketId, {
           hasHedge: false,
+          positionFound: true,
           otherOutcome: '',
           otherSideSize: 0,
           otherSideValue: 0,
         });
       }
+      // If length === 0, keep the default (positionFound: false)
     }
   } catch (err) {
     console.error("Error detecting hedged positions:", err);

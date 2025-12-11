@@ -186,7 +186,9 @@ export async function GET(req: NextRequest) {
         for (const sw of walletsToCheck) {
           const hedgeInfo = await detectHedgedPositions(sw.wallet, [convergence.marketId]);
           const info = hedgeInfo.get(convergence.marketId);
-          hedgeResults.set(sw.wallet, info?.hasHedge ?? false);
+          // Only mark as hedged if we found the position AND it has both sides
+          // If position not found (sold/closed), we can't determine hedge status
+          hedgeResults.set(sw.wallet, info?.positionFound && info?.hasHedge ? true : false);
         }
 
         return {
