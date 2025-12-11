@@ -49,6 +49,7 @@ export type OpenPosition = {
   outcome: string;
   size: number;
   avgPrice: number;
+  curPrice: number;
 };
 
 export type WalletProfile = {
@@ -271,6 +272,7 @@ export async function fetchOpenPositions(wallet: string): Promise<OpenPosition[]
         outcome: String(p.outcome ?? ""),
         size: Number(p.size ?? 0),
         avgPrice: Number(p.avgPrice ?? 0),
+        curPrice: Number(p.curPrice ?? 0),
       }));
   } catch (err) {
     console.error("Error fetching open positions:", err);
@@ -440,6 +442,16 @@ export async function fetchWalletProfile(wallet: string): Promise<WalletProfile 
         }
       }
     }
+
+    // Also fetch open positions and calculate unrealized PnL
+    // This is critical - without it, we only count realized gains and miss unrealized losses
+    const openPositions = await fetchOpenPositions(wallet);
+    let unrealizedPnl = 0;
+    for (const pos of openPositions) {
+      // Unrealized PnL = size * (current price - entry price)
+      unrealizedPnl += pos.size * (pos.curPrice - pos.avgPrice);
+    }
+    totalPnl += unrealizedPnl;
 
     return {
       wallet,
