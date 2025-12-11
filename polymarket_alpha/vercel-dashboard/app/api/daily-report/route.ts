@@ -161,6 +161,9 @@ export async function GET(req: NextRequest) {
               ? `${profile.longshotWins}W/${profile.longshotLosses}L (${profile.longshotSoldEarly} sold)`
               : `${profile.longshotWins}W/${profile.longshotLosses}L`
             : null,
+          // Flag new wallets (5 or fewer historical positions)
+          totalPositions: profile?.totalPositions ?? 0,
+          isNewWallet: (profile?.totalPositions ?? 0) <= 5,
         };
       });
 

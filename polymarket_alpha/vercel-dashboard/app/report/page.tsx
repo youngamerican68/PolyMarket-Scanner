@@ -115,6 +115,8 @@ interface ReportData {
     potentialFormatted: string
     longshotRecord: string | null
     positionStatus: 'holding' | 'sold' | 'unknown'
+    totalPositions: number
+    isNewWallet: boolean
   }>
   sharpConvergences: SharpConvergence[]
   dormantSharps: DormantSharp[]
@@ -670,14 +672,19 @@ export default function ReportPage() {
                         </a>
                       </td>
                       <td className="p-3 text-sm">
-                        <a
-                          href={`https://polymarket.com/@${trade.name}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-poly-blue hover:underline"
-                        >
-                          {trade.name || trade.wallet.slice(0, 10) + '...'}
-                        </a>
+                        <div className="flex items-center gap-1">
+                          <a
+                            href={`https://polymarket.com/@${trade.name}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-poly-blue hover:underline"
+                          >
+                            {trade.name || trade.wallet.slice(0, 10) + '...'}
+                          </a>
+                          {trade.isNewWallet && (
+                            <span className="text-emerald-400 text-xs" title={`New wallet - only ${trade.totalPositions} historical positions`}>🆕</span>
+                          )}
+                        </div>
                       </td>
                       <td className="p-3 text-center text-poly-muted text-xs">
                         {trade.longshotRecord || '—'}
