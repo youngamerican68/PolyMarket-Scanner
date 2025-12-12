@@ -116,14 +116,14 @@ export async function GET(req: NextRequest) {
       openPositionsByWallet.set(wallet, positions);
     }
 
-    // Helper to check if a position is still open and has value
+    // Helper to check if a position is still open and not settled
     const getPositionStatus = (wallet: string, marketId: string, outcome: string): 'holding' | 'sold' | 'unknown' => {
       const openPositions = openPositionsByWallet.get(wallet);
       if (!openPositions) return 'unknown';
 
-      // Find the matching position with value > 0
+      // Find the matching position that's not settled (curPrice between 0 and 1 exclusive)
       const position = openPositions.find(
-        (p) => p.conditionId === marketId && p.outcome === outcome && p.size > 0 && p.curPrice > 0
+        (p) => p.conditionId === marketId && p.outcome === outcome && p.size > 0 && p.curPrice > 0 && p.curPrice < 1
       );
 
       return position ? 'holding' : 'sold';
