@@ -184,23 +184,27 @@ export async function GET(req: NextRequest) {
       maxPositions: 500,      // <500 positions = selective trader
     });
 
-    // Detect hedged positions for sharp wallets in convergences
-    // For each convergence, check if sharps have positions on both sides
-    const sharpConvergences = await Promise.all(
+    // Detect hedged positions and filter out settled markets
+    // For each convergence, check if sharps still have open positions
+    const sharpConvergencesWithStatus = await Promise.all(
       sharpConvergencesRaw.map(async (convergence) => {
         const walletsToCheck = convergence.sharpWallets.slice(0, 10); // Limit API calls
         const hedgeResults = new Map<string, boolean>();
+        const positionFoundResults = new Map<string, boolean>();
 
         for (const sw of walletsToCheck) {
           const hedgeInfo = await detectHedgedPositions(sw.wallet, [convergence.marketId]);
           const info = hedgeInfo.get(convergence.marketId);
-          // Only mark as hedged if we found the position AND it has both sides
-          // If position not found (sold/closed), we can't determine hedge status
+          positionFoundResults.set(sw.wallet, info?.positionFound ?? false);
           hedgeResults.set(sw.wallet, info?.positionFound && info?.hasHedge ? true : false);
         }
 
+        // Check if any wallet still has an open position (market not settled)
+        const anyPositionOpen = Array.from(positionFoundResults.values()).some(found => found);
+
         return {
           ...convergence,
+          isSettled: !anyPositionOpen, // If no positions found, market is settled
           sharpWallets: convergence.sharpWallets.map((sw) => ({
             ...sw,
             isHedged: hedgeResults.get(sw.wallet) ?? false,
@@ -208,6 +212,9 @@ export async function GET(req: NextRequest) {
         };
       })
     );
+
+    // Filter out settled markets - only show actionable alerts
+    const sharpConvergences = sharpConvergencesWithStatus.filter(c => !c.isSettled);
 
     // Fetch last activity for wallets that have profiles (potential dormant sharps)
     const potentialDormantWallets = Array.from(walletProfiles.entries())
