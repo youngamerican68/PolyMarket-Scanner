@@ -99,13 +99,11 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // Get top 50 aggregated positions by lowest odds first
-    // Filter to minimum $5K bet size to focus on high-conviction bets
+    // Get all aggregated positions with $5K+ bet size, sorted by lowest odds
     const MIN_BET_VALUE = 5000;
     const topAggregated = Array.from(aggregatedTrades.values())
       .filter((t) => t.totalValue >= MIN_BET_VALUE)
-      .sort((a, b) => a.avgPrice - b.avgPrice)
-      .slice(0, 50);
+      .sort((a, b) => a.avgPrice - b.avgPrice);
 
     // Fetch open positions for all wallets in topAggregated to check if still holding
     const walletsToCheck = Array.from(new Set(topAggregated.map((t) => t.wallet)));
