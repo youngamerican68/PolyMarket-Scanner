@@ -129,8 +129,9 @@ export async function GET(req: NextRequest) {
       return isHolding ? 'holding' : 'sold';
     };
 
-    // Build topLongshots with position status
-    const topLongshots = topAggregated.map((t) => {
+    // Build topLongshots with position status, filter out sold/settled positions
+    const topLongshots = topAggregated
+      .map((t) => {
         const profile = walletProfiles.get(t.wallet);
         const positionStatus = getPositionStatus(t.wallet, t.marketId, t.outcome);
 
@@ -165,7 +166,9 @@ export async function GET(req: NextRequest) {
           totalPositions: profile?.totalPositions ?? 0,
           isNewWallet: (profile?.totalPositions ?? 0) <= 5,
         };
-      });
+      })
+      // Only show positions that are still being held (not sold or settled)
+      .filter((t) => t.positionStatus === 'holding');
 
     // Summary stats
     const summary = {
