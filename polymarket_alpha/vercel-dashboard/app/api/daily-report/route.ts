@@ -118,23 +118,26 @@ export async function GET(req: NextRequest) {
     );
 
     // Helper to check if a position is still open and not settled
-    const getPositionStatus = (wallet: string, marketId: string, outcome: string): 'holding' | 'sold' | 'unknown' => {
+    const getPositionData = (wallet: string, marketId: string, outcome: string): { status: 'holding' | 'sold' | 'unknown', totalPosition: number, curPrice: number } => {
       const openPositions = openPositionsByWallet.get(wallet);
-      if (!openPositions) return 'unknown';
+      if (!openPositions) return { status: 'unknown', totalPosition: 0, curPrice: 0 };
 
       // Find the matching position that's not settled (curPrice between 0 and 1 exclusive)
       const position = openPositions.find(
         (p) => p.conditionId === marketId && p.outcome === outcome && p.size > 0 && p.curPrice > 0 && p.curPrice < 1
       );
 
-      return position ? 'holding' : 'sold';
+      if (position) {
+        return { status: 'holding', totalPosition: position.size, curPrice: position.curPrice };
+      }
+      return { status: 'sold', totalPosition: 0, curPrice: 0 };
     };
 
     // Build topLongshots with position status, filter out sold/settled positions
     const topLongshots = topAggregated
       .map((t) => {
         const profile = walletProfiles.get(t.wallet);
-        const positionStatus = getPositionStatus(t.wallet, t.marketId, t.outcome);
+        const positionData = getPositionData(t.wallet, t.marketId, t.outcome);
 
         return {
           id: `${t.wallet}:${t.marketId}:${t.outcome}`,
@@ -148,11 +151,20 @@ export async function GET(req: NextRequest) {
           size: t.totalSize,
           value: t.totalValue,
           potential: t.totalSize,
+          // Total position from Polymarket (their full holding, not just 24h)
+          totalPosition: positionData.totalPosition,
+          totalPositionFormatted: formatMoney(positionData.totalPosition),
+          // Total potential payout based on full position
+          totalPotential: positionData.totalPosition,
+          totalPotentialFormatted: formatMoney(positionData.totalPosition),
+          // Current market odds
+          currentOdds: positionData.curPrice,
+          currentOddsFormatted: formatOdds(positionData.curPrice),
           oddsFormatted: formatOdds(t.avgPrice),
           valueFormatted: formatMoney(t.totalValue),
           potentialFormatted: formatMoney(t.totalSize),
           tradeCount: t.tradeCount,
-          positionStatus,
+          positionStatus: positionData.status,
           // Trader's historical longshot record (held to settlement only)
           longshotWins: profile?.longshotWins ?? null,
           longshotLosses: profile?.longshotLosses ?? null,
@@ -173,15 +185,12 @@ export async function GET(req: NextRequest) {
 
     // Debug: count how many $5K+ trades exist and their statuses
     const allWithStatus = topAggregated.map((t) => {
-      const openPositions = openPositionsByWallet.get(t.wallet) || [];
-      const position = openPositions.find(
-        (p) => p.conditionId === t.marketId && p.outcome === t.outcome
-      );
+      const posData = getPositionData(t.wallet, t.marketId, t.outcome);
       return {
         title: t.title.slice(0, 40),
-        status: getPositionStatus(t.wallet, t.marketId, t.outcome),
+        status: posData.status,
         value: t.totalValue,
-        curPrice: position?.curPrice ?? -1,
+        curPrice: posData.curPrice,
       };
     });
     const soldTrades = allWithStatus.filter(t => t.status === 'sold');

@@ -110,6 +110,12 @@ interface ReportData {
     size: number
     value: number
     potential: number
+    totalPosition: number
+    totalPositionFormatted: string
+    totalPotential: number
+    totalPotentialFormatted: string
+    currentOdds: number
+    currentOddsFormatted: string
     oddsFormatted: string
     valueFormatted: string
     potentialFormatted: string
@@ -500,12 +506,17 @@ export default function ReportPage() {
                   <th
                     className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
                     onClick={() => handleSort('value')}
+                    title="Amount added to this position in last 24h"
                   >
-                    Value<SortIcon field="value" />
+                    24h Value<SortIcon field="value" />
+                  </th>
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Total position size on Polymarket">
+                    Total Position
                   </th>
                   <th
                     className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
                     onClick={() => handleSort('potential')}
+                    title="Potential payout if bet wins (based on total position)"
                   >
                     Potential<SortIcon field="potential" />
                   </th>
@@ -517,7 +528,7 @@ export default function ReportPage() {
                   if (filteredTrades.length === 0) {
                     return (
                       <tr>
-                        <td className="p-4 text-center text-poly-muted" colSpan={7}>
+                        <td className="p-4 text-center text-poly-muted" colSpan={8}>
                           No trades found in {currentFilter.label} odds range.
                         </td>
                       </tr>
@@ -566,7 +577,8 @@ export default function ReportPage() {
                       </td>
                       <td className="p-3 text-right text-poly-yellow">{trade.oddsFormatted}</td>
                       <td className="p-3 text-right text-poly-green">{trade.valueFormatted}</td>
-                      <td className="p-3 text-right text-poly-blue">{trade.potentialFormatted}</td>
+                      <td className="p-3 text-right text-white font-medium">{trade.totalPositionFormatted || trade.valueFormatted}</td>
+                      <td className="p-3 text-right text-poly-blue">{trade.totalPotentialFormatted || trade.potentialFormatted}</td>
                     </tr>
                   ))
                 })()}
