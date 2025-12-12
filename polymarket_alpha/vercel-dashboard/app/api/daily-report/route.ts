@@ -208,6 +208,7 @@ export async function GET(req: NextRequest) {
         status: posData.status,
         value: t.totalValue,
         curPrice: posData.curPrice,
+        avgPrice: t.avgPrice,
       };
     });
     const soldTrades = allWithStatus.filter(t => t.status === 'sold');
@@ -220,7 +221,13 @@ export async function GET(req: NextRequest) {
       soldWon: won,
       soldLost: lost,
     });
-    console.log('Sold trades detail:', soldTrades);
+    // Log all $5K+ trades sorted by odds to verify nothing under 18% is missed
+    console.log('All $5K+ trades by odds:', allWithStatus.sort((a, b) => a.avgPrice - b.avgPrice).map(t => ({
+      odds: `${(t.avgPrice * 100).toFixed(1)}%`,
+      status: t.status,
+      value: `$${(t.value/1000).toFixed(1)}K`,
+      title: t.title,
+    })));
 
     // Summary stats
     const summary = {
