@@ -371,6 +371,13 @@ export function detectSharpConvergence(
       const totalValue = qualifyingWallets.reduce((sum, w) => sum + w.value, 0);
       const avgPrice = marketTrades.reduce((sum, t) => sum + t.price, 0) / marketTrades.length;
 
+      // Skip if market appears settled (any trade marked settled, or all positions sold/closed)
+      const anySettled = marketTrades.some(t => t.settled === true);
+      const allSold = marketTrades.every(t => t.positionStatus === 'sold');
+      if (anySettled || allSold) {
+        continue; // Skip this convergence - market is over
+      }
+
       // Sort by bet size descending (conviction signal)
       qualifyingWallets.sort((a, b) => b.value - a.value);
 
