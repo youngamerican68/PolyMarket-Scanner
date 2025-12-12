@@ -316,8 +316,8 @@ export function detectSharpConvergence(
     maxPositions = 500,        // Only include selective traders, not algos with 10K+ positions
   } = opts ?? {};
 
-  // Filter to longshot trades only
-  const longshots = trades.filter(t => t.price <= maxPrice);
+  // Filter to longshot trades only, exclude already settled markets
+  const longshots = trades.filter(t => t.price <= maxPrice && !t.settled);
 
   // Group by market + outcome
   const byMarketOutcome = new Map<string, Trade[]>();
