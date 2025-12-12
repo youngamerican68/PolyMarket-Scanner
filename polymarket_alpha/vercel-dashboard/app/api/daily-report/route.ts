@@ -134,7 +134,7 @@ export async function GET(req: NextRequest) {
     };
 
     // Build topLongshots with position status, filter out sold/settled positions
-    const topLongshots = topAggregated
+    const topLongshotsRaw = topAggregated
       .map((t) => {
         const profile = walletProfiles.get(t.wallet);
         const positionData = getPositionData(t.wallet, t.marketId, t.outcome);
@@ -182,6 +182,23 @@ export async function GET(req: NextRequest) {
       })
       // Only show positions that are still being held (not sold or settled)
       .filter((t) => t.positionStatus === 'holding');
+
+    // Detect hedged positions for top longshots
+    const hedgeCheckMap = new Map<string, boolean>();
+    for (const t of topLongshotsRaw) {
+      const key = `${t.wallet}:${t.marketId}`;
+      if (!hedgeCheckMap.has(key)) {
+        const hedgeInfo = await detectHedgedPositions(t.wallet, [t.marketId]);
+        const info = hedgeInfo.get(t.marketId);
+        hedgeCheckMap.set(key, info?.hasHedge ?? false);
+      }
+    }
+
+    // Add isHedged flag to topLongshots
+    const topLongshots = topLongshotsRaw.map((t) => ({
+      ...t,
+      isHedged: hedgeCheckMap.get(`${t.wallet}:${t.marketId}`) ?? false,
+    }));
 
     // Debug: count how many $5K+ trades exist and their statuses
     const allWithStatus = topAggregated.map((t) => {

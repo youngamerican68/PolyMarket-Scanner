@@ -123,6 +123,7 @@ interface ReportData {
     positionStatus: 'holding' | 'sold' | 'unknown'
     totalPositions: number
     isNewWallet: boolean
+    isHedged: boolean
   }>
   sharpConvergences: SharpConvergence[]
   dormantSharps: DormantSharp[]
@@ -565,15 +566,20 @@ export default function ReportPage() {
                         {trade.longshotRecord || '—'}
                       </td>
                       <td className="p-3 text-center text-xs">
-                        {trade.positionStatus === 'holding' && (
-                          <span className="text-poly-green" title="Still holding this position">Holding</span>
-                        )}
-                        {trade.positionStatus === 'sold' && (
-                          <span className="text-poly-red" title="Position has been sold">Sold</span>
-                        )}
-                        {trade.positionStatus === 'unknown' && (
-                          <span className="text-poly-muted">—</span>
-                        )}
+                        <div className="flex items-center justify-center gap-1">
+                          {trade.positionStatus === 'holding' && (
+                            <span className="text-poly-green" title="Still holding this position">Holding</span>
+                          )}
+                          {trade.positionStatus === 'sold' && (
+                            <span className="text-poly-red" title="Position has been sold">Sold</span>
+                          )}
+                          {trade.positionStatus === 'unknown' && (
+                            <span className="text-poly-muted">—</span>
+                          )}
+                          {trade.isHedged && (
+                            <span className="text-amber-400" title="Wallet holds positions on both sides of this market">⚖️</span>
+                          )}
+                        </div>
                       </td>
                       <td className="p-3 text-right text-poly-yellow">{trade.oddsFormatted}</td>
                       <td className="p-3 text-right text-poly-green">{trade.valueFormatted}</td>
