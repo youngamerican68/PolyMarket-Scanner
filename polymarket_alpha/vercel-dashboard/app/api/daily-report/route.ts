@@ -151,10 +151,10 @@ export async function GET(req: NextRequest) {
           size: t.totalSize,
           value: t.totalValue,
           potential: t.totalSize,
-          // Total position from Polymarket (their full holding, not just 24h)
-          totalPosition: positionData.totalPosition,
-          totalPositionFormatted: formatMoney(positionData.totalPosition),
-          // Total potential payout based on full position
+          // Total position VALUE from Polymarket (size * curPrice)
+          totalPosition: positionData.totalPosition * positionData.curPrice,
+          totalPositionFormatted: formatMoney(positionData.totalPosition * positionData.curPrice),
+          // Total potential payout if they win (full share count = payout at $1 each)
           totalPotential: positionData.totalPosition,
           totalPotentialFormatted: formatMoney(positionData.totalPosition),
           // Current market odds
