@@ -11,6 +11,16 @@ export function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
+  // Skip auth for cron job endpoint (Vercel cron can't provide auth)
+  const url = new URL(request.url)
+  if (url.pathname === '/api/collect-trades') {
+    // Verify it's from Vercel cron (has the special header)
+    const cronSecret = request.headers.get('x-vercel-cron')
+    if (cronSecret) {
+      return NextResponse.next()
+    }
+  }
+
   // Check for auth cookie
   const authCookie = request.cookies.get('dashboard_auth')
   if (authCookie?.value === PROTECTED) {
