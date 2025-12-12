@@ -116,17 +116,24 @@ export async function GET(req: NextRequest) {
       openPositionsByWallet.set(wallet, positions);
     }
 
-    // Helper to check if a position is still open
-    const getPositionStatus = (wallet: string, marketId: string, outcome: string): 'holding' | 'sold' | 'unknown' => {
+    // Helper to check if a position is still open and not settled
+    const getPositionStatus = (wallet: string, marketId: string, outcome: string): 'holding' | 'sold' | 'settled' | 'unknown' => {
       const openPositions = openPositionsByWallet.get(wallet);
       if (!openPositions) return 'unknown';
 
-      // Check if there's an open position matching this market and outcome
-      const isHolding = openPositions.some(
+      // Find the matching position
+      const position = openPositions.find(
         (p) => p.conditionId === marketId && p.outcome === outcome && p.size > 0
       );
 
-      return isHolding ? 'holding' : 'sold';
+      if (!position) return 'sold';
+
+      // If curPrice is 0 or 1 (or very close), the market has settled
+      if (position.curPrice <= 0.01 || position.curPrice >= 0.99) {
+        return 'settled';
+      }
+
+      return 'holding';
     };
 
     // Build topLongshots with position status, filter out sold/settled positions
