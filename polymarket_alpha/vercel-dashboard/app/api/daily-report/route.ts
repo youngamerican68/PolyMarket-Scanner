@@ -181,7 +181,7 @@ export async function GET(req: NextRequest) {
         title: t.title.slice(0, 40),
         status: getPositionStatus(t.wallet, t.marketId, t.outcome),
         value: t.totalValue,
-        curPrice: position?.curPrice ?? 'not found',
+        curPrice: position?.curPrice ?? -1,
       };
     });
     const soldTrades = allWithStatus.filter(t => t.status === 'sold');

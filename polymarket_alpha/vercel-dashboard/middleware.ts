@@ -28,7 +28,6 @@ export function middleware(request: NextRequest) {
   }
 
   // Check for password in query param (for initial login)
-  const url = new URL(request.url)
   const password = url.searchParams.get('password')
 
   if (password === PROTECTED) {
