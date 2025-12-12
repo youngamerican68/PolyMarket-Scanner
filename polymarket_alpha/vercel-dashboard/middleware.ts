@@ -108,5 +108,6 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/', '/report', '/api/:path*'],
+  // Exclude /api/collect-trades from middleware (needs to be accessible by Vercel cron)
+  matcher: ['/', '/report', '/api/daily-report', '/api/suspicious'],
 }
