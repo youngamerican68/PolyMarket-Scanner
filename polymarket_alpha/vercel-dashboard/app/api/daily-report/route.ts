@@ -229,6 +229,18 @@ export async function GET(req: NextRequest) {
       title: t.title,
     })));
 
+    // Log trades under 10% odds regardless of size
+    const under10Trades = Array.from(aggregatedTrades.values())
+      .filter((t) => t.avgPrice < 0.10)
+      .sort((a, b) => a.avgPrice - b.avgPrice)
+      .slice(0, 20);
+    console.log('Trades under 10% odds (any size, top 20):', under10Trades.map(t => ({
+      odds: `${(t.avgPrice * 100).toFixed(1)}%`,
+      value: `$${t.totalValue.toFixed(0)}`,
+      title: t.title.slice(0, 35),
+      wallet: t.name || t.wallet.slice(0, 10),
+    })));
+
     // Summary stats
     const summary = {
       totalTrades: trades.length,
