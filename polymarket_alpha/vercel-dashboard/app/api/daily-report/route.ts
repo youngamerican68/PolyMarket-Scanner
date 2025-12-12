@@ -168,7 +168,8 @@ export async function GET(req: NextRequest) {
         };
       })
       // Only show positions that are still being held (not sold or settled)
-      .filter((t) => t.positionStatus === 'holding');
+      // Include 'unknown' since we only check first 20 wallets for API limits
+      .filter((t) => t.positionStatus === 'holding' || t.positionStatus === 'unknown');
 
     // Summary stats
     const summary = {
