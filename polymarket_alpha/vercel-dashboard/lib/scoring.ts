@@ -304,14 +304,14 @@ export function detectSharpConvergence(
   walletProfiles: Map<string, WalletProfile>,
   opts?: {
     minBetValue?: number;      // Minimum bet size to be included (default $5K)
-    minWalletCount?: number;   // Minimum wallets on same bet (default 3)
+    minWalletCount?: number;   // Minimum wallets on same bet (default 2)
     maxPrice?: number;         // Max odds to consider (default 0.25)
     maxPositions?: number;     // Max positions to be considered (default 500) - filters out algos/market makers
   }
 ): SharpConvergence[] {
   const {
     minBetValue = 5000,        // $5K+ bet = high conviction
-    minWalletCount = 3,        // 3+ wallets = convergence signal
+    minWalletCount = 2,        // 2+ wallets = convergence signal
     maxPrice = 0.25,
     maxPositions = 500,        // Only include selective traders, not algos with 10K+ positions
   } = opts ?? {};
