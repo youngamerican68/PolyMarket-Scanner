@@ -171,6 +171,31 @@ export async function GET(req: NextRequest) {
       // Only show positions that are still being held (not sold or settled)
       .filter((t) => t.positionStatus === 'holding');
 
+    // Debug: count how many $5K+ trades exist and their statuses
+    const allWithStatus = topAggregated.map((t) => {
+      const openPositions = openPositionsByWallet.get(t.wallet) || [];
+      const position = openPositions.find(
+        (p) => p.conditionId === t.marketId && p.outcome === t.outcome
+      );
+      return {
+        title: t.title.slice(0, 40),
+        status: getPositionStatus(t.wallet, t.marketId, t.outcome),
+        value: t.totalValue,
+        curPrice: position?.curPrice ?? 'not found',
+      };
+    });
+    const soldTrades = allWithStatus.filter(t => t.status === 'sold');
+    const won = soldTrades.filter(t => t.curPrice === 1 || t.curPrice >= 0.99).length;
+    const lost = soldTrades.filter(t => t.curPrice === 0 || t.curPrice <= 0.01).length;
+    console.log('$5K+ trade status breakdown:', {
+      total5kPlus: topAggregated.length,
+      holding: allWithStatus.filter(t => t.status === 'holding').length,
+      sold: soldTrades.length,
+      soldWon: won,
+      soldLost: lost,
+    });
+    console.log('Sold trades detail:', soldTrades);
+
     // Summary stats
     const summary = {
       totalTrades: trades.length,
