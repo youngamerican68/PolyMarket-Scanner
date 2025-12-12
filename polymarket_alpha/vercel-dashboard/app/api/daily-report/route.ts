@@ -175,11 +175,11 @@ export async function GET(req: NextRequest) {
       totalPotential: trades.reduce((sum, t) => sum + t.size, 0),
     };
 
-    // Detect convergence: 3+ selective wallets betting $5K+ on same longshot
+    // Detect convergence: 2+ selective wallets betting $5K+ on same longshot
     // No PnL filter - bet size + selectivity are the signals
     const sharpConvergencesRaw = detectSharpConvergence(trades, walletProfiles, {
       minBetValue: 5000,      // $5K+ bet = high conviction
-      minWalletCount: 3,      // 3+ wallets = convergence
+      minWalletCount: 2,      // 2+ wallets = convergence
       maxPrice,
       maxPositions: 500,      // <500 positions = selective trader
     });

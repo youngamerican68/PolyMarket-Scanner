@@ -334,7 +334,7 @@ export default function ReportPage() {
           <h2 className="text-xl font-bold flex items-center">
             <span className="w-3 h-3 bg-red-500 rounded-full mr-3 animate-pulse"></span>
             Sharp Convergence Alerts
-            <span className="text-sm font-normal text-poly-muted ml-2">(3+ sharps on same bet)</span>
+            <span className="text-sm font-normal text-poly-muted ml-2">(2+ wallets, $5K+ each)</span>
           </h2>
           <div className="space-y-3">
             {report.sharpConvergences.map((convergence, i) => (
@@ -382,8 +382,6 @@ export default function ReportPage() {
                           )}
                         </div>
                         <p className="text-poly-muted text-xs">
-                          PnL: <span className="text-poly-green">{w.historicalPnlFormatted}</span>
-                          <span className="mx-1">|</span>
                           Bet: <span className="text-white">{w.valueFormatted}</span>
                           <span className="mx-1">→</span>
                           <span className="text-poly-blue">{w.potentialFormatted}</span>
