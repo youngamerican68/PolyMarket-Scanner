@@ -306,12 +306,14 @@ export function detectSharpConvergence(
     minSharpPnl?: number;      // Minimum historical PnL to be "sharp" (default $10K)
     minSharpCount?: number;    // Minimum sharps on same bet (default 3)
     maxPrice?: number;         // Max odds to consider (default 0.25)
+    maxPositions?: number;     // Max positions to be considered (default 500) - filters out algos/market makers
   }
 ): SharpConvergence[] {
   const {
     minSharpPnl = 10000,
     minSharpCount = 3,
     maxPrice = 0.25,
+    maxPositions = 500,        // Only include selective traders, not algos with 10K+ positions
   } = opts ?? {};
 
   // Filter to longshot trades only
@@ -337,14 +339,17 @@ export function detectSharpConvergence(
       walletTrades.set(t.wallet, arr);
     }
 
-    // Find "sharp" wallets (PnL > threshold)
+    // Find "sharp" wallets (PnL > threshold, positions < max)
+    // Filter out algos/market makers with too many positions
     const sharpWallets: SharpConvergence['sharpWallets'] = [];
 
     for (const [wallet, wTrades] of Array.from(walletTrades.entries())) {
       const profile = walletProfiles.get(wallet);
       const pnl = profile?.totalPnl ?? 0;
+      const positions = profile?.totalPositions ?? 0;
 
-      if (pnl >= minSharpPnl) {
+      // Must have good PnL AND be a selective trader (not an algo)
+      if (pnl >= minSharpPnl && positions < maxPositions) {
         const totalSize = wTrades.reduce((sum, t) => sum + t.size, 0);
         const totalValue = wTrades.reduce((sum, t) => sum + t.price * t.size, 0);
         const name = wTrades[0]?.name || 'Anonymous';

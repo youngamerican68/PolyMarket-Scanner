@@ -100,8 +100,8 @@ export async function GET(req: NextRequest) {
     }
 
     // Get top 50 aggregated positions by lowest odds first
-    // Filter to minimum $1K bet size to remove noise from casual gamblers
-    const MIN_BET_VALUE = 1000;
+    // Filter to minimum $5K bet size to focus on high-conviction bets
+    const MIN_BET_VALUE = 5000;
     const topAggregated = Array.from(aggregatedTrades.values())
       .filter((t) => t.totalValue >= MIN_BET_VALUE)
       .sort((a, b) => a.avgPrice - b.avgPrice)

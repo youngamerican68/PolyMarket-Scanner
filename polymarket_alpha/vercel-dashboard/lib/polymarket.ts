@@ -366,45 +366,53 @@ export async function fetchLast24hLongshots(now: Date = new Date()): Promise<Tra
 
 /**
  * Fetch wallet profile with overall PnL stats.
- * Paginates through ALL closed positions to get accurate total PnL.
+ * Uses dual-sampling: fetches both top winners AND top losers to capture
+ * the extremes that dominate total PnL, avoiding bias from single-direction sorting.
  */
 export async function fetchWalletProfile(wallet: string): Promise<WalletProfile | null> {
   try {
-    // Paginate through ALL closed positions to get accurate PnL
-    // IMPORTANT: Do NOT sort by REALIZEDPNL - this biases towards winners!
-    // For wallets with >500 positions, sorting by PnL DESC misses losses.
-    const positions: any[] = [];
-    const pageSize = 500;
-    const maxPages = 10; // Cap at 5000 positions to avoid excessive API calls
+    // Dual-sampling approach: PnL is dominated by largest wins AND losses
+    // Fetch top 500 winners (DESC) + top 500 losers (ASC) to capture both extremes
+    // This works better than random sampling for heavy traders with 10K+ positions
+    const positionMap = new Map<string, any>(); // Dedupe by asset ID
 
-    for (let page = 0; page < maxPages; page++) {
-      const offset = page * pageSize;
-      const url = `${DATA_API}/closed-positions?user=${wallet}&limit=${pageSize}&offset=${offset}`;
-
+    // Helper to fetch positions with given sort direction
+    const fetchSorted = async (sortDirection: 'ASC' | 'DESC') => {
+      const url = `${DATA_API}/closed-positions?user=${wallet}&limit=500&sortBy=REALIZEDPNL&sortDirection=${sortDirection}`;
       const res = await fetch(url, {
         method: "GET",
         headers: { "Content-Type": "application/json" },
         cache: "no-store",
       });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    };
 
-      if (!res.ok) {
-        if (page === 0) return null; // First page failed
-        break; // Later pages failed, use what we have
-      }
+    // Fetch top winners and top losers in parallel
+    const [topWinners, topLosers] = await Promise.all([
+      fetchSorted('DESC'),
+      fetchSorted('ASC'),
+    ]);
 
-      const pageData = await res.json();
+    // If both failed, return null
+    if (topWinners.length === 0 && topLosers.length === 0) {
+      return null;
+    }
 
-      if (!Array.isArray(pageData) || pageData.length === 0) {
-        break; // No more data
-      }
-
-      positions.push(...pageData);
-
-      // If we got less than pageSize, we've fetched everything
-      if (pageData.length < pageSize) {
-        break;
+    // Combine and dedupe (some positions might appear in both if <1000 total)
+    for (const p of topWinners) {
+      const key = String(p.asset ?? p.conditionId ?? Math.random());
+      positionMap.set(key, p);
+    }
+    for (const p of topLosers) {
+      const key = String(p.asset ?? p.conditionId ?? Math.random());
+      if (!positionMap.has(key)) {
+        positionMap.set(key, p);
       }
     }
+
+    const positions = Array.from(positionMap.values());
 
     if (positions.length === 0) {
       return null;
@@ -475,11 +483,28 @@ export async function fetchWalletProfile(wallet: string): Promise<WalletProfile 
     }
     totalPnl += unrealizedPnl;
 
+    // Fetch actual total position count from /traded endpoint
+    // This is more accurate than positions.length when we sample
+    let totalPositions = positions.length;
+    try {
+      const tradedRes = await fetch(`${DATA_API}/traded?user=${wallet}`, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
+      });
+      if (tradedRes.ok) {
+        const tradedData = await tradedRes.json();
+        totalPositions = tradedData.traded ?? positions.length;
+      }
+    } catch {
+      // Fall back to positions.length if /traded fails
+    }
+
     return {
       wallet,
       name,
       totalPnl,
-      totalPositions: positions.length,
+      totalPositions,
       longshotWins,
       longshotLosses,
       longshotSoldEarly,
