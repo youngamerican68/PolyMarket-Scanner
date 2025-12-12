@@ -107,14 +107,17 @@ export async function GET(req: NextRequest) {
       .sort((a, b) => a.avgPrice - b.avgPrice)
       .slice(0, 50);
 
-    // Fetch open positions for wallets in topAggregated to check if still holding
-    const walletsToCheck = Array.from(new Set(topAggregated.map((t) => t.wallet))).slice(0, 20);
+    // Fetch open positions for all wallets in topAggregated to check if still holding
+    const walletsToCheck = Array.from(new Set(topAggregated.map((t) => t.wallet)));
     const openPositionsByWallet = new Map<string, OpenPosition[]>();
 
-    for (const wallet of walletsToCheck) {
-      const positions = await fetchOpenPositions(wallet);
-      openPositionsByWallet.set(wallet, positions);
-    }
+    // Fetch in parallel for speed (max ~50 wallets)
+    await Promise.all(
+      walletsToCheck.map(async (wallet) => {
+        const positions = await fetchOpenPositions(wallet);
+        openPositionsByWallet.set(wallet, positions);
+      })
+    );
 
     // Helper to check if a position is still open and not settled
     const getPositionStatus = (wallet: string, marketId: string, outcome: string): 'holding' | 'sold' | 'unknown' => {
@@ -168,8 +171,7 @@ export async function GET(req: NextRequest) {
         };
       })
       // Only show positions that are still being held (not sold or settled)
-      // Include 'unknown' since we only check first 20 wallets for API limits
-      .filter((t) => t.positionStatus === 'holding' || t.positionStatus === 'unknown');
+      .filter((t) => t.positionStatus === 'holding');
 
     // Summary stats
     const summary = {
