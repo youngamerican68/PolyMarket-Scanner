@@ -58,7 +58,7 @@ export default function HistoryPage() {
   useEffect(() => {
     async function fetchHistory() {
       try {
-        const res = await fetch('/api/longshot-history')
+        const res = await fetch('/api/longshot-history', { cache: 'no-store' })
         if (!res.ok) throw new Error('Failed to fetch history')
         const json = await res.json()
         setData(json)

@@ -62,6 +62,8 @@ export async function GET() {
 
     const stats = statsResult.rows[0];
 
+    console.log('[longshot-history] Returning', trades.length, 'trades, stats:', stats);
+
     return NextResponse.json({
       trades,
       stats: {
@@ -75,6 +77,11 @@ export async function GET() {
           : null,
       },
       timestamp: new Date().toISOString(),
+    }, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache',
+      }
     });
   } catch (err) {
     console.error("Error fetching history:", err);
