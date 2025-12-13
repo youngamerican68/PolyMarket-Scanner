@@ -1,7 +1,9 @@
-'use client'
-
-import { useState, useEffect } from 'react'
+import { sql } from '@vercel/postgres'
 import Link from 'next/link'
+
+// Force dynamic rendering - fetch fresh data on every request
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
 
 interface HistoricalTrade {
   id: string
@@ -29,12 +31,6 @@ interface HistoryStats {
   winRate: string | null
 }
 
-interface HistoryData {
-  trades: HistoricalTrade[]
-  stats: HistoryStats
-  timestamp: string
-}
-
 function formatMoney(value: number): string {
   if (value >= 1000000) return `$${(value / 1000000).toFixed(1)}M`
   if (value >= 1000) return `$${(value / 1000).toFixed(1)}K`
@@ -50,44 +46,58 @@ function formatDate(timestamp: number): string {
   })
 }
 
-export default function HistoryPage() {
-  const [data, setData] = useState<HistoryData | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+async function getHistoryData(): Promise<{ trades: HistoricalTrade[], stats: HistoryStats }> {
+  const result = await sql`
+    SELECT id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size, value, resolved, won, pnl
+    FROM longshot_history
+    ORDER BY timestamp DESC
+    LIMIT 500
+  `
 
-  useEffect(() => {
-    async function fetchHistory() {
-      try {
-        const res = await fetch('/api/longshot-history', { cache: 'no-store' })
-        if (!res.ok) throw new Error('Failed to fetch history')
-        const json = await res.json()
-        setData(json)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error')
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchHistory()
-  }, [])
+  const trades = result.rows.map((row) => ({
+    id: row.id,
+    wallet: row.wallet,
+    name: row.name || 'Anonymous',
+    marketId: row.market_id,
+    eventSlug: row.event_slug,
+    title: row.title,
+    outcome: row.outcome,
+    timestamp: Number(row.timestamp),
+    price: Number(row.price),
+    size: Number(row.size),
+    value: Number(row.value),
+    resolved: row.resolved,
+    won: row.won,
+    pnl: row.pnl ? Number(row.pnl) : null,
+  }))
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-poly-dark flex items-center justify-center">
-        <div className="text-white text-xl">Loading history...</div>
-      </div>
-    )
+  const statsResult = await sql`
+    SELECT
+      COUNT(*) as total_trades,
+      COUNT(DISTINCT wallet) as unique_wallets,
+      SUM(value) as total_value,
+      COUNT(CASE WHEN resolved = true THEN 1 END) as resolved_count,
+      COUNT(CASE WHEN won = true THEN 1 END) as won_count
+    FROM longshot_history
+  `
+
+  const s = statsResult.rows[0]
+  const stats = {
+    totalTrades: Number(s.total_trades),
+    uniqueWallets: Number(s.unique_wallets),
+    totalValue: Number(s.total_value || 0),
+    resolvedCount: Number(s.resolved_count),
+    wonCount: Number(s.won_count),
+    winRate: s.resolved_count > 0
+      ? (Number(s.won_count) / Number(s.resolved_count) * 100).toFixed(1)
+      : null,
   }
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-poly-dark flex items-center justify-center">
-        <div className="text-red-500 text-xl">Error: {error}</div>
-      </div>
-    )
-  }
+  return { trades, stats }
+}
 
-  if (!data) return null
+export default async function HistoryPage() {
+  const { trades, stats } = await getHistoryData()
 
   return (
     <main className="min-h-screen bg-poly-dark text-white p-8">
@@ -112,24 +122,24 @@ export default function HistoryPage() {
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
           <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
             <div className="text-poly-gray text-sm">Total Trades</div>
-            <div className="text-2xl font-bold text-white">{data.stats.totalTrades}</div>
+            <div className="text-2xl font-bold text-white">{stats.totalTrades}</div>
           </div>
           <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
             <div className="text-poly-gray text-sm">Unique Wallets</div>
-            <div className="text-2xl font-bold text-white">{data.stats.uniqueWallets}</div>
+            <div className="text-2xl font-bold text-white">{stats.uniqueWallets}</div>
           </div>
           <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
             <div className="text-poly-gray text-sm">Total Value</div>
-            <div className="text-2xl font-bold text-poly-green">{formatMoney(data.stats.totalValue)}</div>
+            <div className="text-2xl font-bold text-poly-green">{formatMoney(stats.totalValue)}</div>
           </div>
           <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
             <div className="text-poly-gray text-sm">Resolved</div>
-            <div className="text-2xl font-bold text-white">{data.stats.resolvedCount}</div>
+            <div className="text-2xl font-bold text-white">{stats.resolvedCount}</div>
           </div>
           <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
             <div className="text-poly-gray text-sm">Win Rate</div>
             <div className="text-2xl font-bold text-poly-blue">
-              {data.stats.winRate ? `${data.stats.winRate}%` : 'N/A'}
+              {stats.winRate ? `${stats.winRate}%` : 'N/A'}
             </div>
           </div>
         </div>
@@ -140,7 +150,7 @@ export default function HistoryPage() {
             <h2 className="text-xl font-semibold">All Historical Longshots</h2>
           </div>
 
-          {data.trades.length === 0 ? (
+          {trades.length === 0 ? (
             <div className="p-8 text-center text-poly-gray">
               No trades yet. History will build up as new $5K+ longshots are detected.
             </div>
@@ -159,7 +169,7 @@ export default function HistoryPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-poly-border">
-                  {data.trades.map((trade) => (
+                  {trades.map((trade) => (
                     <tr key={trade.id} className="hover:bg-poly-dark/30">
                       <td className="p-3 text-poly-gray text-sm">
                         {formatDate(trade.timestamp)}
