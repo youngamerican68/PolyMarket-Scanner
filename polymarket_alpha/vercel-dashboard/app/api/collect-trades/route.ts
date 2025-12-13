@@ -211,6 +211,67 @@ async function storeToHistory(trades: RawTrade[]): Promise<number> {
   return inserted;
 }
 
+// Aggregate trades from DB and save qualifying positions to history
+// This catches positions built from multiple smaller trades across different API fetches
+async function syncHistoryFromDb(): Promise<number> {
+  const MIN_VALUE = 5000;
+  const cutoff24h = Math.floor(Date.now() / 1000) - 24 * 60 * 60;
+
+  // Get aggregated positions from trades table (last 24h)
+  const result = await sql`
+    SELECT
+      wallet,
+      name,
+      market_id,
+      event_slug,
+      title,
+      outcome,
+      SUM(size) as total_size,
+      SUM(price * size) as total_value,
+      SUM(price * size) / SUM(size) as avg_price,
+      MAX(timestamp) as latest_timestamp
+    FROM trades
+    WHERE timestamp >= ${cutoff24h}
+    GROUP BY wallet, name, market_id, event_slug, title, outcome
+    HAVING SUM(price * size) >= ${MIN_VALUE}
+  `;
+
+  let inserted = 0;
+
+  for (const row of result.rows) {
+    try {
+      const tradeId = `${row.wallet}-${row.market_id}-${row.outcome}-${row.latest_timestamp}`;
+
+      const insertResult = await sql`
+        INSERT INTO longshot_history (id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size, value)
+        VALUES (
+          ${tradeId},
+          ${row.wallet},
+          ${row.name},
+          ${row.market_id},
+          ${row.event_slug},
+          ${row.title},
+          ${row.outcome},
+          ${row.latest_timestamp},
+          ${Number(row.avg_price)},
+          ${Number(row.total_size)},
+          ${Number(row.total_value)}
+        )
+        ON CONFLICT (id) DO NOTHING
+      `;
+
+      if (insertResult.rowCount && insertResult.rowCount > 0) {
+        inserted++;
+        console.log(`[history-sync] Saved: ${row.name} - ${row.title?.slice(0, 30)} @ ${(Number(row.avg_price) * 100).toFixed(1)}% = $${Number(row.total_value).toFixed(0)}`);
+      }
+    } catch (err) {
+      console.error(`Error syncing to history:`, err);
+    }
+  }
+
+  return inserted;
+}
+
 export async function GET() {
   const startTime = Date.now();
 
@@ -226,9 +287,14 @@ export async function GET() {
     const inserted = await storeTrades(trades);
     console.log(`Inserted ${inserted} new trades`);
 
-    // Store qualifying trades to permanent history
+    // Store qualifying trades to permanent history (from fresh API data)
     const historyInserted = await storeToHistory(trades);
-    console.log(`Inserted ${historyInserted} trades to history`);
+    console.log(`Inserted ${historyInserted} trades to history from API`);
+
+    // Also sync aggregated positions from DB to history
+    // This catches positions built from multiple smaller trades
+    const historySynced = await syncHistoryFromDb();
+    console.log(`Synced ${historySynced} additional trades to history from DB aggregation`);
 
     // Prune old trades (from rolling 48h table only)
     const pruned = await pruneOldTrades();
@@ -250,6 +316,7 @@ export async function GET() {
       fetched: trades.length,
       inserted,
       historyInserted,
+      historySynced,
       pruned,
       totalInDb: totalTrades,
       historyTotal,
