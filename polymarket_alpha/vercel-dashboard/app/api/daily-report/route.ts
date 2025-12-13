@@ -242,13 +242,20 @@ export async function GET(req: NextRequest) {
     })));
 
     // Get earliest trade timestamp to show data coverage
-    const earliestTrade = trades.length > 0
-      ? Math.min(...trades.map(t => Number(t.timestamp)))
-      : null;
+    const timestamps = trades.map(t => Number(t.timestamp)).filter(ts => ts > 0);
+    const earliestTrade = timestamps.length > 0 ? Math.min(...timestamps) : null;
     const dataStartTime = earliestTrade ? new Date(earliestTrade * 1000) : null;
     const hoursOfData = dataStartTime
       ? Math.round((to.getTime() - dataStartTime.getTime()) / (1000 * 60 * 60) * 10) / 10
       : 0;
+
+    console.log('[daily-report] Data coverage:', {
+      tradesCount: trades.length,
+      timestampsCount: timestamps.length,
+      earliestTrade,
+      dataStartTime: dataStartTime?.toISOString(),
+      hoursOfData
+    });
 
     // Summary stats
     const summary = {
