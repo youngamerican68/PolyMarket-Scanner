@@ -242,22 +242,27 @@ export async function GET(req: NextRequest) {
     })));
 
     // Get data coverage: time span from earliest to latest trade
-    const timestamps = trades.map(t => Number(t.timestamp)).filter(ts => ts > 0);
-    const earliestTs = timestamps.length > 0 ? Math.min(...timestamps) : null;
-    const latestTs = timestamps.length > 0 ? Math.max(...timestamps) : null;
+    // trades.timestamp is ISO string, need to parse it
+    const timestamps = trades
+      .map(t => new Date(t.timestamp).getTime())
+      .filter(ts => !isNaN(ts) && ts > 0);
 
-    const dataStartTime = earliestTs ? new Date(earliestTs * 1000) : null;
-    const dataEndTime = latestTs ? new Date(latestTs * 1000) : null;
+    const earliestMs = timestamps.length > 0 ? Math.min(...timestamps) : null;
+    const latestMs = timestamps.length > 0 ? Math.max(...timestamps) : null;
 
-    // Calculate hours from earliest trade to now (or to the latest trade)
-    const hoursOfData = (earliestTs && latestTs)
-      ? Math.round((latestTs - earliestTs) / (60 * 60) * 10) / 10
+    const dataStartTime = earliestMs ? new Date(earliestMs) : null;
+    const dataEndTime = latestMs ? new Date(latestMs) : null;
+
+    // Calculate hours from earliest to latest trade
+    const hoursOfData = (earliestMs && latestMs)
+      ? Math.round((latestMs - earliestMs) / (1000 * 60 * 60) * 10) / 10
       : 0;
 
     console.log('[daily-report] Data coverage:', {
       tradesCount: trades.length,
-      earliestTs,
-      latestTs,
+      timestampsCount: timestamps.length,
+      earliestMs,
+      latestMs,
       dataStartTime: dataStartTime?.toISOString(),
       dataEndTime: dataEndTime?.toISOString(),
       hoursOfData
