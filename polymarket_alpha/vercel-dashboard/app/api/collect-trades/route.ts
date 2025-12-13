@@ -125,6 +125,49 @@ async function pruneOldTrades(): Promise<number> {
   return result.rowCount || 0;
 }
 
+// Store qualifying longshots ($5K+, <25% odds) to permanent history
+async function storeToHistory(trades: RawTrade[]): Promise<number> {
+  let inserted = 0;
+  const MIN_VALUE = 5000; // $5K minimum
+
+  for (const t of trades) {
+    const value = t.price * t.size;
+
+    // Only store trades >= $5K
+    if (value < MIN_VALUE) continue;
+
+    try {
+      const tradeId = `${t.proxyWallet}-${t.conditionId}-${t.timestamp}-${t.size}`;
+
+      const result = await sql`
+        INSERT INTO longshot_history (id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size, value)
+        VALUES (
+          ${tradeId},
+          ${t.proxyWallet},
+          ${t.name || t.pseudonym || "Anonymous"},
+          ${t.conditionId},
+          ${t.eventSlug || t.slug || ""},
+          ${t.title || ""},
+          ${t.outcome || ""},
+          ${t.timestamp},
+          ${t.price},
+          ${t.size},
+          ${value}
+        )
+        ON CONFLICT (id) DO NOTHING
+      `;
+
+      if (result.rowCount && result.rowCount > 0) {
+        inserted++;
+      }
+    } catch (err) {
+      console.error(`Error inserting to history:`, err);
+    }
+  }
+
+  return inserted;
+}
+
 export async function GET() {
   const startTime = Date.now();
 
@@ -140,7 +183,11 @@ export async function GET() {
     const inserted = await storeTrades(trades);
     console.log(`Inserted ${inserted} new trades`);
 
-    // Prune old trades
+    // Store qualifying trades to permanent history
+    const historyInserted = await storeToHistory(trades);
+    console.log(`Inserted ${historyInserted} trades to history`);
+
+    // Prune old trades (from rolling 48h table only)
     const pruned = await pruneOldTrades();
     console.log(`Pruned ${pruned} old trades`);
 
@@ -149,14 +196,20 @@ export async function GET() {
     const totalTrades = countResult.rows[0].count;
     console.log(`Database now has ${totalTrades} trades`);
 
+    const historyCountResult = await sql`SELECT COUNT(*) as count FROM longshot_history`;
+    const historyTotal = historyCountResult.rows[0].count;
+    console.log(`History has ${historyTotal} longshot trades`);
+
     const duration = Date.now() - startTime;
 
     return NextResponse.json({
       success: true,
       fetched: trades.length,
       inserted,
+      historyInserted,
       pruned,
       totalInDb: totalTrades,
+      historyTotal,
       durationMs: duration,
       timestamp: new Date().toISOString(),
     });
