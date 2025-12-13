@@ -23,3 +23,17 @@ jobs:
             echo "Failed with HTTP $http_code"
             exit 1
           fi
+
+      - name: Check market resolutions
+        run: |
+          response=$(curl -s -w "\n%{http_code}" "https://poly-market-scanner.vercel.app/api/check-resolutions")
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | head -n -1)
+
+          echo "Resolution check response: $body"
+          echo "HTTP Code: $http_code"
+
+          if [ "$http_code" -ne 200 ]; then
+            echo "Resolution check failed with HTTP $http_code"
+            exit 1
+          fi
