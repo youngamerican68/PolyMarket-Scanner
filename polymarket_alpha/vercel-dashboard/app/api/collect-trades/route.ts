@@ -223,13 +223,15 @@ async function syncHistoryFromDb(): Promise<number> {
   const cutoff24h = Math.floor(Date.now() / 1000) - 24 * 60 * 60;
 
   // Get aggregated positions from trades table (last 24h)
+  // IMPORTANT: Only GROUP BY wallet, market_id, outcome to match real-time aggregation
+  // Use MAX() for display fields (name, event_slug, title) since they may vary across trades
   const result = await sql`
     SELECT
       wallet,
-      name,
+      MAX(name) as name,
       market_id,
-      event_slug,
-      title,
+      MAX(event_slug) as event_slug,
+      MAX(title) as title,
       outcome,
       SUM(size) as total_size,
       SUM(price * size) as total_value,
@@ -237,7 +239,7 @@ async function syncHistoryFromDb(): Promise<number> {
       MAX(timestamp) as latest_timestamp
     FROM trades
     WHERE timestamp >= ${cutoff24h}
-    GROUP BY wallet, name, market_id, event_slug, title, outcome
+    GROUP BY wallet, market_id, outcome
     HAVING SUM(price * size) >= ${MIN_VALUE}
   `;
 

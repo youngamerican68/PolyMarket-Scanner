@@ -13,7 +13,8 @@ export async function GET() {
     console.log("Starting duplicate cleanup...");
 
     // Step 1: Find all unique positions (wallet + market_id + outcome)
-    // Keep only the one with the highest value (most accurate aggregation)
+    // Keep only the MOST RECENT entry (newest timestamp = most accurate aggregation)
+    // If timestamps match, prefer LOWER value (inflated values were from a bug)
     const dedupeResult = await sql`
       WITH ranked AS (
         SELECT
@@ -22,9 +23,10 @@ export async function GET() {
           market_id,
           outcome,
           value,
+          timestamp,
           ROW_NUMBER() OVER (
             PARTITION BY wallet, market_id, outcome
-            ORDER BY value DESC, timestamp DESC
+            ORDER BY timestamp DESC, value ASC
           ) as rn
         FROM longshot_history
       ),

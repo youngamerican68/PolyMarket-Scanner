@@ -125,6 +125,7 @@ interface ReportData {
     potentialFormatted: string
     longshotRecord: string | null
     positionStatus: 'holding' | 'sold' | 'unknown'
+    inferredStatus: 'pending' | 'likely_lost' | 'likely_won'
     totalPositions: number
     isNewWallet: boolean
     isHedged: boolean
@@ -613,7 +614,13 @@ export default function ReportPage() {
                       </td>
                       <td className="p-3 text-center text-xs">
                         <div className="flex items-center justify-center gap-1">
-                          {trade.positionStatus === 'holding' && (
+                          {trade.inferredStatus === 'likely_lost' && (
+                            <span className="text-red-400" title="Position value crashed - likely lost">📉 Lost</span>
+                          )}
+                          {trade.inferredStatus === 'likely_won' && (
+                            <span className="text-emerald-400" title="Position value surged - likely won">📈 Won</span>
+                          )}
+                          {trade.inferredStatus === 'pending' && trade.positionStatus === 'holding' && (
                             <span className="text-poly-green" title="Still holding this position">Holding</span>
                           )}
                           {trade.positionStatus === 'sold' && (

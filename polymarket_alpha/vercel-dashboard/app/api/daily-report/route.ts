@@ -145,6 +145,18 @@ export async function GET(req: NextRequest) {
         const profile = walletProfiles.get(t.wallet);
         const positionData = getPositionData(t.wallet, t.marketId, t.outcome);
 
+        // Calculate inferred status based on current price
+        // If current price is near 0 or 1, the market has effectively resolved
+        const curPrice = positionData.curPrice;
+        let inferredStatus: 'pending' | 'likely_lost' | 'likely_won' = 'pending';
+        if (curPrice <= 0.02) {
+          // Price crashed to <2% = likely lost
+          inferredStatus = 'likely_lost';
+        } else if (curPrice >= 0.98) {
+          // Price surged to >98% = likely won
+          inferredStatus = 'likely_won';
+        }
+
         return {
           id: `${t.wallet}:${t.marketId}:${t.outcome}`,
           wallet: t.wallet,
@@ -173,6 +185,8 @@ export async function GET(req: NextRequest) {
           potentialFormatted: formatMoney(t.totalSize),
           tradeCount: t.tradeCount,
           positionStatus: positionData.status,
+          // Inferred resolution status based on price (pending, likely_lost, likely_won)
+          inferredStatus,
           // Trader's historical longshot record (held to settlement only)
           longshotWins: profile?.longshotWins ?? null,
           longshotLosses: profile?.longshotLosses ?? null,
