@@ -126,39 +126,82 @@ async function pruneOldTrades(): Promise<number> {
 }
 
 // Store qualifying longshots ($5K+, <25% odds) to permanent history
+// Aggregates trades by wallet+market+outcome to catch positions built from multiple small trades
 async function storeToHistory(trades: RawTrade[]): Promise<number> {
   let inserted = 0;
   const MIN_VALUE = 5000; // $5K minimum
 
-  for (const t of trades) {
-    const value = t.price * t.size;
+  // Aggregate trades by wallet + market + outcome
+  const aggregated = new Map<string, {
+    wallet: string;
+    name: string;
+    marketId: string;
+    eventSlug: string;
+    title: string;
+    outcome: string;
+    totalSize: number;
+    totalValue: number;
+    latestTimestamp: number;
+    avgPrice: number;
+  }>();
 
-    // Only store trades >= $5K
-    if (value < MIN_VALUE) continue;
+  for (const t of trades) {
+    const key = `${t.proxyWallet}:${t.conditionId}:${t.outcome}`;
+    const value = t.price * t.size;
+    const existing = aggregated.get(key);
+
+    if (existing) {
+      existing.totalSize += t.size;
+      existing.totalValue += value;
+      existing.avgPrice = existing.totalValue / existing.totalSize;
+      if (t.timestamp > existing.latestTimestamp) {
+        existing.latestTimestamp = t.timestamp;
+      }
+    } else {
+      aggregated.set(key, {
+        wallet: t.proxyWallet,
+        name: t.name || t.pseudonym || "Anonymous",
+        marketId: t.conditionId,
+        eventSlug: t.eventSlug || t.slug || "",
+        title: t.title || "",
+        outcome: t.outcome || "",
+        totalSize: t.size,
+        totalValue: value,
+        latestTimestamp: t.timestamp,
+        avgPrice: t.price,
+      });
+    }
+  }
+
+  // Store aggregated positions that meet $5K threshold
+  for (const [, pos] of aggregated) {
+    if (pos.totalValue < MIN_VALUE) continue;
 
     try {
-      const tradeId = `${t.proxyWallet}-${t.conditionId}-${t.timestamp}-${t.size}`;
+      // Use wallet + market + outcome as the unique ID for aggregated positions
+      const tradeId = `${pos.wallet}-${pos.marketId}-${pos.outcome}-${pos.latestTimestamp}`;
 
       const result = await sql`
         INSERT INTO longshot_history (id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size, value)
         VALUES (
           ${tradeId},
-          ${t.proxyWallet},
-          ${t.name || t.pseudonym || "Anonymous"},
-          ${t.conditionId},
-          ${t.eventSlug || t.slug || ""},
-          ${t.title || ""},
-          ${t.outcome || ""},
-          ${t.timestamp},
-          ${t.price},
-          ${t.size},
-          ${value}
+          ${pos.wallet},
+          ${pos.name},
+          ${pos.marketId},
+          ${pos.eventSlug},
+          ${pos.title},
+          ${pos.outcome},
+          ${pos.latestTimestamp},
+          ${pos.avgPrice},
+          ${pos.totalSize},
+          ${pos.totalValue}
         )
         ON CONFLICT (id) DO NOTHING
       `;
 
       if (result.rowCount && result.rowCount > 0) {
         inserted++;
+        console.log(`[history] Saved: ${pos.name} - ${pos.title?.slice(0, 30)} @ ${(pos.avgPrice * 100).toFixed(1)}% = $${pos.totalValue.toFixed(0)}`);
       }
     } catch (err) {
       console.error(`Error inserting to history:`, err);
