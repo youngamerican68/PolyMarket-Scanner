@@ -179,8 +179,8 @@ async function storeToHistory(trades: RawTrade[]): Promise<number> {
     if (pos.totalValue < MIN_VALUE) continue;
 
     try {
-      // Use wallet + market + outcome as the unique ID for aggregated positions
-      const tradeId = `${pos.wallet}-${pos.marketId}-${pos.outcome}-${pos.latestTimestamp}`;
+      // Use wallet + market + outcome as the unique ID (no timestamp - position identity only)
+      const tradeId = `${pos.wallet}-${pos.marketId}-${pos.outcome}`;
 
       const result = await sql`
         INSERT INTO longshot_history (id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size, value)
@@ -197,7 +197,11 @@ async function storeToHistory(trades: RawTrade[]): Promise<number> {
           ${pos.totalSize},
           ${pos.totalValue}
         )
-        ON CONFLICT (id) DO NOTHING
+        ON CONFLICT (id) DO UPDATE SET
+          timestamp = EXCLUDED.timestamp,
+          price = EXCLUDED.price,
+          size = EXCLUDED.size,
+          value = EXCLUDED.value
       `;
 
       if (result.rowCount && result.rowCount > 0) {
@@ -241,7 +245,8 @@ async function syncHistoryFromDb(): Promise<number> {
 
   for (const row of result.rows) {
     try {
-      const tradeId = `${row.wallet}-${row.market_id}-${row.outcome}-${row.latest_timestamp}`;
+      // Use wallet + market + outcome as unique ID (no timestamp - position identity only)
+      const tradeId = `${row.wallet}-${row.market_id}-${row.outcome}`;
 
       const insertResult = await sql`
         INSERT INTO longshot_history (id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size, value)
@@ -258,7 +263,11 @@ async function syncHistoryFromDb(): Promise<number> {
           ${Number(row.total_size)},
           ${Number(row.total_value)}
         )
-        ON CONFLICT (id) DO NOTHING
+        ON CONFLICT (id) DO UPDATE SET
+          timestamp = EXCLUDED.timestamp,
+          price = EXCLUDED.price,
+          size = EXCLUDED.size,
+          value = EXCLUDED.value
       `;
 
       if (insertResult.rowCount && insertResult.rowCount > 0) {
