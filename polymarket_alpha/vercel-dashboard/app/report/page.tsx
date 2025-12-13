@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 
 interface TopTrade {
   title: string
@@ -289,7 +290,13 @@ export default function ReportPage() {
               Window: {new Date(report.window.from).toLocaleString()} → {new Date(report.window.to).toLocaleString()}
             </p>
           </div>
-          <div className="text-right">
+          <div className="text-right flex items-center gap-3">
+            <Link
+              href="/history"
+              className="px-4 py-2 bg-poly-card border border-poly-border text-white font-medium rounded hover:bg-poly-border transition-colors"
+            >
+              View History
+            </Link>
             <button
               onClick={() => fetchReport(currentFilter.min, currentFilter.max)}
               disabled={loading}
