@@ -113,6 +113,7 @@ interface ReportData {
     size: number
     value: number
     potential: number
+    latestTimestamp: string
     totalPosition: number
     totalPositionFormatted: string
     totalPotential: number
@@ -139,6 +140,25 @@ function formatMoney(value: number): string {
     return `$${(value / 1000).toFixed(1)}K`
   }
   return `$${value.toFixed(0)}`
+}
+
+function formatTimeAgo(timestamp: string): string {
+  const date = new Date(timestamp)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / (1000 * 60))
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
+
+  if (diffMins < 60) {
+    return `${diffMins}m ago`
+  } else if (diffHours < 24) {
+    const mins = diffMins % 60
+    return mins > 0 ? `${diffHours}h ${mins}m ago` : `${diffHours}h ago`
+  } else {
+    const days = Math.floor(diffHours / 24)
+    const hours = diffHours % 24
+    return hours > 0 ? `${days}d ${hours}h ago` : `${days}d ago`
+  }
 }
 
 function getLevelColor(level: string): string {
@@ -510,7 +530,7 @@ export default function ReportPage() {
                 <tr>
                   <th className="text-left p-3 text-poly-muted font-medium">Market</th>
                   <th className="text-left p-3 text-poly-muted font-medium">Trader</th>
-                  <th className="text-center p-3 text-poly-muted font-medium" title="Wins/Losses held to settlement (positions sold early)">Settled Record</th>
+                  <th className="text-center p-3 text-poly-muted font-medium" title="Wins/Losses held to settlement (positions sold early)">Record</th>
                   <th className="text-center p-3 text-poly-muted font-medium" title="Current position status">Status</th>
                   <th
                     className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
@@ -523,10 +543,10 @@ export default function ReportPage() {
                     onClick={() => handleSort('value')}
                     title="Amount added to this position in last 24h"
                   >
-                    24h Value<SortIcon field="value" />
+                    Bet<SortIcon field="value" />
                   </th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="Total position size on Polymarket">
-                    Total Position
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Current value of total position on Polymarket">
+                    Position
                   </th>
                   <th
                     className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
@@ -534,6 +554,9 @@ export default function ReportPage() {
                     title="Potential payout if bet wins (based on total position)"
                   >
                     Potential<SortIcon field="potential" />
+                  </th>
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Time since most recent trade">
+                    Time
                   </th>
                 </tr>
               </thead>
@@ -543,7 +566,7 @@ export default function ReportPage() {
                   if (filteredTrades.length === 0) {
                     return (
                       <tr>
-                        <td className="p-4 text-center text-poly-muted" colSpan={8}>
+                        <td className="p-4 text-center text-poly-muted" colSpan={9}>
                           No trades found in {currentFilter.label} odds range.
                         </td>
                       </tr>
@@ -599,6 +622,9 @@ export default function ReportPage() {
                       <td className="p-3 text-right text-poly-green">{trade.valueFormatted}</td>
                       <td className="p-3 text-right text-white font-medium">{trade.totalPositionFormatted || trade.valueFormatted}</td>
                       <td className="p-3 text-right text-poly-blue">{trade.totalPotentialFormatted || trade.potentialFormatted}</td>
+                      <td className="p-3 text-right text-poly-muted text-xs whitespace-nowrap">
+                        {trade.latestTimestamp ? formatTimeAgo(trade.latestTimestamp) : '—'}
+                      </td>
                     </tr>
                   ))
                 })()}

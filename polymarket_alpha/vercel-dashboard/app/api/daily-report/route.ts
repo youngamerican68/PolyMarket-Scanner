@@ -70,6 +70,7 @@ export async function GET(req: NextRequest) {
       totalValue: number;
       avgPrice: number;
       tradeCount: number;
+      latestTimestamp: string; // Most recent trade timestamp
     }>();
 
     for (const t of trades) {
@@ -83,6 +84,10 @@ export async function GET(req: NextRequest) {
         existing.tradeCount += 1;
         // Weighted average price
         existing.avgPrice = existing.totalValue / existing.totalSize;
+        // Track most recent trade
+        if (t.timestamp > existing.latestTimestamp) {
+          existing.latestTimestamp = t.timestamp;
+        }
       } else {
         aggregatedTrades.set(key, {
           wallet: t.wallet,
@@ -95,6 +100,7 @@ export async function GET(req: NextRequest) {
           totalValue: value,
           avgPrice: t.price,
           tradeCount: 1,
+          latestTimestamp: t.timestamp,
         });
       }
     }
@@ -151,6 +157,8 @@ export async function GET(req: NextRequest) {
           size: t.totalSize,
           value: t.totalValue,
           potential: t.totalSize,
+          // Most recent trade timestamp
+          latestTimestamp: t.latestTimestamp,
           // Total position VALUE from Polymarket (size * curPrice)
           totalPosition: positionData.totalPosition * positionData.curPrice,
           totalPositionFormatted: formatMoney(positionData.totalPosition * positionData.curPrice),
