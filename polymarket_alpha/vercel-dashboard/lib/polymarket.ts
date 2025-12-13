@@ -354,6 +354,9 @@ const CLOB_API = "https://clob.polymarket.com";
 
 /**
  * Check if a market has been resolved via CLOB API.
+ * Uses two methods:
+ * 1. Official: market.closed === true with winner marked
+ * 2. Inferred: token price >= 98% indicates winning outcome
  * Returns { resolved: boolean, winner: string | null }
  */
 export async function checkMarketResolution(marketId: string): Promise<{ resolved: boolean; winner: string | null }> {
@@ -370,17 +373,32 @@ export async function checkMarketResolution(marketId: string): Promise<{ resolve
 
     const data = await res.json();
 
-    if (!data.closed) {
-      return { resolved: false, winner: null };
+    // Method 1: Check if market is officially closed with a winner
+    if (data.closed) {
+      const winningToken = data.tokens?.find((t: { winner: boolean; outcome: string }) => t.winner === true);
+      if (winningToken) {
+        return {
+          resolved: true,
+          winner: winningToken.outcome,
+        };
+      }
     }
 
-    // Find the winning outcome
-    const winningToken = data.tokens?.find((t: { winner: boolean; outcome: string }) => t.winner === true);
+    // Method 2: Infer from token prices (if price >= 98%, market effectively resolved)
+    if (data.tokens && Array.isArray(data.tokens)) {
+      for (const token of data.tokens) {
+        const price = Number(token.price ?? 0);
+        if (price >= 0.98) {
+          // This outcome won (price near $1)
+          return {
+            resolved: true,
+            winner: token.outcome,
+          };
+        }
+      }
+    }
 
-    return {
-      resolved: true,
-      winner: winningToken?.outcome || null,
-    };
+    return { resolved: false, winner: null };
   } catch (err) {
     console.error(`Error checking market resolution for ${marketId}:`, err);
     return { resolved: false, winner: null };
