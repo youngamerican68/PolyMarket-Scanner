@@ -191,7 +191,7 @@ const ODDS_FILTERS = [
   { label: '<5%', min: 0, max: 0.05 },
 ]
 
-type SortField = 'odds' | 'value' | 'potential'
+type SortField = 'odds' | 'value' | 'potential' | 'time'
 type SortDirection = 'asc' | 'desc'
 
 export default function ReportPage() {
@@ -200,8 +200,8 @@ export default function ReportPage() {
   const [error, setError] = useState<string | null>(null)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
   const [oddsFilterIndex, setOddsFilterIndex] = useState(0) // Index into ODDS_FILTERS
-  const [sortField, setSortField] = useState<SortField>('odds')
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
+  const [sortField, setSortField] = useState<SortField>('time')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
 
   const currentFilter = ODDS_FILTERS[oddsFilterIndex]
 
@@ -234,7 +234,8 @@ export default function ReportPage() {
       setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')
     } else {
       setSortField(field)
-      setSortDirection(field === 'odds' ? 'asc' : 'desc') // odds default asc, others desc
+      // odds default asc (lowest first), time default desc (newest first), others desc (highest first)
+      setSortDirection(field === 'odds' ? 'asc' : 'desc')
     }
   }
 
@@ -254,6 +255,10 @@ export default function ReportPage() {
         case 'potential':
           aVal = a.potential
           bVal = b.potential
+          break
+        case 'time':
+          aVal = new Date(a.latestTimestamp).getTime()
+          bVal = new Date(b.latestTimestamp).getTime()
           break
       }
       return sortDirection === 'asc' ? aVal - bVal : bVal - aVal
@@ -555,8 +560,12 @@ export default function ReportPage() {
                   >
                     Potential<SortIcon field="potential" />
                   </th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="Time since most recent trade">
-                    Time
+                  <th
+                    className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
+                    onClick={() => handleSort('time')}
+                    title="Time since most recent trade"
+                  >
+                    Time<SortIcon field="time" />
                   </th>
                 </tr>
               </thead>
