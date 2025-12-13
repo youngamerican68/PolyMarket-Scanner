@@ -174,7 +174,8 @@ async function storeToHistory(trades: RawTrade[]): Promise<number> {
   }
 
   // Store aggregated positions that meet $5K threshold
-  for (const [, pos] of aggregated) {
+  const positions = Array.from(aggregated.values());
+  for (const pos of positions) {
     if (pos.totalValue < MIN_VALUE) continue;
 
     try {
