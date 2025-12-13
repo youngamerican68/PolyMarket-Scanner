@@ -11,28 +11,43 @@ export async function GET() {
   try {
     console.log('Backfilling longshot_history from existing trades...');
 
-    // Find all trades with value >= $5000 that aren't in history yet
-    const result = await sql`
-      INSERT INTO longshot_history (id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size, value)
-      SELECT
-        id,
-        wallet,
-        name,
-        market_id,
-        event_slug,
-        title,
-        outcome,
-        timestamp,
-        price,
-        size,
-        (price * size) as value
+    // Get qualifying trades from the trades table
+    const tradesResult = await sql`
+      SELECT id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size
       FROM trades
       WHERE (price * size) >= 5000
-        AND id NOT IN (SELECT id FROM longshot_history)
-      ON CONFLICT (id) DO NOTHING
     `;
 
-    const inserted = result.rowCount || 0;
+    console.log(`Found ${tradesResult.rows.length} qualifying trades`);
+
+    let inserted = 0;
+    for (const t of tradesResult.rows) {
+      try {
+        const value = Number(t.price) * Number(t.size);
+        const result = await sql`
+          INSERT INTO longshot_history (id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size, value)
+          VALUES (
+            ${t.id},
+            ${t.wallet},
+            ${t.name},
+            ${t.market_id},
+            ${t.event_slug},
+            ${t.title},
+            ${t.outcome},
+            ${t.timestamp},
+            ${t.price},
+            ${t.size},
+            ${value}
+          )
+          ON CONFLICT (id) DO NOTHING
+        `;
+        if (result.rowCount && result.rowCount > 0) {
+          inserted++;
+        }
+      } catch (e) {
+        console.error(`Error inserting trade ${t.id}:`, e);
+      }
+    }
 
     // Get new total
     const countResult = await sql`SELECT COUNT(*) as count FROM longshot_history`;
@@ -41,6 +56,7 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       message: "Backfill complete",
+      qualifyingTrades: tradesResult.rows.length,
       inserted,
       totalHistory: total,
     });
