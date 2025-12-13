@@ -243,7 +243,7 @@ export async function GET(req: NextRequest) {
 
     // Get earliest trade timestamp to show data coverage
     const earliestTrade = trades.length > 0
-      ? Math.min(...trades.map(t => t.timestamp))
+      ? Math.min(...trades.map(t => Number(t.timestamp)))
       : null;
     const dataStartTime = earliestTrade ? new Date(earliestTrade * 1000) : null;
     const hoursOfData = dataStartTime
