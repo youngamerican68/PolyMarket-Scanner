@@ -2,7 +2,7 @@
 // Thin wrapper around lib/ for daily report generation
 
 import { NextRequest, NextResponse } from "next/server";
-import { fetchTradesFromDB, enrichTradesWithSettlement, fetchWalletProfiles, fetchOpenPositions, fetchWalletsLastActivity, detectHedgedPositions, OpenPosition } from "@/lib/polymarket";
+import { fetchTradesFromDB, enrichTradesWithSettlement, fetchWalletProfiles, fetchOpenPositions, fetchWalletsLastActivity, detectHedgedPositions, checkMarketResolution, OpenPosition } from "@/lib/polymarket";
 import { rankAnomalousWallets, formatMoney, formatOdds, detectSharpConvergence, detectDormantSharps } from "@/lib/scoring";
 
 // Force dynamic rendering
@@ -288,26 +288,35 @@ export async function GET(req: NextRequest) {
     });
 
     // Detect hedged positions and filter out settled markets
-    // For each convergence, check if sharps still have open positions
+    // For each convergence, check if market has resolved via CLOB API
     const sharpConvergencesWithStatus = await Promise.all(
       sharpConvergencesRaw.map(async (convergence) => {
+        // First check if market is resolved via CLOB API (most reliable)
+        const resolution = await checkMarketResolution(convergence.marketId);
+
+        if (resolution.resolved) {
+          return {
+            ...convergence,
+            isSettled: true,
+            winner: resolution.winner,
+            sharpWallets: convergence.sharpWallets,
+          };
+        }
+
+        // If not resolved, check hedges
         const walletsToCheck = convergence.sharpWallets.slice(0, 10); // Limit API calls
         const hedgeResults = new Map<string, boolean>();
-        const positionFoundResults = new Map<string, boolean>();
 
         for (const sw of walletsToCheck) {
           const hedgeInfo = await detectHedgedPositions(sw.wallet, [convergence.marketId]);
           const info = hedgeInfo.get(convergence.marketId);
-          positionFoundResults.set(sw.wallet, info?.positionFound ?? false);
           hedgeResults.set(sw.wallet, info?.positionFound && info?.hasHedge ? true : false);
         }
 
-        // Check if any wallet still has an open position (market not settled)
-        const anyPositionOpen = Array.from(positionFoundResults.values()).some(found => found);
-
         return {
           ...convergence,
-          isSettled: !anyPositionOpen, // If no positions found, market is settled
+          isSettled: false,
+          winner: null,
           sharpWallets: convergence.sharpWallets.map((sw) => ({
             ...sw,
             isHedged: hedgeResults.get(sw.wallet) ?? false,

@@ -350,6 +350,43 @@ export async function detectHedgedPositions(
   return results;
 }
 
+const CLOB_API = "https://clob.polymarket.com";
+
+/**
+ * Check if a market has been resolved via CLOB API.
+ * Returns { resolved: boolean, winner: string | null }
+ */
+export async function checkMarketResolution(marketId: string): Promise<{ resolved: boolean; winner: string | null }> {
+  try {
+    const res = await fetch(`${CLOB_API}/markets/${marketId}`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+    });
+
+    if (!res.ok) {
+      return { resolved: false, winner: null };
+    }
+
+    const data = await res.json();
+
+    if (!data.closed) {
+      return { resolved: false, winner: null };
+    }
+
+    // Find the winning outcome
+    const winningToken = data.tokens?.find((t: { winner: boolean; outcome: string }) => t.winner === true);
+
+    return {
+      resolved: true,
+      winner: winningToken?.outcome || null,
+    };
+  } catch (err) {
+    console.error(`Error checking market resolution for ${marketId}:`, err);
+    return { resolved: false, winner: null };
+  }
+}
+
 /**
  * Convenience: last 24h longshots (< 25% odds).
  */
