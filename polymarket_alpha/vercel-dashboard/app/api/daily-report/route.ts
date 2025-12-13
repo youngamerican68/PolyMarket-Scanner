@@ -241,12 +241,23 @@ export async function GET(req: NextRequest) {
       wallet: t.name || t.wallet.slice(0, 10),
     })));
 
+    // Get earliest trade timestamp to show data coverage
+    const earliestTrade = trades.length > 0
+      ? Math.min(...trades.map(t => t.timestamp))
+      : null;
+    const dataStartTime = earliestTrade ? new Date(earliestTrade * 1000) : null;
+    const hoursOfData = dataStartTime
+      ? Math.round((to.getTime() - dataStartTime.getTime()) / (1000 * 60 * 60) * 10) / 10
+      : 0;
+
     // Summary stats
     const summary = {
       totalTrades: trades.length,
       totalWallets: new Set(trades.map((t) => t.wallet)).size,
       totalVolume: trades.reduce((sum, t) => sum + t.price * t.size, 0),
       totalPotential: trades.reduce((sum, t) => sum + t.size, 0),
+      dataStartTime: dataStartTime?.toISOString() || null,
+      hoursOfData,
     };
 
     // Detect convergence: 2+ selective wallets betting $5K+ on same longshot

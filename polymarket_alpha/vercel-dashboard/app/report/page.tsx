@@ -97,6 +97,8 @@ interface ReportData {
     totalPotential: number
     totalVolumeFormatted: string
     totalPotentialFormatted: string
+    dataStartTime: string | null
+    hoursOfData: number
   }
   anomalousWallets: AnomalousWallet[]
   topLongshots: Array<{
@@ -289,6 +291,11 @@ export default function ReportPage() {
             <p className="text-poly-muted text-xs">
               Window: {new Date(report.window.from).toLocaleString()} → {new Date(report.window.to).toLocaleString()}
             </p>
+            {s.hoursOfData < 24 && (
+              <p className="text-amber-400 text-xs mt-1">
+                Data coverage: {s.hoursOfData}h of 24h (collection started {s.dataStartTime ? new Date(s.dataStartTime).toLocaleString() : 'recently'})
+              </p>
+            )}
           </div>
           <div className="text-right flex items-center gap-3">
             <Link
