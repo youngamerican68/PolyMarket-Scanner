@@ -241,19 +241,25 @@ export async function GET(req: NextRequest) {
       wallet: t.name || t.wallet.slice(0, 10),
     })));
 
-    // Get earliest trade timestamp to show data coverage
+    // Get data coverage: time span from earliest to latest trade
     const timestamps = trades.map(t => Number(t.timestamp)).filter(ts => ts > 0);
-    const earliestTrade = timestamps.length > 0 ? Math.min(...timestamps) : null;
-    const dataStartTime = earliestTrade ? new Date(earliestTrade * 1000) : null;
-    const hoursOfData = dataStartTime
-      ? Math.round((to.getTime() - dataStartTime.getTime()) / (1000 * 60 * 60) * 10) / 10
+    const earliestTs = timestamps.length > 0 ? Math.min(...timestamps) : null;
+    const latestTs = timestamps.length > 0 ? Math.max(...timestamps) : null;
+
+    const dataStartTime = earliestTs ? new Date(earliestTs * 1000) : null;
+    const dataEndTime = latestTs ? new Date(latestTs * 1000) : null;
+
+    // Calculate hours from earliest trade to now (or to the latest trade)
+    const hoursOfData = (earliestTs && latestTs)
+      ? Math.round((latestTs - earliestTs) / (60 * 60) * 10) / 10
       : 0;
 
     console.log('[daily-report] Data coverage:', {
       tradesCount: trades.length,
-      timestampsCount: timestamps.length,
-      earliestTrade,
+      earliestTs,
+      latestTs,
       dataStartTime: dataStartTime?.toISOString(),
+      dataEndTime: dataEndTime?.toISOString(),
       hoursOfData
     });
 
