@@ -17,6 +17,7 @@ interface MarketData {
     token_id: string;
     outcome: string;
     winner: boolean;
+    price?: number; // Current token price (0-1)
   }[];
 }
 
@@ -81,21 +82,35 @@ export async function GET() {
         continue;
       }
 
-      // Check if market is closed (resolved)
-      if (!marketData.closed) {
-        console.log(`[check-resolutions] Market ${marketId} still open`);
-        continue;
+      // Find the winning outcome - either explicitly marked or inferred from price
+      let winningOutcome: string | null = null;
+
+      // Method 1: Check if market is officially closed with a winner
+      if (marketData.closed) {
+        const winningToken = marketData.tokens.find(t => t.winner === true);
+        if (winningToken) {
+          winningOutcome = winningToken.outcome;
+          console.log(`[check-resolutions] Market ${marketId} officially closed, winner="${winningOutcome}"`);
+        }
       }
 
-      // Find the winning outcome
-      const winningToken = marketData.tokens.find(t => t.winner === true);
-
-      if (!winningToken) {
-        console.log(`[check-resolutions] Market ${marketId} closed but no winner found`);
-        continue;
+      // Method 2: Infer from token prices (if price is near 0 or 1, market effectively resolved)
+      if (!winningOutcome && marketData.tokens) {
+        for (const token of marketData.tokens) {
+          const price = token.price ?? 0;
+          if (price >= 0.98) {
+            // This outcome won (price near $1)
+            winningOutcome = token.outcome;
+            console.log(`[check-resolutions] Market ${marketId} inferred resolved from price: "${token.outcome}" at ${(price * 100).toFixed(1)}%`);
+            break;
+          }
+        }
       }
 
-      const winningOutcome = winningToken.outcome;
+      if (!winningOutcome) {
+        console.log(`[check-resolutions] Market ${marketId} still open (no winner found)`);
+        continue;
+      }
       const tradeWon = tradeOutcome.toLowerCase() === winningOutcome.toLowerCase();
 
       console.log(`[check-resolutions] Market ${marketId} resolved: winner="${winningOutcome}", trade="${tradeOutcome}", won=${tradeWon}`);
