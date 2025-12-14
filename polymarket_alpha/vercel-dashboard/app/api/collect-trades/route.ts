@@ -81,8 +81,9 @@ async function storeTrades(trades: RawTrade[]): Promise<number> {
 
   for (const t of trades) {
     try {
-      // Generate a unique ID from wallet + market + timestamp + size
-      const tradeId = `${t.proxyWallet}-${t.conditionId}-${t.timestamp}-${t.size}`;
+      // Use the API's unique trade ID to prevent duplicates
+      // Fallback to generated ID if API doesn't provide one
+      const tradeId = t.id || `${t.proxyWallet}-${t.conditionId}-${t.timestamp}-${Math.round(t.size)}`;
 
       // Use INSERT ... ON CONFLICT DO NOTHING to skip duplicates
       const result = await sql`
