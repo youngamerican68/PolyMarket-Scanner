@@ -104,8 +104,9 @@ export default function WhalesPage() {
         const params = new URLSearchParams()
         if (tierFilter) params.set('tier', tierFilter)
         if (categoryFilter) params.set('category', categoryFilter)
+        params.set('_t', Date.now().toString()) // Cache buster
 
-        const url = `/api/whale-trades${params.toString() ? '?' + params.toString() : ''}`
+        const url = `/api/whale-trades?${params.toString()}`
         const res = await fetch(url, { cache: 'no-store' })
 
         if (!res.ok) {
