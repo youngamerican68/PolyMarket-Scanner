@@ -115,6 +115,13 @@ export default function WhalesPage() {
         }
 
         const json = await res.json()
+        // Debug: log raw response
+        console.log("WHALE API RESPONSE:", JSON.stringify({
+          _apiVersion: json._apiVersion,
+          _rawTotal: json._rawTotal,
+          watchlistTotal: json.watchlist?.total,
+          fullWatchlist: json.watchlist
+        }))
         setData(json)
         setError(null)
       } catch (err) {
@@ -358,6 +365,8 @@ export default function WhalesPage() {
         {/* Footer */}
         <div className="text-center text-poly-muted text-xs mt-8">
           Last updated: {data?.timestamp ? new Date(data.timestamp).toLocaleString() : 'N/A'}
+          {' | '}API: {(data as any)?._apiVersion || 'unknown'}
+          {' | '}Raw: {String((data as any)?._rawTotal || 'N/A')}
         </div>
       </div>
     </div>

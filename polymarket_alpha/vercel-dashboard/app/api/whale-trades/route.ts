@@ -222,6 +222,9 @@ export async function GET(request: Request) {
     const stats = statsResult.rows[0];
     const watchlistStats = watchlistStatsResult.rows[0];
 
+    // Debug: log raw values
+    console.log("RAW watchlistStats:", JSON.stringify(watchlistStats));
+
     return NextResponse.json({
       trades,
       stats: {
@@ -242,6 +245,8 @@ export async function GET(request: Request) {
       },
       filters: { tier, category },
       timestamp: new Date().toISOString(),
+      _apiVersion: "v3-debug",
+      _rawTotal: watchlistStats.total_watchlist,
     }, {
       headers: {
         "Cache-Control": "no-store, no-cache, must-revalidate",
