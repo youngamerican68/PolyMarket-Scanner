@@ -348,11 +348,11 @@ export function detectSharpConvergence(
       const totalSize = wTrades.reduce((sum, t) => sum + t.size, 0);
       const totalValue = wTrades.reduce((sum, t) => sum + t.price * t.size, 0);
       const name = wTrades[0]?.name || 'Anonymous';
-      const isHedged = wTrades[0]?.isHedged ?? false;
 
-      // Must have high conviction bet and not be hedging both sides
-      // Position count filter removed - a $2.5K+ longshot bet is conviction regardless of history
-      if (totalValue >= minBetValue && !isHedged) {
+      // Must have high conviction bet ($2.5K+)
+      // Position count filter removed - conviction is what matters
+      // Hedge detection is shown in UI separately (⚖️ icon)
+      if (totalValue >= minBetValue) {
         qualifyingWallets.push({
           wallet,
           name,
