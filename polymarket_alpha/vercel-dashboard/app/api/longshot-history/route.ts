@@ -35,6 +35,7 @@ async function fetchMarketPrices(marketId: string): Promise<Map<string, number>>
 export async function GET() {
   try {
     // Fetch all historical longshot trades, newest first
+    // NOTE: Using created_at for ordering because ORDER BY timestamp has index issues
     const result = await sql`
       SELECT
         id,
@@ -53,15 +54,11 @@ export async function GET() {
         pnl,
         created_at
       FROM longshot_history
-      ORDER BY timestamp DESC
+      ORDER BY created_at DESC
       LIMIT 500
     `;
 
     console.log('[longshot-history] Query returned', result.rows.length, 'rows');
-    if (result.rows.length > 0) {
-      console.log('[longshot-history] First row:', JSON.stringify(result.rows[0]));
-      console.log('[longshot-history] Last row:', JSON.stringify(result.rows[result.rows.length - 1]));
-    }
 
     // Get unique market IDs and fetch current prices (limit to recent 50 markets to avoid timeout)
     const uniqueMarkets = Array.from(new Set(result.rows.map(r => r.market_id))).slice(0, 50);
