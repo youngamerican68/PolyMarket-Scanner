@@ -31,6 +31,21 @@ export async function GET() {
       LIMIT 500
     `;
 
+    // Also try without ORDER BY
+    const resultNoOrder = await sql`
+      SELECT id, wallet, title, timestamp, value
+      FROM longshot_history
+      LIMIT 500
+    `;
+
+    // And try with just created_at order
+    const resultByCreatedAt = await sql`
+      SELECT id, wallet, title, timestamp, value
+      FROM longshot_history
+      ORDER BY created_at DESC
+      LIMIT 500
+    `;
+
     const queryRowCount = result.rows.length;
     const firstRow = result.rows[0] || null;
     const lastRow = result.rows[result.rows.length - 1] || null;
@@ -64,6 +79,8 @@ export async function GET() {
     return NextResponse.json({
       debug: {
         queryRowCount,
+        queryNoOrderRowCount: resultNoOrder.rows.length,
+        queryByCreatedAtRowCount: resultByCreatedAt.rows.length,
         tradesArrayLength: trades.length,
         firstRow: firstRow ? { id: firstRow.id?.slice(0, 50), title: firstRow.title } : null,
         lastRow: lastRow ? { id: lastRow.id?.slice(0, 50), title: lastRow.title } : null,
@@ -72,6 +89,8 @@ export async function GET() {
           uniqueWallets: stats.unique_wallets,
           totalValue: stats.total_value,
         },
+        noOrderFirstRows: resultNoOrder.rows.slice(0, 3).map(r => ({ id: r.id?.slice(0, 30), title: r.title?.slice(0, 30) })),
+        byCreatedAtFirstRows: resultByCreatedAt.rows.slice(0, 3).map(r => ({ id: r.id?.slice(0, 30), title: r.title?.slice(0, 30) })),
       },
       tradesCount: trades.length,
       trades: trades.slice(0, 10), // Only return first 10 to keep response small
