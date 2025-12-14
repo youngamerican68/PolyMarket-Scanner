@@ -2,6 +2,7 @@
 // Thin wrapper around lib/ for daily report generation
 
 import { NextRequest, NextResponse } from "next/server";
+import { sql } from "@vercel/postgres";
 import { fetchTradesFromDB, enrichTradesWithSettlement, fetchWalletProfiles, fetchOpenPositions, fetchWalletsLastActivity, detectHedgedPositions, checkMarketResolution, OpenPosition } from "@/lib/polymarket";
 import { rankAnomalousWallets, formatMoney, formatOdds, detectSharpConvergence, detectDormantSharps } from "@/lib/scoring";
 
@@ -369,6 +370,57 @@ export async function GET(req: NextRequest) {
       maxPrice,
     });
 
+    // Query repeat winners from longshot_history (traders with 2+ wins)
+    const repeatWinnersResult = await sql`
+      SELECT
+        wallet,
+        MAX(name) as name,
+        COUNT(*) FILTER (WHERE won = true) as wins,
+        COUNT(*) FILTER (WHERE resolved = true) as resolved_bets,
+        COUNT(*) as total_bets,
+        SUM(CASE WHEN won = true THEN value ELSE 0 END) as total_won_value,
+        SUM(CASE WHEN won = true THEN (size - value) ELSE 0 END) as total_profit
+      FROM longshot_history
+      GROUP BY wallet
+      HAVING COUNT(*) FILTER (WHERE won = true) >= 2
+      ORDER BY COUNT(*) FILTER (WHERE won = true) DESC, SUM(CASE WHEN won = true THEN (size - value) ELSE 0 END) DESC
+      LIMIT 20
+    `;
+
+    // Get recent wins for each repeat winner
+    const repeatWinners = await Promise.all(
+      repeatWinnersResult.rows.map(async (row) => {
+        const recentWinsResult = await sql`
+          SELECT title, outcome, price, size, value, timestamp
+          FROM longshot_history
+          WHERE wallet = ${row.wallet} AND won = true
+          ORDER BY timestamp DESC
+          LIMIT 5
+        `;
+
+        return {
+          wallet: row.wallet,
+          name: row.name || "Anonymous",
+          wins: Number(row.wins),
+          resolvedBets: Number(row.resolved_bets),
+          totalBets: Number(row.total_bets),
+          winRate: row.resolved_bets > 0 ? (Number(row.wins) / Number(row.resolved_bets) * 100).toFixed(1) : null,
+          totalWonValue: Number(row.total_won_value || 0),
+          totalWonValueFormatted: formatMoney(Number(row.total_won_value || 0)),
+          totalProfit: Number(row.total_profit || 0),
+          totalProfitFormatted: formatMoney(Number(row.total_profit || 0)),
+          recentWins: recentWinsResult.rows.map((w) => ({
+            title: w.title,
+            outcome: w.outcome,
+            odds: (Number(w.price) * 100).toFixed(1) + '%',
+            bet: formatMoney(Number(w.value)),
+            payout: formatMoney(Number(w.size)),
+            profit: formatMoney(Number(w.size) - Number(w.value)),
+          })),
+        };
+      })
+    );
+
     return NextResponse.json({
       window: {
         from: from.toISOString(),
@@ -459,6 +511,8 @@ export async function GET(req: NextRequest) {
         totalCurrentValue: d.totalCurrentValue,
         totalCurrentValueFormatted: formatMoney(d.totalCurrentValue),
       })),
+      // Repeat winners alert (traders with 2+ longshot wins)
+      repeatWinners,
     });
   } catch (err) {
     console.error("Error in /api/daily-report:", err);

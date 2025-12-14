@@ -85,6 +85,27 @@ interface DormantSharp {
   totalCurrentValueFormatted: string
 }
 
+interface RepeatWinner {
+  wallet: string
+  name: string
+  wins: number
+  resolvedBets: number
+  totalBets: number
+  winRate: string | null
+  totalWonValue: number
+  totalWonValueFormatted: string
+  totalProfit: number
+  totalProfitFormatted: string
+  recentWins: Array<{
+    title: string
+    outcome: string
+    odds: string
+    bet: string
+    payout: string
+    profit: string
+  }>
+}
+
 interface ReportData {
   window: {
     from: string
@@ -132,6 +153,7 @@ interface ReportData {
   }>
   sharpConvergences: SharpConvergence[]
   dormantSharps: DormantSharp[]
+  repeatWinners: RepeatWinner[]
 }
 
 function formatMoney(value: number): string {
@@ -501,6 +523,78 @@ export default function ReportPage() {
                           <span className="text-poly-muted mx-1">→</span>
                           <span className="text-poly-green">{trade.valueFormatted}</span>
                           <span className="text-poly-muted ml-2 text-xs">({trade.title.slice(0, 35)}...)</span>
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Repeat Winners Alert */}
+      {report.repeatWinners && report.repeatWinners.length > 0 && (
+        <section className="space-y-4">
+          <h2 className="text-xl font-bold flex items-center">
+            <span className="w-3 h-3 bg-emerald-500 rounded-full mr-3 animate-pulse"></span>
+            Repeat Winners
+            <span className="text-sm font-normal text-poly-muted ml-2">(2+ longshot wins)</span>
+          </h2>
+          <div className="space-y-3">
+            {report.repeatWinners.map((winner) => (
+              <div
+                key={winner.wallet}
+                className="bg-emerald-900/20 border border-emerald-500/40 rounded-lg p-4"
+              >
+                <div className="flex justify-between items-start mb-3">
+                  <div>
+                    <a
+                      href={`https://polymarket.com/profile/${winner.wallet}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-lg font-bold text-poly-blue hover:underline"
+                    >
+                      {winner.name || winner.wallet.slice(0, 12) + '...'}
+                    </a>
+                    <p className="text-poly-muted font-mono text-xs mt-1">{winner.wallet.slice(0, 20)}...</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-emerald-400 font-bold text-xl">{winner.wins} Wins</p>
+                    <p className="text-poly-muted text-sm">{winner.winRate}% win rate</p>
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                  <div>
+                    <p className="text-poly-muted text-xs">Total Bets</p>
+                    <p className="font-bold">{winner.totalBets}</p>
+                  </div>
+                  <div>
+                    <p className="text-poly-muted text-xs">Resolved</p>
+                    <p className="font-bold">{winner.resolvedBets}</p>
+                  </div>
+                  <div>
+                    <p className="text-poly-muted text-xs">Won Value</p>
+                    <p className="font-bold text-poly-green">{winner.totalWonValueFormatted}</p>
+                  </div>
+                  <div>
+                    <p className="text-poly-muted text-xs">Total Profit</p>
+                    <p className="font-bold text-emerald-400">{winner.totalProfitFormatted}</p>
+                  </div>
+                </div>
+                {winner.recentWins.length > 0 && (
+                  <div>
+                    <p className="text-poly-muted text-xs mb-2">Recent winning trades:</p>
+                    <div className="space-y-1">
+                      {winner.recentWins.map((win, j) => (
+                        <p key={j} className="text-sm">
+                          <span className="text-emerald-400">✓</span>
+                          <span className="text-white ml-2">{win.title.slice(0, 40)}{win.title.length > 40 ? '...' : ''}</span>
+                          <span className="text-poly-muted ml-2">({win.outcome})</span>
+                          <span className="text-poly-yellow ml-2">@{win.odds}</span>
+                          <span className="text-poly-muted mx-1">→</span>
+                          <span className="text-poly-green">+{win.profit}</span>
                         </p>
                       ))}
                     </div>
