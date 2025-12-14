@@ -154,8 +154,8 @@ export async function GET(req: NextRequest) {
         if (curPrice >= 0.98) {
           // Price at 98%+ = market effectively settled to YES
           inferredStatus = 'likely_won';
-        } else if (entryPrice > 0 && curPrice / entryPrice <= 0.02) {
-          // Position value dropped 98%+ from entry = effectively lost
+        } else if (entryPrice > 0 && curPrice / entryPrice <= 0.01) {
+          // Position value dropped 99%+ from entry = effectively lost
           inferredStatus = 'likely_lost';
         }
 
