@@ -146,49 +146,47 @@ export default function HistoryPage() {
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full table-fixed">
                 <thead className="bg-poly-dark/50">
                   <tr className="text-poly-gray text-xs uppercase tracking-wider">
-                    <th className="p-3 text-left">Date</th>
-                    <th className="p-3 text-left">Market</th>
-                    <th className="p-3 text-left">Trader</th>
-                    <th className="p-3 text-center">Status</th>
-                    <th className="p-3 text-right">Odds</th>
-                    <th className="p-3 text-right">Bet</th>
-                    <th className="p-3 text-right">Position</th>
-                    <th className="p-3 text-right">Potential</th>
-                    <th className="p-3 text-right">Result</th>
+                    <th className="p-2 text-left w-[100px]">Date</th>
+                    <th className="p-2 text-left">Market</th>
+                    <th className="p-2 text-left w-[120px]">Trader</th>
+                    <th className="p-2 text-center w-[80px]">Status</th>
+                    <th className="p-2 text-right w-[60px]">Odds</th>
+                    <th className="p-2 text-right w-[70px]">Bet</th>
+                    <th className="p-2 text-right w-[80px]">Position</th>
+                    <th className="p-2 text-right w-[80px]">Potential</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-poly-border">
                   {trades.map((trade) => (
                     <tr key={trade.id} className="hover:bg-poly-dark/30">
-                      <td className="p-3 text-poly-gray text-sm whitespace-nowrap">
+                      <td className="p-2 text-poly-gray text-sm">
                         {formatDate(trade.timestamp)}
                       </td>
-                      <td className="p-3">
+                      <td className="p-2">
                         <a
                           href={`https://polymarket.com/event/${trade.eventSlug}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-white hover:text-poly-blue transition-colors"
+                          className="text-white hover:text-poly-blue transition-colors block truncate"
                         >
-                          {trade.title?.slice(0, 40) || 'Unknown'}
-                          {trade.title && trade.title.length > 40 ? '...' : ''}
+                          {trade.title || 'Unknown'}
                         </a>
-                        <div className="text-poly-gray text-xs">{trade.outcome}</div>
+                        <div className="text-poly-gray text-xs truncate">{trade.outcome}</div>
                       </td>
-                      <td className="p-3">
+                      <td className="p-2">
                         <a
                           href={`https://polymarket.com/profile/${trade.wallet}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-poly-blue hover:underline"
+                          className="text-poly-blue hover:underline block truncate"
                         >
                           {trade.name || trade.wallet.slice(0, 10) + '...'}
                         </a>
                       </td>
-                      <td className="p-3 text-center">
+                      <td className="p-2 text-center">
                         {trade.inferredStatus === 'likely_lost' && (
                           <span className="text-red-400" title="Position value crashed - likely lost">📉 Lost</span>
                         )}
@@ -199,30 +197,17 @@ export default function HistoryPage() {
                           <span className="text-poly-green">Holding</span>
                         )}
                       </td>
-                      <td className="p-3 text-right text-amber-400">
+                      <td className="p-2 text-right text-amber-400">
                         {(trade.price * 100).toFixed(1)}%
                       </td>
-                      <td className="p-3 text-right text-poly-green font-medium">
+                      <td className="p-2 text-right text-poly-green font-medium">
                         {formatMoney(trade.value)}
                       </td>
-                      <td className="p-3 text-right text-white font-medium">
+                      <td className="p-2 text-right text-white font-medium">
                         {formatMoney(trade.position)}
                       </td>
-                      <td className="p-3 text-right text-poly-blue">
+                      <td className="p-2 text-right text-poly-blue">
                         {formatMoney(trade.potential)}
-                      </td>
-                      <td className="p-3 text-right">
-                        {trade.resolved ? (
-                          trade.won ? (
-                            <span className="text-poly-green font-medium">
-                              Won {trade.pnl ? formatMoney(trade.pnl) : ''}
-                            </span>
-                          ) : (
-                            <span className="text-red-500">Lost</span>
-                          )
-                        ) : (
-                          <span className="text-poly-gray">-</span>
-                        )}
                       </td>
                     </tr>
                   ))}
