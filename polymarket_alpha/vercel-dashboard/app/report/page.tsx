@@ -636,7 +636,6 @@ export default function ReportPage() {
                 <tr>
                   <th className="text-left p-3 text-poly-muted font-medium">Market</th>
                   <th className="text-left p-3 text-poly-muted font-medium">Trader</th>
-                  <th className="text-center p-3 text-poly-muted font-medium" title="Wins/Losses held to settlement (positions sold early)">Record</th>
                   <th className="text-center p-3 text-poly-muted font-medium" title="Current position status">Status</th>
                   <th
                     className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
@@ -708,9 +707,6 @@ export default function ReportPage() {
                             <span className="text-emerald-400 text-xs" title={`New wallet - only ${trade.totalPositions} historical positions`}>🆕</span>
                           )}
                         </div>
-                      </td>
-                      <td className="p-3 text-center text-poly-muted text-xs">
-                        {trade.longshotRecord || '—'}
                       </td>
                       <td className="p-3 text-center text-xs">
                         <div className="flex items-center justify-center gap-1">
