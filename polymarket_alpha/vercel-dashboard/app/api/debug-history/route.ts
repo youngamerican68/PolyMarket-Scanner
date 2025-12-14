@@ -19,45 +19,67 @@ export async function GET() {
     // 2. Count rows directly
     const countResult = await sql`SELECT COUNT(*) as cnt FROM longshot_history`;
 
-    // 3. Get sample rows
-    const sampleRows = await sql`SELECT id, wallet, title, value FROM longshot_history LIMIT 10`;
-
-    // 4. Check trades table for qualifying trades
-    const qualifyingTrades = await sql`
-      SELECT COUNT(*) as cnt FROM trades WHERE (price * size) >= 5000
+    // 3. Get sample rows - raw query with all fields to see data
+    const sampleRows = await sql`
+      SELECT id, wallet, title, timestamp, price, size, value, outcome, market_id
+      FROM longshot_history
+      ORDER BY timestamp DESC
+      LIMIT 20
     `;
 
-    // 5. Try direct insert and see what happens
-    const testId = `test-${Date.now()}`;
-    let insertResult = null;
-    let insertError = null;
-    try {
-      const res = await sql`
-        INSERT INTO longshot_history (id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size, value)
-        VALUES (${testId}, 'test', 'test', 'test', 'test', 'test', 'test', ${Math.floor(Date.now()/1000)}, 0.1, 100000, 10000)
-        RETURNING id
-      `;
-      insertResult = res.rows;
+    // 4. Check for NULL or weird timestamp values
+    const timestampCheck = await sql`
+      SELECT
+        COUNT(*) as total,
+        COUNT(CASE WHEN timestamp IS NULL THEN 1 END) as null_timestamps,
+        COUNT(CASE WHEN timestamp = 0 THEN 1 END) as zero_timestamps,
+        MIN(timestamp) as min_ts,
+        MAX(timestamp) as max_ts
+      FROM longshot_history
+    `;
 
-      // Delete the test row
-      await sql`DELETE FROM longshot_history WHERE id = ${testId}`;
-    } catch (e) {
-      insertError = String(e);
-    }
+    // 5. Check for duplicate IDs or any constraint issues
+    const duplicateCheck = await sql`
+      SELECT id, COUNT(*) as cnt
+      FROM longshot_history
+      GROUP BY id
+      HAVING COUNT(*) > 1
+      LIMIT 10
+    `;
 
-    // 6. Final count after test
-    const finalCount = await sql`SELECT COUNT(*) as cnt FROM longshot_history`;
+    // 6. Check unique market_id count
+    const marketCount = await sql`
+      SELECT COUNT(DISTINCT market_id) as unique_markets FROM longshot_history
+    `;
+
+    // 7. Get distribution by value range
+    const valueDistribution = await sql`
+      SELECT
+        CASE
+          WHEN value < 5000 THEN '<5K'
+          WHEN value < 10000 THEN '5K-10K'
+          WHEN value < 50000 THEN '10K-50K'
+          ELSE '50K+'
+        END as range,
+        COUNT(*) as cnt
+      FROM longshot_history
+      GROUP BY 1
+      ORDER BY MIN(value)
+    `;
+
+    // 8. Raw row count from result object
+    const rawQuery = await sql`SELECT * FROM longshot_history ORDER BY timestamp DESC LIMIT 500`;
 
     return NextResponse.json({
       tableSchema: tableCheck.rows,
       rowCount: countResult.rows[0]?.cnt,
+      rawQueryRowCount: rawQuery.rows.length,
+      rawQueryFields: rawQuery.fields?.map(f => f.name),
       sampleRows: sampleRows.rows,
-      qualifyingTradesInTradesTable: qualifyingTrades.rows[0]?.cnt,
-      testInsert: {
-        result: insertResult,
-        error: insertError
-      },
-      finalCount: finalCount.rows[0]?.cnt,
+      timestampCheck: timestampCheck.rows[0],
+      duplicates: duplicateCheck.rows,
+      uniqueMarkets: marketCount.rows[0]?.unique_markets,
+      valueDistribution: valueDistribution.rows,
     });
   } catch (err) {
     console.error("Debug error:", err);
