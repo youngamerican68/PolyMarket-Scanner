@@ -5,6 +5,32 @@ import { NextResponse } from "next/server";
 import { sql } from "@vercel/postgres";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+
+const CLOB_API = "https://clob.polymarket.com";
+
+// Fetch current prices for a market
+async function fetchMarketPrices(marketId: string): Promise<Map<string, number>> {
+  const prices = new Map<string, number>();
+  try {
+    const res = await fetch(`${CLOB_API}/markets/${marketId}`, {
+      method: "GET",
+      headers: { "Content-Type": "application/json" },
+      cache: "no-store",
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data.tokens && Array.isArray(data.tokens)) {
+        for (const token of data.tokens) {
+          prices.set(token.outcome, Number(token.price ?? 0));
+        }
+      }
+    }
+  } catch (err) {
+    console.error(`Error fetching prices for ${marketId}:`, err);
+  }
+  return prices;
+}
 
 export async function GET() {
   try {
@@ -31,23 +57,72 @@ export async function GET() {
       LIMIT 500
     `;
 
-    const trades = result.rows.map((row) => ({
-      id: row.id,
-      wallet: row.wallet,
-      name: row.name || "Anonymous",
-      marketId: row.market_id,
-      eventSlug: row.event_slug,
-      title: row.title,
-      outcome: row.outcome,
-      timestamp: Number(row.timestamp),
-      price: Number(row.price),
-      size: Number(row.size),
-      value: Number(row.value),
-      resolved: row.resolved,
-      won: row.won,
-      pnl: row.pnl ? Number(row.pnl) : null,
-      createdAt: row.created_at,
-    }));
+    // Get unique market IDs and fetch current prices (limit to recent 50 markets to avoid timeout)
+    const uniqueMarkets = Array.from(new Set(result.rows.map(r => r.market_id))).slice(0, 50);
+    const marketPrices = new Map<string, Map<string, number>>();
+
+    // Fetch prices in parallel (batch of 10 at a time)
+    for (let i = 0; i < uniqueMarkets.length; i += 10) {
+      const batch = uniqueMarkets.slice(i, i + 10);
+      const pricePromises = batch.map(async (marketId) => {
+        const prices = await fetchMarketPrices(marketId);
+        return { marketId, prices };
+      });
+      const results = await Promise.all(pricePromises);
+      for (const { marketId, prices } of results) {
+        marketPrices.set(marketId, prices);
+      }
+    }
+
+    const trades = result.rows.map((row) => {
+      const entryPrice = Number(row.price);
+      const size = Number(row.size);
+      const marketId = row.market_id;
+      const outcome = row.outcome;
+
+      // Get current price from cached market prices
+      const prices = marketPrices.get(marketId);
+      const curPrice = prices?.get(outcome) ?? 0;
+
+      // Calculate position and potential
+      const position = size * curPrice;
+      const potential = size;
+
+      // Calculate inferred status
+      let inferredStatus: 'pending' | 'likely_lost' | 'likely_won' = 'pending';
+      if (row.resolved) {
+        inferredStatus = row.won ? 'likely_won' : 'likely_lost';
+      } else if (curPrice >= 0.98) {
+        inferredStatus = 'likely_won';
+      } else if (curPrice <= 0.02 && entryPrice > 0.05) {
+        inferredStatus = 'likely_lost';
+      } else if (entryPrice > 0 && curPrice / entryPrice < 0.2) {
+        inferredStatus = 'likely_lost';
+      }
+
+      return {
+        id: row.id,
+        wallet: row.wallet,
+        name: row.name || "Anonymous",
+        marketId,
+        eventSlug: row.event_slug,
+        title: row.title,
+        outcome,
+        timestamp: Number(row.timestamp),
+        price: entryPrice,
+        size,
+        value: Number(row.value),
+        resolved: row.resolved,
+        won: row.won,
+        pnl: row.pnl ? Number(row.pnl) : null,
+        createdAt: row.created_at,
+        // New fields
+        curPrice,
+        position,
+        potential,
+        inferredStatus,
+      };
+    });
 
     // Get summary stats
     const statsResult = await sql`

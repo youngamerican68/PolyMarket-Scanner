@@ -1,9 +1,7 @@
-import { sql } from '@vercel/postgres'
-import Link from 'next/link'
+'use client'
 
-// Force dynamic rendering - fetch fresh data on every request
-export const dynamic = 'force-dynamic'
-export const revalidate = 0
+import { useState, useEffect } from 'react'
+import Link from 'next/link'
 
 interface HistoricalTrade {
   id: string
@@ -20,6 +18,10 @@ interface HistoricalTrade {
   resolved: boolean
   won: boolean | null
   pnl: number | null
+  curPrice: number
+  position: number
+  potential: number
+  inferredStatus: 'pending' | 'likely_lost' | 'likely_won'
 }
 
 interface HistoryStats {
@@ -46,58 +48,44 @@ function formatDate(timestamp: number): string {
   })
 }
 
-async function getHistoryData(): Promise<{ trades: HistoricalTrade[], stats: HistoryStats }> {
-  const result = await sql`
-    SELECT id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size, value, resolved, won, pnl
-    FROM longshot_history
-    ORDER BY timestamp DESC
-    LIMIT 500
-  `
+export default function HistoryPage() {
+  const [trades, setTrades] = useState<HistoricalTrade[]>([])
+  const [stats, setStats] = useState<HistoryStats | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const trades = result.rows.map((row) => ({
-    id: row.id,
-    wallet: row.wallet,
-    name: row.name || 'Anonymous',
-    marketId: row.market_id,
-    eventSlug: row.event_slug,
-    title: row.title,
-    outcome: row.outcome,
-    timestamp: Number(row.timestamp),
-    price: Number(row.price),
-    size: Number(row.size),
-    value: Number(row.value),
-    resolved: row.resolved,
-    won: row.won,
-    pnl: row.pnl ? Number(row.pnl) : null,
-  }))
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const res = await fetch('/api/longshot-history')
+        if (!res.ok) throw new Error('Failed to fetch history')
+        const data = await res.json()
+        setTrades(data.trades || [])
+        setStats(data.stats || null)
+      } catch (err) {
+        setError(String(err))
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchData()
+  }, [])
 
-  const statsResult = await sql`
-    SELECT
-      COUNT(*) as total_trades,
-      COUNT(DISTINCT wallet) as unique_wallets,
-      SUM(value) as total_value,
-      COUNT(CASE WHEN resolved = true THEN 1 END) as resolved_count,
-      COUNT(CASE WHEN won = true THEN 1 END) as won_count
-    FROM longshot_history
-  `
-
-  const s = statsResult.rows[0]
-  const stats = {
-    totalTrades: Number(s.total_trades),
-    uniqueWallets: Number(s.unique_wallets),
-    totalValue: Number(s.total_value || 0),
-    resolvedCount: Number(s.resolved_count),
-    wonCount: Number(s.won_count),
-    winRate: s.resolved_count > 0
-      ? (Number(s.won_count) / Number(s.resolved_count) * 100).toFixed(1)
-      : null,
+  if (loading) {
+    return (
+      <main className="min-h-screen bg-poly-dark text-white p-8 flex items-center justify-center">
+        <div className="text-xl">Loading history...</div>
+      </main>
+    )
   }
 
-  return { trades, stats }
-}
-
-export default async function HistoryPage() {
-  const { trades, stats } = await getHistoryData()
+  if (error) {
+    return (
+      <main className="min-h-screen bg-poly-dark text-white p-8 flex items-center justify-center">
+        <div className="text-red-500">Error: {error}</div>
+      </main>
+    )
+  }
 
   return (
     <main className="min-h-screen bg-poly-dark text-white p-8">
@@ -119,30 +107,32 @@ export default async function HistoryPage() {
         </div>
 
         {/* Stats Cards */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
-          <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
-            <div className="text-poly-gray text-sm">Total Trades</div>
-            <div className="text-2xl font-bold text-white">{stats.totalTrades}</div>
-          </div>
-          <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
-            <div className="text-poly-gray text-sm">Unique Wallets</div>
-            <div className="text-2xl font-bold text-white">{stats.uniqueWallets}</div>
-          </div>
-          <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
-            <div className="text-poly-gray text-sm">Total Value</div>
-            <div className="text-2xl font-bold text-poly-green">{formatMoney(stats.totalValue)}</div>
-          </div>
-          <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
-            <div className="text-poly-gray text-sm">Resolved</div>
-            <div className="text-2xl font-bold text-white">{stats.resolvedCount}</div>
-          </div>
-          <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
-            <div className="text-poly-gray text-sm">Win Rate</div>
-            <div className="text-2xl font-bold text-poly-blue">
-              {stats.winRate ? `${stats.winRate}%` : 'N/A'}
+        {stats && (
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+            <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
+              <div className="text-poly-gray text-sm">Total Trades</div>
+              <div className="text-2xl font-bold text-white">{stats.totalTrades}</div>
+            </div>
+            <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
+              <div className="text-poly-gray text-sm">Unique Wallets</div>
+              <div className="text-2xl font-bold text-white">{stats.uniqueWallets}</div>
+            </div>
+            <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
+              <div className="text-poly-gray text-sm">Total Value</div>
+              <div className="text-2xl font-bold text-poly-green">{formatMoney(stats.totalValue)}</div>
+            </div>
+            <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
+              <div className="text-poly-gray text-sm">Resolved</div>
+              <div className="text-2xl font-bold text-white">{stats.resolvedCount}</div>
+            </div>
+            <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
+              <div className="text-poly-gray text-sm">Win Rate</div>
+              <div className="text-2xl font-bold text-poly-blue">
+                {stats.winRate ? `${stats.winRate}%` : 'N/A'}
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {/* Trades Table */}
         <div className="bg-poly-card rounded-xl border border-poly-border overflow-hidden">
@@ -162,16 +152,18 @@ export default async function HistoryPage() {
                     <th className="p-3 text-left">Date</th>
                     <th className="p-3 text-left">Market</th>
                     <th className="p-3 text-left">Trader</th>
-                    <th className="p-3 text-right">Odds</th>
-                    <th className="p-3 text-right">Value</th>
                     <th className="p-3 text-center">Status</th>
+                    <th className="p-3 text-right">Odds</th>
+                    <th className="p-3 text-right">Bet</th>
+                    <th className="p-3 text-right">Position</th>
+                    <th className="p-3 text-right">Potential</th>
                     <th className="p-3 text-right">Result</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-poly-border">
                   {trades.map((trade) => (
                     <tr key={trade.id} className="hover:bg-poly-dark/30">
-                      <td className="p-3 text-poly-gray text-sm">
+                      <td className="p-3 text-poly-gray text-sm whitespace-nowrap">
                         {formatDate(trade.timestamp)}
                       </td>
                       <td className="p-3">
@@ -196,18 +188,28 @@ export default async function HistoryPage() {
                           {trade.name || trade.wallet.slice(0, 10) + '...'}
                         </a>
                       </td>
+                      <td className="p-3 text-center">
+                        {trade.inferredStatus === 'likely_lost' && (
+                          <span className="text-red-400" title="Position value crashed - likely lost">📉 Lost</span>
+                        )}
+                        {trade.inferredStatus === 'likely_won' && (
+                          <span className="text-emerald-400" title="Position value surged - likely won">📈 Won</span>
+                        )}
+                        {trade.inferredStatus === 'pending' && (
+                          <span className="text-poly-green">Holding</span>
+                        )}
+                      </td>
                       <td className="p-3 text-right text-amber-400">
                         {(trade.price * 100).toFixed(1)}%
                       </td>
                       <td className="p-3 text-right text-poly-green font-medium">
                         {formatMoney(trade.value)}
                       </td>
-                      <td className="p-3 text-center">
-                        {trade.resolved ? (
-                          <span className="text-poly-gray">Settled</span>
-                        ) : (
-                          <span className="text-amber-400">Pending</span>
-                        )}
+                      <td className="p-3 text-right text-white font-medium">
+                        {formatMoney(trade.position)}
+                      </td>
+                      <td className="p-3 text-right text-poly-blue">
+                        {formatMoney(trade.potential)}
                       </td>
                       <td className="p-3 text-right">
                         {trade.resolved ? (
@@ -232,7 +234,7 @@ export default async function HistoryPage() {
 
         {/* Footer note */}
         <p className="text-center text-poly-gray text-sm mt-6">
-          Tracking started {new Date().toLocaleDateString()}. Historical data builds up over time.
+          Position and Potential values are calculated from current market prices.
         </p>
       </div>
     </main>
