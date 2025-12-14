@@ -91,15 +91,16 @@ export async function GET() {
       const position = size * curPrice;
       const potential = size;
 
-      // Calculate inferred status
+      // Calculate inferred status based on position value change
+      // Only mark won/lost at extreme value changes (98%+)
       let inferredStatus: 'pending' | 'likely_lost' | 'likely_won' = 'pending';
       if (row.resolved) {
         inferredStatus = row.won ? 'likely_won' : 'likely_lost';
       } else if (curPrice >= 0.98) {
+        // Price at 98%+ = market effectively settled to YES
         inferredStatus = 'likely_won';
-      } else if (curPrice <= 0.02 && entryPrice > 0.05) {
-        inferredStatus = 'likely_lost';
-      } else if (entryPrice > 0 && curPrice / entryPrice < 0.2) {
+      } else if (entryPrice > 0 && curPrice / entryPrice <= 0.02) {
+        // Position value dropped 98%+ from entry = effectively lost
         inferredStatus = 'likely_lost';
       }
 
