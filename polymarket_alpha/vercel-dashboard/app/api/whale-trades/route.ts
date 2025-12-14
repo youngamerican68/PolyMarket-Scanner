@@ -208,15 +208,16 @@ export async function GET(request: Request) {
       FROM whale_trades
     `;
 
-    // Use explicit column counting to avoid PostgreSQL quirks
+    // Use same query pattern as seed-whales which works correctly
     const watchlistStatsResult = await sql`
       SELECT
-        (SELECT COUNT(*) FROM whale_watchlist) as total_watchlist,
-        (SELECT COUNT(*) FROM whale_watchlist WHERE wallet IS NOT NULL) as with_wallet,
-        (SELECT COUNT(*) FROM whale_watchlist WHERE wallet IS NULL) as pending_wallet,
-        (SELECT COUNT(*) FROM whale_watchlist WHERE tier = 'whale') as whales,
-        (SELECT COUNT(*) FROM whale_watchlist WHERE tier = 'shark') as sharks,
-        (SELECT COUNT(*) FROM whale_watchlist WHERE tier = 'dolphin') as dolphins
+        COUNT(*) as total_watchlist,
+        COUNT(wallet) as with_wallet,
+        COUNT(*) - COUNT(wallet) as pending_wallet,
+        COUNT(CASE WHEN tier = 'whale' THEN 1 END) as whales,
+        COUNT(CASE WHEN tier = 'shark' THEN 1 END) as sharks,
+        COUNT(CASE WHEN tier = 'dolphin' THEN 1 END) as dolphins
+      FROM whale_watchlist
     `;
 
     const stats = statsResult.rows[0];
@@ -245,7 +246,7 @@ export async function GET(request: Request) {
       },
       filters: { tier, category },
       timestamp: new Date().toISOString(),
-      _apiVersion: "v3-debug",
+      _apiVersion: "v4-fixed-query",
       _rawTotal: watchlistStats.total_watchlist,
     }, {
       headers: {
