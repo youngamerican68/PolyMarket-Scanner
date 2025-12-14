@@ -85,14 +85,19 @@ export async function GET() {
 
       // Get current price from cached market prices
       const prices = marketPrices.get(marketId);
-      const curPrice = prices?.get(outcome) ?? 0;
+      let curPrice = prices?.get(outcome) ?? 0;
+
+      // If market is resolved, use resolution result instead of live price
+      // (live price lookup can fail or return stale data)
+      if (row.resolved) {
+        curPrice = row.won ? 1.0 : 0.0;
+      }
 
       // Calculate position and potential
       const position = size * curPrice;
       const potential = size;
 
-      // Calculate inferred status based on position value change
-      // Only mark won/lost at extreme value changes (98%+)
+      // Calculate inferred status based on resolution or price
       let inferredStatus: 'pending' | 'likely_lost' | 'likely_won' = 'pending';
       if (row.resolved) {
         inferredStatus = row.won ? 'likely_won' : 'likely_lost';
