@@ -145,16 +145,22 @@ export async function GET(req: NextRequest) {
         const profile = walletProfiles.get(t.wallet);
         const positionData = getPositionData(t.wallet, t.marketId, t.outcome);
 
-        // Calculate inferred status based on current price
-        // If current price is near 0 or 1, the market has effectively resolved
+        // Calculate inferred status based on price change from entry
+        // Compare current price to entry price - significant drops indicate loss
         const curPrice = positionData.curPrice;
+        const entryPrice = t.avgPrice;
         let inferredStatus: 'pending' | 'likely_lost' | 'likely_won' = 'pending';
-        if (curPrice <= 0.02) {
-          // Price crashed to <2% = likely lost
-          inferredStatus = 'likely_lost';
-        } else if (curPrice >= 0.98) {
+
+        if (curPrice >= 0.98) {
           // Price surged to >98% = likely won
           inferredStatus = 'likely_won';
+        } else if (curPrice <= 0.02 && entryPrice > 0.05) {
+          // Price crashed to <2% AND entry was >5% = likely lost
+          // (Don't mark 1% longshots as lost just because they're still at 1%)
+          inferredStatus = 'likely_lost';
+        } else if (entryPrice > 0 && curPrice / entryPrice < 0.2) {
+          // Price dropped 80%+ from entry = likely lost
+          inferredStatus = 'likely_lost';
         }
 
         return {
