@@ -2,7 +2,7 @@
 // Returns longshot trades from whale watchlist wallets
 
 import { NextResponse } from "next/server";
-import { sql } from "@vercel/postgres";
+import { sql, db } from "@vercel/postgres";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -39,20 +39,29 @@ export async function GET(request: Request) {
     const category = searchParams.get("category"); // sports, crypto, etc.
     const limit = Math.min(Number(searchParams.get("limit")) || 100, 500);
 
-    // Query watchlist stats FIRST - before any other queries
-    // This avoids connection pooling issues with Vercel Postgres
-    const watchlistStatsResult = await sql`
-      SELECT
-        COUNT(*) as total_watchlist,
-        COUNT(wallet) as with_wallet,
-        COUNT(*) - COUNT(wallet) as pending_wallet,
-        COUNT(CASE WHEN tier = 'whale' THEN 1 END) as whales,
-        COUNT(CASE WHEN tier = 'shark' THEN 1 END) as sharks,
-        COUNT(CASE WHEN tier = 'dolphin' THEN 1 END) as dolphins
-      FROM whale_watchlist
-    `;
-    const watchlistStats = watchlistStatsResult.rows[0];
-    console.log("EARLY watchlistStats:", JSON.stringify(watchlistStats));
+    // Use db.connect() with transaction to force primary database read
+    // The sql template tag uses read replicas which have stale data
+    const client = await db.connect();
+    let watchlistStats;
+    try {
+      await client.query('BEGIN');
+      const watchlistStatsResult = await client.query(`
+        SELECT
+          COUNT(*) as total_watchlist,
+          COUNT(wallet) as with_wallet,
+          COUNT(*) - COUNT(wallet) as pending_wallet,
+          COUNT(CASE WHEN tier = 'whale' THEN 1 END) as whales,
+          COUNT(CASE WHEN tier = 'shark' THEN 1 END) as sharks,
+          COUNT(CASE WHEN tier = 'dolphin' THEN 1 END) as dolphins
+        FROM whale_watchlist
+      `);
+      await client.query('COMMIT');
+      watchlistStats = watchlistStatsResult.rows[0];
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    }
+    console.log("TRANSACTION watchlistStats:", JSON.stringify(watchlistStats));
 
     // Build query based on filters
     let result;
@@ -246,7 +255,7 @@ export async function GET(request: Request) {
       },
       filters: { tier, category },
       timestamp: new Date().toISOString(),
-      _apiVersion: "v5-early-query",
+      _apiVersion: "v6-transaction",
       _rawTotal: watchlistStats.total_watchlist,
     }, {
       headers: {
