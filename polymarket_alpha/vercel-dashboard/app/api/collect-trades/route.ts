@@ -130,7 +130,7 @@ async function pruneOldTrades(): Promise<number> {
 // Aggregates trades by wallet+market+outcome to catch positions built from multiple small trades
 async function storeToHistory(trades: RawTrade[]): Promise<number> {
   let inserted = 0;
-  const MIN_VALUE = 5000; // $5K minimum
+  const MIN_VALUE = 2500; // $2.5K minimum
 
   // Aggregate trades by wallet + market + outcome
   const aggregated = new Map<string, {
@@ -217,10 +217,101 @@ async function storeToHistory(trades: RawTrade[]): Promise<number> {
   return inserted;
 }
 
+// Update whale watchlist with wallet addresses when we see matching names
+async function updateWhaleWatchlistMappings(trades: RawTrade[]): Promise<number> {
+  let updated = 0;
+
+  // Get all watchlist names that are missing wallets
+  const pendingResult = await sql`
+    SELECT name FROM whale_watchlist WHERE wallet IS NULL
+  `;
+  const pendingNames = new Set(pendingResult.rows.map(r => r.name.toLowerCase()));
+
+  if (pendingNames.size === 0) return 0;
+
+  for (const t of trades) {
+    const name = t.name || t.pseudonym;
+    if (!name) continue;
+
+    if (pendingNames.has(name.toLowerCase())) {
+      try {
+        const result = await sql`
+          UPDATE whale_watchlist
+          SET wallet = ${t.proxyWallet}
+          WHERE LOWER(name) = ${name.toLowerCase()} AND wallet IS NULL
+        `;
+        if (result.rowCount && result.rowCount > 0) {
+          updated++;
+          console.log(`[whale-watchlist] Linked wallet for ${name}: ${t.proxyWallet}`);
+          pendingNames.delete(name.toLowerCase());
+        }
+      } catch (err) {
+        console.error(`Error updating whale watchlist:`, err);
+      }
+    }
+  }
+
+  return updated;
+}
+
+// Store longshot trades from whale watchlist wallets
+async function storeWhaleTrades(trades: RawTrade[]): Promise<number> {
+  let stored = 0;
+
+  // Get all whale watchlist wallets with their metadata
+  const watchlistResult = await sql`
+    SELECT wallet, name, tier, category FROM whale_watchlist WHERE wallet IS NOT NULL
+  `;
+  const whaleWallets = new Map(
+    watchlistResult.rows.map(r => [r.wallet.toLowerCase(), { name: r.name, tier: r.tier, category: r.category }])
+  );
+
+  if (whaleWallets.size === 0) return 0;
+
+  for (const t of trades) {
+    const whaleInfo = whaleWallets.get(t.proxyWallet.toLowerCase());
+    if (!whaleInfo) continue;
+
+    try {
+      const tradeId = t.id || `${t.proxyWallet}-${t.conditionId}-${t.timestamp}-${Math.round(t.size)}`;
+      const value = t.price * t.size;
+
+      const result = await sql`
+        INSERT INTO whale_trades (id, wallet, name, whale_tier, whale_category, market_id, event_slug, title, outcome, timestamp, price, size, value)
+        VALUES (
+          ${tradeId},
+          ${t.proxyWallet},
+          ${t.name || t.pseudonym || whaleInfo.name},
+          ${whaleInfo.tier},
+          ${whaleInfo.category},
+          ${t.conditionId},
+          ${t.eventSlug || t.slug || ""},
+          ${t.title || ""},
+          ${t.outcome || ""},
+          ${t.timestamp},
+          ${t.price},
+          ${t.size},
+          ${value}
+        )
+        ON CONFLICT (id) DO NOTHING
+      `;
+
+      if (result.rowCount && result.rowCount > 0) {
+        stored++;
+        console.log(`[whale-trade] ${whaleInfo.name} (${whaleInfo.tier}): ${t.title?.slice(0, 30)} @ ${(t.price * 100).toFixed(1)}% = $${value.toFixed(0)}`);
+      }
+    } catch (err) {
+      console.error(`Error storing whale trade:`, err);
+    }
+  }
+
+  return stored;
+}
+
 // Aggregate trades from DB and save qualifying positions to history
 // This catches positions built from multiple smaller trades across different API fetches
 async function syncHistoryFromDb(): Promise<number> {
-  const MIN_VALUE = 5000;
+  const MIN_VALUE = 2500; // $2.5K minimum
   const cutoff24h = Math.floor(Date.now() / 1000) - 24 * 60 * 60;
 
   // Get aggregated positions from trades table (last 24h)
@@ -300,6 +391,14 @@ export async function GET() {
     const inserted = await storeTrades(trades);
     console.log(`Inserted ${inserted} new trades`);
 
+    // Update whale watchlist with wallet mappings
+    const whaleWalletsLinked = await updateWhaleWatchlistMappings(trades);
+    console.log(`Linked ${whaleWalletsLinked} whale wallet mappings`);
+
+    // Store whale trades
+    const whaleTradesStored = await storeWhaleTrades(trades);
+    console.log(`Stored ${whaleTradesStored} whale trades`);
+
     // Store qualifying trades to permanent history (from fresh API data)
     const historyInserted = await storeToHistory(trades);
     console.log(`Inserted ${historyInserted} trades to history from API`);
@@ -322,17 +421,33 @@ export async function GET() {
     const historyTotal = historyCountResult.rows[0].count;
     console.log(`History has ${historyTotal} longshot trades`);
 
+    // Get whale stats
+    let whaleWatchlistTotal = 0;
+    let whaleTradesTotal = 0;
+    try {
+      const whaleWatchlistResult = await sql`SELECT COUNT(*) as count FROM whale_watchlist`;
+      whaleWatchlistTotal = Number(whaleWatchlistResult.rows[0].count);
+      const whaleTradesResult = await sql`SELECT COUNT(*) as count FROM whale_trades`;
+      whaleTradesTotal = Number(whaleTradesResult.rows[0].count);
+    } catch {
+      // Tables may not exist yet
+    }
+
     const duration = Date.now() - startTime;
 
     return NextResponse.json({
       success: true,
       fetched: trades.length,
       inserted,
+      whaleWalletsLinked,
+      whaleTradesStored,
       historyInserted,
       historySynced,
       pruned,
       totalInDb: totalTrades,
       historyTotal,
+      whaleWatchlistTotal,
+      whaleTradesTotal,
       durationMs: duration,
       timestamp: new Date().toISOString(),
     });
