@@ -39,6 +39,21 @@ export async function GET(request: Request) {
     const category = searchParams.get("category"); // sports, crypto, etc.
     const limit = Math.min(Number(searchParams.get("limit")) || 100, 500);
 
+    // Query watchlist stats FIRST - before any other queries
+    // This avoids connection pooling issues with Vercel Postgres
+    const watchlistStatsResult = await sql`
+      SELECT
+        COUNT(*) as total_watchlist,
+        COUNT(wallet) as with_wallet,
+        COUNT(*) - COUNT(wallet) as pending_wallet,
+        COUNT(CASE WHEN tier = 'whale' THEN 1 END) as whales,
+        COUNT(CASE WHEN tier = 'shark' THEN 1 END) as sharks,
+        COUNT(CASE WHEN tier = 'dolphin' THEN 1 END) as dolphins
+      FROM whale_watchlist
+    `;
+    const watchlistStats = watchlistStatsResult.rows[0];
+    console.log("EARLY watchlistStats:", JSON.stringify(watchlistStats));
+
     // Build query based on filters
     let result;
     if (tier && category) {
@@ -208,23 +223,8 @@ export async function GET(request: Request) {
       FROM whale_trades
     `;
 
-    // Use same query pattern as seed-whales which works correctly
-    const watchlistStatsResult = await sql`
-      SELECT
-        COUNT(*) as total_watchlist,
-        COUNT(wallet) as with_wallet,
-        COUNT(*) - COUNT(wallet) as pending_wallet,
-        COUNT(CASE WHEN tier = 'whale' THEN 1 END) as whales,
-        COUNT(CASE WHEN tier = 'shark' THEN 1 END) as sharks,
-        COUNT(CASE WHEN tier = 'dolphin' THEN 1 END) as dolphins
-      FROM whale_watchlist
-    `;
-
     const stats = statsResult.rows[0];
-    const watchlistStats = watchlistStatsResult.rows[0];
-
-    // Debug: log raw values
-    console.log("RAW watchlistStats:", JSON.stringify(watchlistStats));
+    // watchlistStats already queried at start of function
 
     return NextResponse.json({
       trades,
@@ -246,7 +246,7 @@ export async function GET(request: Request) {
       },
       filters: { tier, category },
       timestamp: new Date().toISOString(),
-      _apiVersion: "v4-fixed-query",
+      _apiVersion: "v5-early-query",
       _rawTotal: watchlistStats.total_watchlist,
     }, {
       headers: {
