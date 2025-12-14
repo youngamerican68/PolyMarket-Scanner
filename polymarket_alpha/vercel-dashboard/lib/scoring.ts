@@ -303,17 +303,15 @@ export function detectSharpConvergence(
   trades: Trade[],
   walletProfiles: Map<string, WalletProfile>,
   opts?: {
-    minBetValue?: number;      // Minimum bet size to be included (default $5K)
+    minBetValue?: number;      // Minimum bet size to be included (default $2.5K)
     minWalletCount?: number;   // Minimum wallets on same bet (default 2)
     maxPrice?: number;         // Max odds to consider (default 0.25)
-    maxPositions?: number;     // Max positions to be considered (default 500) - filters out algos/market makers
   }
 ): SharpConvergence[] {
   const {
-    minBetValue = 5000,        // $5K+ bet = high conviction
+    minBetValue = 2500,        // $2.5K+ bet = high conviction (matches collection threshold)
     minWalletCount = 2,        // 2+ wallets = convergence signal
     maxPrice = 0.25,
-    maxPositions = 500,        // Only include selective traders, not algos with 10K+ positions
   } = opts ?? {};
 
   // Filter to longshot trades only, exclude already settled markets
@@ -345,16 +343,16 @@ export function detectSharpConvergence(
 
     for (const [wallet, wTrades] of Array.from(walletTrades.entries())) {
       const profile = walletProfiles.get(wallet);
-      const positions = profile?.totalPositions ?? 0;
       const pnl = profile?.totalPnl ?? 0;
 
       const totalSize = wTrades.reduce((sum, t) => sum + t.size, 0);
       const totalValue = wTrades.reduce((sum, t) => sum + t.price * t.size, 0);
       const name = wTrades[0]?.name || 'Anonymous';
+      const isHedged = wTrades[0]?.isHedged ?? false;
 
-      // Must have high conviction bet AND be selective (not an algo)
-      // PnL is shown for context but NOT used as filter (unreliable)
-      if (totalValue >= minBetValue && positions < maxPositions) {
+      // Must have high conviction bet and not be hedging both sides
+      // Position count filter removed - a $2.5K+ longshot bet is conviction regardless of history
+      if (totalValue >= minBetValue && !isHedged) {
         qualifyingWallets.push({
           wallet,
           name,

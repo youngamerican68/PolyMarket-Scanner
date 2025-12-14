@@ -303,13 +303,12 @@ export async function GET(req: NextRequest) {
       hoursOfData,
     };
 
-    // Detect convergence: 2+ selective wallets betting $5K+ on same longshot
-    // No PnL filter - bet size + selectivity are the signals
+    // Detect convergence: 2+ wallets betting $2.5K+ on same longshot
+    // Filter: bet size + hedge detection (no position count filter - conviction is what matters)
     const sharpConvergencesRaw = detectSharpConvergence(trades, walletProfiles, {
-      minBetValue: 5000,      // $5K+ bet = high conviction
+      minBetValue: 2500,      // $2.5K+ bet = high conviction (matches collection threshold)
       minWalletCount: 2,      // 2+ wallets = convergence
       maxPrice,
-      maxPositions: 500,      // <500 positions = selective trader
     });
 
     // Detect hedged positions and filter out settled markets
