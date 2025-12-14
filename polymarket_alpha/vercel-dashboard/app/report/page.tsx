@@ -352,6 +352,12 @@ export default function ReportPage() {
             >
               View History
             </Link>
+            <Link
+              href="/whales"
+              className="px-4 py-2 bg-purple-600 text-white font-medium rounded hover:bg-purple-500 transition-colors flex items-center gap-1"
+            >
+              <span>🐋</span> Whales
+            </Link>
             <button
               onClick={() => fetchReport(currentFilter.min, currentFilter.max)}
               disabled={loading}
