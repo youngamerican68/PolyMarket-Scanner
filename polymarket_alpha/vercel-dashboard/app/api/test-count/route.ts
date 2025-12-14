@@ -1,15 +1,16 @@
 // Minimal test endpoint
 import { NextResponse } from "next/server";
-import { sql } from "@vercel/postgres";
+import { db } from "@vercel/postgres";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const client = await db.connect();
   try {
-    // First query - SELECT * like seed-whales does
-    const warmup = await sql`SELECT * FROM whale_watchlist LIMIT 1`;
+    // Use transaction to ensure we hit the primary
+    await client.query('BEGIN');
 
-    const result = await sql`
+    const result = await client.query(`
       SELECT
         COUNT(*) as total,
         COUNT(wallet) as with_wallet,
@@ -17,16 +18,18 @@ export async function GET() {
         COUNT(CASE WHEN tier = 'shark' THEN 1 END) as sharks,
         COUNT(CASE WHEN tier = 'dolphin' THEN 1 END) as dolphins
       FROM whale_watchlist
-    `;
+    `);
+
+    await client.query('COMMIT');
 
     return NextResponse.json({
       stats: result.rows[0],
       rowCount: result.rowCount,
-      warmupRows: warmup.rowCount,
       success: true,
-      version: "v2-warmup"
+      version: "v3-transaction"
     });
   } catch (err) {
+    await client.query('ROLLBACK');
     return NextResponse.json({
       error: String(err),
       success: false
