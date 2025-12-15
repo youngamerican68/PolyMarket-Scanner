@@ -348,7 +348,11 @@ export async function GET(req: NextRequest) {
             ...convergence,
             isSettled: true,
             winner: resolution.winner,
-            sharpWallets: convergence.sharpWallets,
+            sharpWallets: convergence.sharpWallets.map((sw) => ({
+              ...sw,
+              isHedged: false,
+              positionStatus: 'unknown' as const,
+            })),
           };
         }
 
@@ -374,7 +378,7 @@ export async function GET(req: NextRequest) {
           sharpWallets: convergence.sharpWallets.map((sw) => ({
             ...sw,
             isHedged: hedgeResults.get(sw.wallet) ?? false,
-            positionStatus: positionStatusResults.get(sw.wallet) ?? 'unknown',
+            positionStatus: (positionStatusResults.get(sw.wallet) ?? 'unknown') as 'holding' | 'sold' | 'unknown',
           })),
         };
       })
