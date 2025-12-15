@@ -78,6 +78,52 @@ ALTER TABLE longshot_history ADD COLUMN resolution_source TEXT;
 
 ---
 
+### Phase 2b: Report Page Sync (Completed)
+
+**Problem:** The `/report` page wasn't updated with Phase 2 resolution state logic, showing inconsistent status indicators compared to `/history`.
+
+**Solution:** Updated report page to use same status hierarchy and lookup resolution states from longshot_history.
+
+**Files Modified:**
+- `app/api/daily-report/route.ts` - Added resolution state lookup from longshot_history
+- `app/report/page.tsx` - Updated inferredStatus type and status display
+
+**API Changes:**
+```typescript
+// daily-report now queries longshot_history for resolution states
+const historyLookupResult = await sql`
+  SELECT wallet, market_id, outcome, resolution_state, won
+  FROM longshot_history
+  WHERE resolution_state IN ('confirmed', 'inferred')
+`;
+
+// Creates lookup map: wallet:marketId:outcome -> { state, won }
+// Uses this to override live price inference with stored resolutions
+```
+
+**UI Now Consistent Across Pages:**
+| Page | Status Icons |
+|------|-------------|
+| `/history` | ✅❌ (confirmed) \| 📈📉 Won*/Lost* (inferred) \| 🔄 Likely \| ⏳ Holding |
+| `/report` | Same display, plus looks up resolutions from longshot_history |
+
+**Sharp Convergence Updates:**
+- Added `positionStatus` to sharp wallet display
+- Shows "Sold" badge for wallets that have exited positions
+- Fades sold/hedged positions with `opacity-60`
+
+---
+
+## Deployment Log
+
+| Commit | Description | Date |
+|--------|-------------|------|
+| `63022f8` | Phase 1 & 2: Trade ID uniqueness + resolution states | Dec 15, 2025 |
+| `2c6dea9` | Report page resolution state support | Dec 15, 2025 |
+| `1f74d57` | Position, Potential, Status columns to history | Dec 15, 2025 |
+
+---
+
 ## Remaining Phases (Planned)
 
 ### Phase 3: Price Cache
