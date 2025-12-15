@@ -20,10 +20,13 @@ interface RawTrade {
   slug?: string;
   title?: string;
   outcome?: string;
+  outcomeIndex?: number;
+  asset?: string; // Token ID - stable unique identifier per outcome
   timestamp: number;
   price: number;
   size: number;
   side: string;
+  transactionHash?: string;
 }
 
 async function fetchRecentTrades(): Promise<RawTrade[]> {
@@ -76,14 +79,47 @@ async function fetchRecentTrades(): Promise<RawTrade[]> {
   return allTrades;
 }
 
-async function storeTrades(trades: RawTrade[]): Promise<number> {
+async function storeTrades(trades: RawTrade[]): Promise<{
+  inserted: number;
+  legacyIdCount: number;
+  legacyIdSamples: string[];
+  missingAssetCount: number;
+  missingAssetSamples: string[];
+}> {
   let inserted = 0;
+  let legacyIdCount = 0;
+  let missingAssetCount = 0;
+  const legacyIdSamples: string[] = []; // Collect up to 3 samples for debugging
+  const missingAssetSamples: string[] = []; // Track missing asset separately
 
   for (const t of trades) {
     try {
-      // Use the API's unique trade ID to prevent duplicates
-      // Fallback to generated ID if API doesn't provide one
-      const tradeId = t.id || `${t.proxyWallet}-${t.conditionId}-${t.timestamp}-${Math.round(t.size)}`;
+      // Normalize asset: trim whitespace, ensure string
+      const normalizedAsset = t.asset ? String(t.asset).trim() : null;
+
+      // Use transactionHash + asset (tokenId) as unique trade ID
+      // transactionHash is blockchain-unique, asset is the immutable token ID
+      // asset is more stable than outcomeIndex or outcome display label
+      let tradeId: string;
+      if (t.transactionHash && normalizedAsset) {
+        tradeId = `${t.transactionHash}_${normalizedAsset}`;
+      } else if (t.transactionHash) {
+        // MISSING ASSET FALLBACK: Has txHash but no asset - track this regression
+        tradeId = `${t.transactionHash}_${t.outcomeIndex ?? 0}`;
+        missingAssetCount++;
+        if (missingAssetSamples.length < 3) {
+          missingAssetSamples.push(`txHash=${t.transactionHash.slice(0,10)}...`);
+        }
+        console.warn(`[MISSING_ASSET] Has transactionHash but missing asset: txHash=${t.transactionHash.slice(0,10)}, market=${t.conditionId.slice(0,10)}`);
+      } else {
+        // LEGACY FALLBACK: Missing transactionHash entirely - this shouldn't happen
+        tradeId = `${t.proxyWallet}-${t.conditionId}-${t.timestamp}-${Math.round(t.size)}`;
+        legacyIdCount++;
+        if (legacyIdSamples.length < 3) {
+          legacyIdSamples.push(tradeId);
+        }
+        console.warn(`[LEGACY_ID] Missing transactionHash for trade: wallet=${t.proxyWallet.slice(0,10)}, market=${t.conditionId.slice(0,10)}, ts=${t.timestamp}`);
+      }
 
       // Use INSERT ... ON CONFLICT DO NOTHING to skip duplicates
       const result = await sql`
@@ -112,7 +148,17 @@ async function storeTrades(trades: RawTrade[]): Promise<number> {
     }
   }
 
-  return inserted;
+  if (missingAssetCount > 0) {
+    console.warn(`[MISSING_ASSET_SUMMARY] ${missingAssetCount} trades missing asset field (using outcomeIndex fallback)`);
+    console.warn(`[MISSING_ASSET_SAMPLES] ${missingAssetSamples.join(', ')}`);
+  }
+
+  if (legacyIdCount > 0) {
+    console.warn(`[LEGACY_ID_SUMMARY] ${legacyIdCount} trades used legacy ID format (missing transactionHash)`);
+    console.warn(`[LEGACY_ID_SAMPLES] ${legacyIdSamples.join(', ')}`);
+  }
+
+  return { inserted, legacyIdCount, legacyIdSamples, missingAssetCount, missingAssetSamples };
 }
 
 async function pruneOldTrades(): Promise<number> {
@@ -273,7 +319,20 @@ async function storeWhaleTrades(trades: RawTrade[]): Promise<number> {
     if (!whaleInfo) continue;
 
     try {
-      const tradeId = t.id || `${t.proxyWallet}-${t.conditionId}-${t.timestamp}-${Math.round(t.size)}`;
+      // Normalize asset: trim whitespace, ensure string
+      const normalizedAsset = t.asset ? String(t.asset).trim() : null;
+
+      // Use transactionHash + asset (tokenId) as unique trade ID
+      let tradeId: string;
+      if (t.transactionHash && normalizedAsset) {
+        tradeId = `${t.transactionHash}_${normalizedAsset}`;
+      } else if (t.transactionHash) {
+        tradeId = `${t.transactionHash}_${t.outcomeIndex ?? 0}`;
+        console.warn(`[MISSING_ASSET] Whale trade missing asset: txHash=${t.transactionHash.slice(0,10)}`);
+      } else {
+        tradeId = `${t.proxyWallet}-${t.conditionId}-${t.timestamp}-${Math.round(t.size)}`;
+        console.warn(`[LEGACY_ID] Missing transactionHash for whale trade: wallet=${t.proxyWallet.slice(0,10)}, ts=${t.timestamp}`);
+      }
       const value = t.price * t.size;
 
       const result = await sql`
@@ -388,8 +447,8 @@ export async function GET() {
     console.log(`Fetched ${trades.length} longshot trades total`);
 
     // Store in database
-    const inserted = await storeTrades(trades);
-    console.log(`Inserted ${inserted} new trades`);
+    const { inserted, legacyIdCount, legacyIdSamples, missingAssetCount, missingAssetSamples } = await storeTrades(trades);
+    console.log(`Inserted ${inserted} new trades${legacyIdCount > 0 ? ` (${legacyIdCount} legacy ID)` : ''}${missingAssetCount > 0 ? ` (${missingAssetCount} missing asset)` : ''}`);
 
     // Update whale watchlist with wallet mappings
     const whaleWalletsLinked = await updateWhaleWatchlistMappings(trades);
@@ -439,6 +498,11 @@ export async function GET() {
       success: true,
       fetched: trades.length,
       inserted,
+      // Data quality metrics - all should be 0 in normal operation
+      legacyIdCount, // Missing transactionHash entirely
+      legacyIdSamples, // Sample IDs for debugging (max 3)
+      missingAssetCount, // Has txHash but missing asset field
+      missingAssetSamples, // Sample txHashes for debugging (max 3)
       whaleWalletsLinked,
       whaleTradesStored,
       historyInserted,

@@ -67,7 +67,8 @@ export async function GET() {
     }
 
     let checkedCount = 0;
-    let resolvedCount = 0;
+    let confirmedCount = 0;
+    let inferredCount = 0;
     let wonCount = 0;
 
     // Check each market
@@ -84,24 +85,31 @@ export async function GET() {
 
       // Find the winning outcome - either explicitly marked or inferred from price
       let winningOutcome: string | null = null;
+      let resolutionState: 'confirmed' | 'inferred' = 'inferred';
+      let resolutionSource: 'official_api' | 'price_inference' = 'price_inference';
 
-      // Method 1: Check if market is officially closed with a winner
+      // Method 1: Check if market is officially closed with a winner (CONFIRMED)
       if (marketData.closed) {
         const winningToken = marketData.tokens.find(t => t.winner === true);
         if (winningToken) {
           winningOutcome = winningToken.outcome;
-          console.log(`[check-resolutions] Market ${marketId} officially closed, winner="${winningOutcome}"`);
+          resolutionState = 'confirmed';
+          resolutionSource = 'official_api';
+          console.log(`[check-resolutions] Market ${marketId} CONFIRMED closed, winner="${winningOutcome}"`);
         }
       }
 
       // Method 2: Infer from token prices (if price is near 0 or 1, market effectively resolved)
+      // Only use this if we don't have an official resolution
       if (!winningOutcome && marketData.tokens) {
         for (const token of marketData.tokens) {
           const price = token.price ?? 0;
           if (price >= 0.98) {
             // This outcome won (price near $1)
             winningOutcome = token.outcome;
-            console.log(`[check-resolutions] Market ${marketId} inferred resolved from price: "${token.outcome}" at ${(price * 100).toFixed(1)}%`);
+            resolutionState = 'inferred';
+            resolutionSource = 'price_inference';
+            console.log(`[check-resolutions] Market ${marketId} INFERRED from price: "${token.outcome}" at ${(price * 100).toFixed(1)}%`);
             break;
           }
         }
@@ -111,40 +119,70 @@ export async function GET() {
         console.log(`[check-resolutions] Market ${marketId} still open (no winner found)`);
         continue;
       }
+
       const tradeWon = tradeOutcome.toLowerCase() === winningOutcome.toLowerCase();
+      console.log(`[check-resolutions] Market ${marketId} ${resolutionState}: winner="${winningOutcome}", trade="${tradeOutcome}", won=${tradeWon}`);
 
-      console.log(`[check-resolutions] Market ${marketId} resolved: winner="${winningOutcome}", trade="${tradeOutcome}", won=${tradeWon}`);
-
-      // Update all trades for this market
+      // Update all trades for this market with resolution state
       // PnL calculation: if won, pnl = size * (1 - price), else pnl = -value
+      // IMPORTANT: Never downgrade 'confirmed' to 'inferred'
       if (tradeWon) {
         await sql`
           UPDATE longshot_history
-          SET resolved = true, won = true, pnl = size * (1 - price)
+          SET
+            resolved = true,
+            won = true,
+            pnl = size * (1 - price),
+            resolution_state = CASE
+              WHEN resolution_state = 'confirmed' THEN 'confirmed'
+              ELSE ${resolutionState}
+            END,
+            resolution_source = CASE
+              WHEN resolution_state = 'confirmed' THEN resolution_source
+              ELSE ${resolutionSource}
+            END
           WHERE market_id = ${marketId} AND outcome = ${tradeOutcome}
         `;
         wonCount++;
       } else {
         await sql`
           UPDATE longshot_history
-          SET resolved = true, won = false, pnl = -(price * size)
+          SET
+            resolved = true,
+            won = false,
+            pnl = -(price * size),
+            resolution_state = CASE
+              WHEN resolution_state = 'confirmed' THEN 'confirmed'
+              ELSE ${resolutionState}
+            END,
+            resolution_source = CASE
+              WHEN resolution_state = 'confirmed' THEN resolution_source
+              ELSE ${resolutionSource}
+            END
           WHERE market_id = ${marketId} AND outcome = ${tradeOutcome}
         `;
       }
 
-      resolvedCount++;
+      if (resolutionState === 'confirmed') {
+        confirmedCount++;
+      } else {
+        inferredCount++;
+      }
 
       // Rate limit: don't hammer the API
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
     const duration = Date.now() - startTime;
-    console.log(`[check-resolutions] Complete: checked=${checkedCount}, resolved=${resolvedCount}, won=${wonCount}, duration=${duration}ms`);
+    const totalResolved = confirmedCount + inferredCount;
+    console.log(`[check-resolutions] Complete: checked=${checkedCount}, confirmed=${confirmedCount}, inferred=${inferredCount}, won=${wonCount}, duration=${duration}ms`);
 
     return NextResponse.json({
       success: true,
       checked: checkedCount,
-      resolved: resolvedCount,
+      resolved: totalResolved,
+      confirmed: confirmedCount,
+      inferred: inferredCount,
       won: wonCount,
       duration,
     });

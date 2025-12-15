@@ -18,10 +18,13 @@ interface HistoricalTrade {
   resolved: boolean
   won: boolean | null
   pnl: number | null
+  resolutionState: 'unresolved' | 'inferred' | 'confirmed'
+  resolutionSource: 'official_api' | 'price_inference' | 'manual' | null
   curPrice: number
   position: number
   potential: number
-  inferredStatus: 'pending' | 'likely_lost' | 'likely_won'
+  inferredStatus: 'confirmed_won' | 'confirmed_lost' | 'inferred_won' | 'inferred_lost' | 'likely_won' | 'likely_lost' | 'holding'
+  whaleTier: 'whale' | 'shark' | 'dolphin' | null
 }
 
 interface HistoryStats {
@@ -46,6 +49,15 @@ function formatDate(timestamp: number): string {
     hour: 'numeric',
     minute: '2-digit',
   })
+}
+
+function getWhaleTierEmoji(tier: string | null): string | null {
+  switch (tier?.toLowerCase()) {
+    case 'whale': return '🐋'
+    case 'shark': return '🦈'
+    case 'dolphin': return '🐬'
+    default: return null
+  }
 }
 
 export default function HistoryPage() {
@@ -177,24 +189,43 @@ export default function HistoryPage() {
                         <div className="text-poly-gray text-xs truncate">{trade.outcome}</div>
                       </td>
                       <td className="p-2">
-                        <a
-                          href={`https://polymarket.com/profile/${trade.wallet}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-poly-blue hover:underline block truncate"
-                        >
-                          {trade.name || trade.wallet.slice(0, 10) + '...'}
-                        </a>
+                        <div className="flex items-center gap-1">
+                          {trade.whaleTier && (
+                            <span title={`Watchlist: ${trade.whaleTier}`}>
+                              {getWhaleTierEmoji(trade.whaleTier)}
+                            </span>
+                          )}
+                          <a
+                            href={`https://polymarket.com/profile/${trade.wallet}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-poly-blue hover:underline truncate"
+                          >
+                            {trade.name || trade.wallet.slice(0, 10) + '...'}
+                          </a>
+                        </div>
                       </td>
                       <td className="p-2 text-center">
-                        {trade.inferredStatus === 'likely_lost' && (
-                          <span className="text-red-400" title="Position value crashed - likely lost">📉 Lost</span>
+                        {trade.inferredStatus === 'confirmed_won' && (
+                          <span className="text-emerald-500 font-medium" title="Officially confirmed by Polymarket">✅ Won</span>
+                        )}
+                        {trade.inferredStatus === 'confirmed_lost' && (
+                          <span className="text-red-500 font-medium" title="Officially confirmed by Polymarket">❌ Lost</span>
+                        )}
+                        {trade.inferredStatus === 'inferred_won' && (
+                          <span className="text-emerald-400" title="Inferred from price (98%+) - not yet officially confirmed">📈 Won*</span>
+                        )}
+                        {trade.inferredStatus === 'inferred_lost' && (
+                          <span className="text-red-400" title="Inferred from price (2% or less) - not yet officially confirmed">📉 Lost*</span>
                         )}
                         {trade.inferredStatus === 'likely_won' && (
-                          <span className="text-emerald-400" title="Position value surged - likely won">📈 Won</span>
+                          <span className="text-emerald-300" title="Live price near 100% - not yet recorded">🔄 Likely Won</span>
                         )}
-                        {trade.inferredStatus === 'pending' && (
-                          <span className="text-poly-green">Holding</span>
+                        {trade.inferredStatus === 'likely_lost' && (
+                          <span className="text-red-300" title="Live price near zero - not yet recorded">🔄 Likely Lost</span>
+                        )}
+                        {trade.inferredStatus === 'holding' && (
+                          <span className="text-poly-muted">⏳ Holding</span>
                         )}
                       </td>
                       <td className="p-2 text-right text-amber-400">
@@ -218,9 +249,12 @@ export default function HistoryPage() {
         </div>
 
         {/* Footer note */}
-        <p className="text-center text-poly-gray text-sm mt-6">
-          Position and Potential values are calculated from current market prices.
-        </p>
+        <div className="text-center text-poly-gray text-sm mt-6 space-y-1">
+          <p>Position and Potential values are calculated from current market prices.</p>
+          <p className="text-xs">
+            Status: ✅❌ = Officially confirmed | 📈📉 Won*/Lost* = Inferred from price | 🔄 = Live price inference | ⏳ = Open
+          </p>
+        </div>
       </div>
     </main>
   )
