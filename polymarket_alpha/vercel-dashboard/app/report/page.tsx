@@ -59,6 +59,7 @@ interface SharpConvergence {
     potential: number
     potentialFormatted: string
     isHedged: boolean
+    positionStatus: 'holding' | 'sold' | 'unknown'
   }>
 }
 
@@ -146,7 +147,7 @@ interface ReportData {
     potentialFormatted: string
     longshotRecord: string | null
     positionStatus: 'holding' | 'sold' | 'unknown'
-    inferredStatus: 'pending' | 'likely_lost' | 'likely_won'
+    inferredStatus: 'pending' | 'likely_lost' | 'likely_won' | 'confirmed_won' | 'confirmed_lost' | 'inferred_won' | 'inferred_lost'
     totalPositions: number
     isNewWallet: boolean
     isHedged: boolean
@@ -439,7 +440,7 @@ export default function ReportPage() {
                   <p className="text-poly-muted text-xs font-medium">Sharp wallets betting on this:</p>
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
                     {convergence.sharpWallets.map((w) => (
-                      <div key={w.wallet} className={`bg-black/30 rounded p-2 text-sm ${w.isHedged ? 'opacity-60' : ''}`}>
+                      <div key={w.wallet} className={`bg-black/30 rounded p-2 text-sm ${w.isHedged || w.positionStatus === 'sold' ? 'opacity-60' : ''}`}>
                         <div className="flex items-center gap-1">
                           <a
                             href={`https://polymarket.com/@${w.name}`}
@@ -449,6 +450,9 @@ export default function ReportPage() {
                           >
                             {w.name || w.wallet.slice(0, 10) + '...'}
                           </a>
+                          {w.positionStatus === 'sold' && (
+                            <span className="text-red-400 text-xs" title="Position has been sold">Sold</span>
+                          )}
                           {w.isHedged && (
                             <span className="text-amber-400 text-xs" title="Has positions on both sides - likely a hedge">⚠️ Hedged</span>
                           )}
@@ -710,16 +714,28 @@ export default function ReportPage() {
                       </td>
                       <td className="p-3 text-center text-xs">
                         <div className="flex items-center justify-center gap-1">
-                          {trade.inferredStatus === 'likely_lost' && (
-                            <span className="text-red-400" title="Position value crashed - likely lost">📉 Lost</span>
+                          {trade.inferredStatus === 'confirmed_won' && (
+                            <span className="text-emerald-500 font-medium" title="Officially confirmed by Polymarket">✅ Won</span>
+                          )}
+                          {trade.inferredStatus === 'confirmed_lost' && (
+                            <span className="text-red-500 font-medium" title="Officially confirmed by Polymarket">❌ Lost</span>
+                          )}
+                          {trade.inferredStatus === 'inferred_won' && (
+                            <span className="text-emerald-400" title="Inferred from price (98%+) - not officially confirmed">📈 Won*</span>
+                          )}
+                          {trade.inferredStatus === 'inferred_lost' && (
+                            <span className="text-red-400" title="Inferred from price (2% or less) - not officially confirmed">📉 Lost*</span>
                           )}
                           {trade.inferredStatus === 'likely_won' && (
-                            <span className="text-emerald-400" title="Position value surged - likely won">📈 Won</span>
+                            <span className="text-emerald-300" title="Live price near 100%">🔄 Likely Won</span>
+                          )}
+                          {trade.inferredStatus === 'likely_lost' && (
+                            <span className="text-red-300" title="Live price near zero">🔄 Likely Lost</span>
                           )}
                           {trade.inferredStatus === 'pending' && trade.positionStatus === 'holding' && (
                             <span className="text-poly-green" title="Still holding this position">Holding</span>
                           )}
-                          {trade.positionStatus === 'sold' && (
+                          {trade.positionStatus === 'sold' && trade.inferredStatus === 'pending' && (
                             <span className="text-poly-red" title="Position has been sold">Sold</span>
                           )}
                           {trade.positionStatus === 'unknown' && (

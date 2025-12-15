@@ -140,25 +140,50 @@ export async function GET(req: NextRequest) {
       return { status: 'sold', totalPosition: 0, curPrice: 0 };
     };
 
+    // Query longshot_history for resolution states of these trades
+    const historyLookupResult = await sql`
+      SELECT wallet, market_id, outcome, resolution_state, won
+      FROM longshot_history
+      WHERE resolution_state IN ('confirmed', 'inferred')
+    `;
+    const historyResolutions = new Map<string, { state: string; won: boolean }>();
+    for (const row of historyLookupResult.rows) {
+      const key = `${row.wallet}:${row.market_id}:${row.outcome}`;
+      historyResolutions.set(key, { state: row.resolution_state, won: row.won });
+    }
+
     // Build topLongshots with position status, filter out sold/settled positions
     const topLongshotsRaw = topAggregated
       .map((t) => {
         const profile = walletProfiles.get(t.wallet);
         const positionData = getPositionData(t.wallet, t.marketId, t.outcome);
 
-        // Calculate inferred status based on position value change
-        // Only mark won/lost at extreme value changes (98%+)
+        // Determine status: first check longshot_history for confirmed/inferred, then fall back to live price
         const curPrice = positionData.curPrice;
-        const entryPrice = t.avgPrice;
-        let inferredStatus: 'pending' | 'likely_lost' | 'likely_won' = 'pending';
+        let inferredStatus: 'pending' | 'likely_lost' | 'likely_won' | 'confirmed_won' | 'confirmed_lost' | 'inferred_won' | 'inferred_lost' = 'pending';
 
-        if (curPrice >= 0.98) {
-          // Price at 98%+ = market effectively settled to YES
-          inferredStatus = 'likely_won';
-        } else if (entryPrice > 0 && curPrice / entryPrice <= 0.01) {
-          // Position value dropped 99%+ from entry = effectively lost
-          inferredStatus = 'likely_lost';
+        // Check if this trade has a resolution in longshot_history
+        const historyKey = `${t.wallet}:${t.marketId}:${t.outcome}`;
+        const historyResolution = historyResolutions.get(historyKey);
+
+        if (historyResolution) {
+          // Use database resolution state
+          if (historyResolution.state === 'confirmed') {
+            inferredStatus = historyResolution.won ? 'confirmed_won' : 'confirmed_lost';
+          } else if (historyResolution.state === 'inferred') {
+            inferredStatus = historyResolution.won ? 'inferred_won' : 'inferred_lost';
+          }
+        } else if (positionData.status === 'holding') {
+          // Fall back to live price inference
+          if (curPrice >= 0.98) {
+            // Price at 98%+ = market effectively settled to YES
+            inferredStatus = 'likely_won';
+          } else if (curPrice <= 0.02 && curPrice > 0) {
+            // Price at 2% or less = market effectively settled to NO
+            inferredStatus = 'likely_lost';
+          }
         }
+        // For sold positions without history, inferredStatus stays 'pending' - we don't know outcome
 
         return {
           id: `${t.wallet}:${t.marketId}:${t.outcome}`,
@@ -205,8 +230,8 @@ export async function GET(req: NextRequest) {
           isNewWallet: (profile?.totalPositions ?? 0) <= 5,
         };
       })
-      // Only show positions that are still being held (not sold or settled)
-      .filter((t) => t.positionStatus === 'holding');
+      // Include all positions - holding and sold (UI will indicate status)
+      .filter((t) => t.positionStatus === 'holding' || t.positionStatus === 'sold');
 
     // Detect hedged positions for top longshots
     const hedgeCheckMap = new Map<string, boolean>();
@@ -327,14 +352,19 @@ export async function GET(req: NextRequest) {
           };
         }
 
-        // If not resolved, check hedges
+        // If not resolved, check hedges and position status
         const walletsToCheck = convergence.sharpWallets.slice(0, 10); // Limit API calls
         const hedgeResults = new Map<string, boolean>();
+        const positionStatusResults = new Map<string, 'holding' | 'sold' | 'unknown'>();
 
         for (const sw of walletsToCheck) {
           const hedgeInfo = await detectHedgedPositions(sw.wallet, [convergence.marketId]);
           const info = hedgeInfo.get(convergence.marketId);
           hedgeResults.set(sw.wallet, info?.positionFound && info?.hasHedge ? true : false);
+
+          // Check if wallet still holds the position
+          const positionData = getPositionData(sw.wallet, convergence.marketId, convergence.outcome);
+          positionStatusResults.set(sw.wallet, positionData.status);
         }
 
         return {
@@ -344,6 +374,7 @@ export async function GET(req: NextRequest) {
           sharpWallets: convergence.sharpWallets.map((sw) => ({
             ...sw,
             isHedged: hedgeResults.get(sw.wallet) ?? false,
+            positionStatus: positionStatusResults.get(sw.wallet) ?? 'unknown',
           })),
         };
       })
@@ -485,6 +516,7 @@ export async function GET(req: NextRequest) {
           potential: w.size, // If bet wins, payout = size (shares)
           potentialFormatted: formatMoney(w.size),
           isHedged: w.isHedged ?? false,
+          positionStatus: w.positionStatus ?? 'unknown',
         })),
       })),
       // Dormant sharp alerts (7+ days inactive, now trading)
