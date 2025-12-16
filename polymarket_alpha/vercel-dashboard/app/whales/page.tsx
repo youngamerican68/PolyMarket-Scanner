@@ -22,6 +22,7 @@ interface WhaleTrade {
   position: number
   potential: number
   plPercent: number
+  inferredStatus: 'likely_won' | 'likely_lost' | 'holding'
   createdAt: string
 }
 
@@ -46,6 +47,7 @@ interface WhaleData {
   filters: {
     tier: string | null
     category: string | null
+    hours: number | null
   }
   timestamp: string
 }
@@ -96,6 +98,7 @@ export default function WhalesPage() {
   const [error, setError] = useState<string | null>(null)
   const [tierFilter, setTierFilter] = useState<string>('')
   const [categoryFilter, setCategoryFilter] = useState<string>('')
+  const [hoursFilter, setHoursFilter] = useState<string>('24') // Default to 24 hours
 
   useEffect(() => {
     async function fetchData() {
@@ -104,6 +107,7 @@ export default function WhalesPage() {
         const params = new URLSearchParams()
         if (tierFilter) params.set('tier', tierFilter)
         if (categoryFilter) params.set('category', categoryFilter)
+        if (hoursFilter) params.set('hours', hoursFilter) // Add time filter
         params.set('_t', Date.now().toString()) // Cache buster
 
         const url = `/api/whale-trades?${params.toString()}`
@@ -132,7 +136,7 @@ export default function WhalesPage() {
     }
 
     fetchData()
-  }, [tierFilter, categoryFilter])
+  }, [tierFilter, categoryFilter, hoursFilter])
 
   if (loading) {
     return (
@@ -267,6 +271,22 @@ export default function WhalesPage() {
               <option value="economics">Economics</option>
             </select>
           </div>
+          <div>
+            <label className="text-poly-muted text-xs uppercase tracking-wider block mb-1">
+              Time Window
+            </label>
+            <select
+              value={hoursFilter}
+              onChange={(e) => setHoursFilter(e.target.value)}
+              className="bg-poly-dark border border-poly-border rounded px-3 py-2 text-sm"
+            >
+              <option value="24">Last 24 hours</option>
+              <option value="48">Last 48 hours</option>
+              <option value="72">Last 72 hours</option>
+              <option value="168">Last 7 days</option>
+              <option value="">All time</option>
+            </select>
+          </div>
         </div>
 
         {/* Trades Table */}
@@ -282,7 +302,8 @@ export default function WhalesPage() {
                   <th className="p-3 text-right w-[60px]">Odds</th>
                   <th className="p-3 text-right w-[80px]">Bet</th>
                   <th className="p-3 text-right w-[80px]">Position</th>
-                  <th className="p-3 text-right w-[70px]">P/L %</th>
+                  <th className="p-3 text-right w-[80px]">Potential</th>
+                  <th className="p-3 text-center w-[80px]">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -342,17 +363,26 @@ export default function WhalesPage() {
                         </span>
                       </td>
                       <td className="p-3 text-right">
-                        <span className={`font-mono text-sm ${
-                          trade.plPercent >= 0 ? 'text-poly-green' : 'text-poly-red'
-                        }`}>
-                          {trade.plPercent >= 0 ? '+' : ''}{trade.plPercent.toFixed(0)}%
+                        <span className="text-poly-blue font-mono text-sm">
+                          {formatCurrency(trade.potential)}
                         </span>
+                      </td>
+                      <td className="p-3 text-center text-xs">
+                        {trade.inferredStatus === 'likely_lost' && (
+                          <span className="text-red-400" title="Price near zero - likely lost">📉 Likely Lost</span>
+                        )}
+                        {trade.inferredStatus === 'likely_won' && (
+                          <span className="text-emerald-400" title="Price near 100% - likely won">📈 Likely Won</span>
+                        )}
+                        {trade.inferredStatus === 'holding' && (
+                          <span className="text-poly-muted">⏳ Holding</span>
+                        )}
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-poly-muted">
+                    <td colSpan={9} className="p-8 text-center text-poly-muted">
                       No whale trades found. Add wallets to the watchlist to start tracking.
                     </td>
                   </tr>

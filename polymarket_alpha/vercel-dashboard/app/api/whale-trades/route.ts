@@ -38,6 +38,12 @@ export async function GET(request: Request) {
     const tier = searchParams.get("tier"); // whale, shark, dolphin
     const category = searchParams.get("category"); // sports, crypto, etc.
     const limit = Math.min(Number(searchParams.get("limit")) || 100, 500);
+    const hours = searchParams.get("hours"); // optional: filter to last N hours (e.g., 24)
+
+    // Calculate timestamp cutoff if hours filter is specified
+    const cutoffTimestamp = hours
+      ? Math.floor(Date.now() / 1000) - (Number(hours) * 60 * 60)
+      : null;
 
     // Use db.connect() with transaction to force primary database read
     // The sql template tag uses read replicas which have stale data
@@ -64,103 +70,62 @@ export async function GET(request: Request) {
     console.log("TRANSACTION watchlistStats:", JSON.stringify(watchlistStats));
 
     // Build query based on filters
+    // Use dynamic SQL via client to support optional time filter
     let result;
-    if (tier && category) {
-      result = await sql`
-        SELECT
-          wt.id,
-          wt.wallet,
-          wt.name,
-          wt.whale_tier,
-          wt.whale_category,
-          wt.market_id,
-          wt.event_slug,
-          wt.title,
-          wt.outcome,
-          wt.timestamp,
-          wt.price,
-          wt.size,
-          wt.value,
-          wt.created_at,
-          ww.profit as whale_profit
-        FROM whale_trades wt
-        LEFT JOIN whale_watchlist ww ON wt.wallet = ww.wallet
-        WHERE wt.whale_tier = ${tier} AND wt.whale_category = ${category}
-        ORDER BY wt.created_at DESC
-        LIMIT ${limit}
-      `;
-    } else if (tier) {
-      result = await sql`
-        SELECT
-          wt.id,
-          wt.wallet,
-          wt.name,
-          wt.whale_tier,
-          wt.whale_category,
-          wt.market_id,
-          wt.event_slug,
-          wt.title,
-          wt.outcome,
-          wt.timestamp,
-          wt.price,
-          wt.size,
-          wt.value,
-          wt.created_at,
-          ww.profit as whale_profit
-        FROM whale_trades wt
-        LEFT JOIN whale_watchlist ww ON wt.wallet = ww.wallet
-        WHERE wt.whale_tier = ${tier}
-        ORDER BY wt.created_at DESC
-        LIMIT ${limit}
-      `;
-    } else if (category) {
-      result = await sql`
-        SELECT
-          wt.id,
-          wt.wallet,
-          wt.name,
-          wt.whale_tier,
-          wt.whale_category,
-          wt.market_id,
-          wt.event_slug,
-          wt.title,
-          wt.outcome,
-          wt.timestamp,
-          wt.price,
-          wt.size,
-          wt.value,
-          wt.created_at,
-          ww.profit as whale_profit
-        FROM whale_trades wt
-        LEFT JOIN whale_watchlist ww ON wt.wallet = ww.wallet
-        WHERE wt.whale_category = ${category}
-        ORDER BY wt.created_at DESC
-        LIMIT ${limit}
-      `;
-    } else {
-      result = await sql`
-        SELECT
-          wt.id,
-          wt.wallet,
-          wt.name,
-          wt.whale_tier,
-          wt.whale_category,
-          wt.market_id,
-          wt.event_slug,
-          wt.title,
-          wt.outcome,
-          wt.timestamp,
-          wt.price,
-          wt.size,
-          wt.value,
-          wt.created_at,
-          ww.profit as whale_profit
-        FROM whale_trades wt
-        LEFT JOIN whale_watchlist ww ON wt.wallet = ww.wallet
-        ORDER BY wt.created_at DESC
-        LIMIT ${limit}
-      `;
+
+    // Build WHERE clauses
+    const conditions: string[] = [];
+    const params: (string | number)[] = [];
+    let paramIndex = 1;
+
+    if (tier) {
+      conditions.push(`wt.whale_tier = $${paramIndex}`);
+      params.push(tier);
+      paramIndex++;
     }
+    if (category) {
+      conditions.push(`wt.whale_category = $${paramIndex}`);
+      params.push(category);
+      paramIndex++;
+    }
+    if (cutoffTimestamp) {
+      conditions.push(`wt.timestamp >= $${paramIndex}`);
+      params.push(cutoffTimestamp);
+      paramIndex++;
+    }
+
+    const whereClause = conditions.length > 0
+      ? `WHERE ${conditions.join(' AND ')}`
+      : '';
+
+    params.push(limit);
+    const limitParam = `$${paramIndex}`;
+
+    const query = `
+      SELECT
+        wt.id,
+        wt.wallet,
+        wt.name,
+        wt.whale_tier,
+        wt.whale_category,
+        wt.market_id,
+        wt.event_slug,
+        wt.title,
+        wt.outcome,
+        wt.timestamp,
+        wt.price,
+        wt.size,
+        wt.value,
+        wt.created_at,
+        ww.profit as whale_profit
+      FROM whale_trades wt
+      LEFT JOIN whale_watchlist ww ON wt.wallet = ww.wallet
+      ${whereClause}
+      ORDER BY wt.created_at DESC
+      LIMIT ${limitParam}
+    `;
+
+    result = await client.query(query, params);
 
     // Get unique market IDs and fetch current prices (limit to 30 markets)
     const uniqueMarkets = Array.from(new Set(result.rows.map(r => r.market_id))).slice(0, 30);
@@ -197,6 +162,18 @@ export async function GET(request: Request) {
       // Calculate P/L percentage
       const plPercent = entryPrice > 0 ? ((curPrice - entryPrice) / entryPrice) * 100 : 0;
 
+      // Calculate inferred status based on price movement
+      // Note: whale_trades doesn't have resolved/won fields yet, so we infer from price
+      let inferredStatus: 'likely_won' | 'likely_lost' | 'holding' = 'holding';
+      if (curPrice >= 0.98) {
+        // Price at 98%+ = market effectively settled to YES
+        inferredStatus = 'likely_won';
+      } else if (curPrice <= 0.02 && curPrice > 0) {
+        // Price at 2% or less = market effectively settled to NO
+        inferredStatus = 'likely_lost';
+      }
+      // Note: If curPrice is 0, it's likely a price fetch failure - keep as 'holding'
+
       return {
         id: row.id,
         wallet: row.wallet,
@@ -216,23 +193,40 @@ export async function GET(request: Request) {
         position,
         potential,
         plPercent,
+        inferredStatus,
         createdAt: row.created_at,
       };
     });
 
-    // Get stats
-    const statsResult = await sql`
-      SELECT
-        COUNT(*) as total_trades,
-        COUNT(DISTINCT wallet) as unique_whales,
-        SUM(value) as total_value,
-        COUNT(CASE WHEN whale_tier = 'whale' THEN 1 END) as whale_trades,
-        COUNT(CASE WHEN whale_tier = 'shark' THEN 1 END) as shark_trades,
-        COUNT(CASE WHEN whale_tier = 'dolphin' THEN 1 END) as dolphin_trades
-      FROM whale_trades
-    `;
+    // Get stats - use time filter if specified
+    const statsQuery = cutoffTimestamp
+      ? `SELECT
+          COUNT(*) as total_trades,
+          COUNT(DISTINCT wallet) as unique_whales,
+          SUM(value) as total_value,
+          COUNT(CASE WHEN whale_tier = 'whale' THEN 1 END) as whale_trades,
+          COUNT(CASE WHEN whale_tier = 'shark' THEN 1 END) as shark_trades,
+          COUNT(CASE WHEN whale_tier = 'dolphin' THEN 1 END) as dolphin_trades
+        FROM whale_trades
+        WHERE timestamp >= $1`
+      : `SELECT
+          COUNT(*) as total_trades,
+          COUNT(DISTINCT wallet) as unique_whales,
+          SUM(value) as total_value,
+          COUNT(CASE WHEN whale_tier = 'whale' THEN 1 END) as whale_trades,
+          COUNT(CASE WHEN whale_tier = 'shark' THEN 1 END) as shark_trades,
+          COUNT(CASE WHEN whale_tier = 'dolphin' THEN 1 END) as dolphin_trades
+        FROM whale_trades`;
+
+    const statsResult = cutoffTimestamp
+      ? await client.query(statsQuery, [cutoffTimestamp])
+      : await client.query(statsQuery);
 
     const stats = statsResult.rows[0];
+
+    // Release client connection
+    client.release();
+
     // watchlistStats already queried at start of function
 
     return NextResponse.json({
@@ -253,9 +247,9 @@ export async function GET(request: Request) {
         sharks: Number(watchlistStats.sharks),
         dolphins: Number(watchlistStats.dolphins),
       },
-      filters: { tier, category },
+      filters: { tier, category, hours: hours ? Number(hours) : null },
       timestamp: new Date().toISOString(),
-      _apiVersion: "v6-transaction",
+      _apiVersion: "v7-24h-filter",
       _rawTotal: watchlistStats.total_watchlist,
     }, {
       headers: {
