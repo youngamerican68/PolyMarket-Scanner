@@ -117,8 +117,9 @@ export async function GET() {
       } else if (curPrice >= 0.98) {
         // Live price at 98%+ = market effectively settled to YES (not yet in DB)
         inferredStatus = 'likely_won';
-      } else if (curPrice <= 0.02 && curPrice > 0) {
-        // Live price at 2% or less = market effectively settled to NO (not yet in DB)
+      } else if (curPrice <= 0.02 && curPrice > 0 && curPrice < entryPrice * 0.5) {
+        // Price at 2% or less AND dropped 50%+ from entry = market likely settled to NO
+        // This prevents marking stable low-odds positions (like 1.7% staying at 1.7%) as "lost"
         inferredStatus = 'likely_lost';
       }
       // Note: If curPrice is 0, it's likely a price fetch failure - keep as 'holding'
