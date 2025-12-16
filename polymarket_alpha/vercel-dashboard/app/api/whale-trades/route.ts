@@ -166,14 +166,23 @@ export async function GET(request: Request) {
       // Calculate inferred status based on price movement
       // Note: whale_trades doesn't have resolved/won fields yet, so we infer from price
       let inferredStatus: 'likely_won' | 'likely_lost' | 'holding' = 'holding';
+      const tradeAgeHours = (Date.now() / 1000 - Number(row.timestamp)) / 3600;
+
       if (curPrice >= 0.98) {
         // Price at 98%+ = market effectively settled to YES
         inferredStatus = 'likely_won';
       } else if (curPrice <= 0.02 && curPrice > 0) {
         // Price at 2% or less = market effectively settled to NO
         inferredStatus = 'likely_lost';
+      } else if (curPrice === 0 && tradeAgeHours > 12) {
+        // No price data + old trade = market likely resolved
+        // If position is 0, they likely lost; if position equals potential, they likely won
+        if (position === 0) {
+          inferredStatus = 'likely_lost';
+        } else if (Math.abs(position - potential) < 1) {
+          inferredStatus = 'likely_won';
+        }
       }
-      // Note: If curPrice is 0, it's likely a price fetch failure - keep as 'holding'
 
       return {
         id: row.id,
