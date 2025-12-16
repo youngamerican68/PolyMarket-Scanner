@@ -192,8 +192,9 @@ export async function GET(request: Request) {
       } else if (curPrice <= 0.02 && curPrice > 0) {
         // Price at 2% or less = market effectively settled to NO
         inferredStatus = 'likely_lost';
-      } else if (curPrice === 0 && tradeAgeHours > 12) {
-        // No price data + old trade = market likely resolved
+      } else if (curPrice === 0 && tradeAgeHours > 5) {
+        // No price data + trade > 5h old = market likely resolved
+        // Most sports/events resolve within a few hours
         // If position is 0, they likely lost; if position equals potential, they likely won
         if (position === 0) {
           inferredStatus = 'likely_lost';
