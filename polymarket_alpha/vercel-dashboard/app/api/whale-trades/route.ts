@@ -7,28 +7,45 @@ import { sql, db } from "@vercel/postgres";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const CLOB_API = "https://clob.polymarket.com";
+const GAMMA_API = "https://gamma-api.polymarket.com";
 
-// Fetch current prices for a market
-async function fetchMarketPrices(marketId: string): Promise<Map<string, number>> {
+// Fetch current prices for a market using Gamma API (accepts conditionId)
+async function fetchMarketPrices(conditionId: string): Promise<Map<string, number>> {
   const prices = new Map<string, number>();
   try {
-    const res = await fetch(`${CLOB_API}/markets/${marketId}`, {
+    // Gamma API accepts conditionId to get market info including prices
+    const res = await fetch(`${GAMMA_API}/markets?condition_id=${conditionId}`, {
       method: "GET",
       headers: { "Content-Type": "application/json" },
       cache: "no-store",
     });
     if (res.ok) {
       const data = await res.json();
-      if (data.tokens && Array.isArray(data.tokens)) {
-        for (const token of data.tokens) {
-          // Store with lowercase key for case-insensitive matching
-          prices.set(token.outcome?.toLowerCase(), Number(token.price ?? 0));
+      // Gamma returns an array of markets matching the condition
+      if (Array.isArray(data) && data.length > 0) {
+        for (const market of data) {
+          // Each market has outcomePrices or similar
+          if (market.outcomePrices) {
+            // outcomePrices is typically a string like "[0.24, 0.76]"
+            try {
+              const priceArr = JSON.parse(market.outcomePrices);
+              const outcomes = market.outcomes ? JSON.parse(market.outcomes) : ["Yes", "No"];
+              for (let i = 0; i < outcomes.length; i++) {
+                prices.set(outcomes[i]?.toLowerCase(), Number(priceArr[i] ?? 0));
+              }
+            } catch {
+              // Try direct properties
+              if (market.bestAsk !== undefined) {
+                prices.set("yes", Number(market.bestAsk));
+                prices.set("no", 1 - Number(market.bestAsk));
+              }
+            }
+          }
         }
       }
     }
   } catch (err) {
-    console.error(`Error fetching prices for ${marketId}:`, err);
+    console.error(`Error fetching prices for ${conditionId}:`, err);
   }
   return prices;
 }
