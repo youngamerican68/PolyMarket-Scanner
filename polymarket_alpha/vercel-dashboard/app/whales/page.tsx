@@ -10,6 +10,7 @@ interface WhaleTrade {
   tier: string
   category: string
   profit: string
+  livePnL: number | null  // Live P/L from Polymarket profile
   marketId: string
   eventSlug: string
   title: string
@@ -344,7 +345,11 @@ export default function WhalesPage() {
                         >
                           {trade.name || trade.wallet.slice(0, 10) + '...'}
                         </a>
-                        <span className="text-poly-muted text-xs">{trade.profit}</span>
+                        <span className={`text-xs ${trade.livePnL !== null ? (trade.livePnL >= 0 ? 'text-emerald-400' : 'text-red-400') : 'text-poly-muted'}`}>
+                          {trade.livePnL !== null
+                            ? `${trade.livePnL >= 0 ? '+' : ''}$${Math.abs(trade.livePnL).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
+                            : trade.profit}
+                        </span>
                       </td>
                       <td className="p-3 text-center">
                         <span className={`${getTierColor(trade.tier)} text-lg`}>
