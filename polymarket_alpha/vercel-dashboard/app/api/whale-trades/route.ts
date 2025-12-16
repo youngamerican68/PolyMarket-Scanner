@@ -8,29 +8,6 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const GAMMA_API = "https://gamma-api.polymarket.com";
-const DATA_API = "https://data-api.polymarket.com";
-
-// Fetch total P/L for a wallet (same number as shown on Polymarket profile)
-async function fetchWalletPnL(wallet: string): Promise<number | null> {
-  try {
-    const res = await fetch(`${DATA_API}/positions?user=${wallet}`, {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-      cache: "no-store",
-    });
-    if (res.ok) {
-      const positions = await res.json();
-      if (Array.isArray(positions)) {
-        // Sum cashPnl across all positions
-        const totalPnl = positions.reduce((sum, p) => sum + (p.cashPnl || 0), 0);
-        return totalPnl;
-      }
-    }
-  } catch (err) {
-    console.error(`Error fetching P/L for ${wallet}:`, err);
-  }
-  return null;
-}
 
 // Fetch current prices for a market using Gamma API (accepts conditionId)
 async function fetchMarketPrices(conditionId: string): Promise<Map<string, number>> {
@@ -186,20 +163,6 @@ export async function GET(request: Request) {
       }
     }
 
-    // Fetch live P/L for unique wallets (limit to 20 to avoid too many API calls)
-    const uniqueWallets = Array.from(new Set(result.rows.map(r => r.wallet))).slice(0, 20);
-    const walletPnL = new Map<string, number | null>();
-
-    // Fetch P/L in parallel
-    const pnlPromises = uniqueWallets.map(async (wallet) => {
-      const pnl = await fetchWalletPnL(wallet);
-      return { wallet, pnl };
-    });
-    const pnlResults = await Promise.all(pnlPromises);
-    for (const { wallet, pnl } of pnlResults) {
-      walletPnL.set(wallet, pnl);
-    }
-
     // Format trades with current prices
     const trades = result.rows.map((row) => {
       const entryPrice = Number(row.price);
@@ -240,9 +203,6 @@ export async function GET(request: Request) {
         }
       }
 
-      // Get live P/L for this wallet
-      const livePnL = walletPnL.get(row.wallet) ?? null;
-
       return {
         id: row.id,
         wallet: row.wallet,
@@ -250,7 +210,6 @@ export async function GET(request: Request) {
         tier: row.whale_tier,
         category: row.whale_category,
         profit: row.whale_profit,
-        livePnL, // Live P/L from Polymarket (same as profile page)
         marketId,
         eventSlug: row.event_slug,
         title: row.title,

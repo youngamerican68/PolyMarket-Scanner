@@ -296,6 +296,7 @@ export type SharpConvergence = {
     size: number;
     value: number;
     isHedged?: boolean;  // True if wallet has position on both sides
+    positionStatus?: 'holding' | 'sold' | 'unknown';  // Current position status
   }>;
 };
 
