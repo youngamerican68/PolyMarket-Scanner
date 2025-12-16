@@ -22,7 +22,8 @@ async function fetchMarketPrices(marketId: string): Promise<Map<string, number>>
       const data = await res.json();
       if (data.tokens && Array.isArray(data.tokens)) {
         for (const token of data.tokens) {
-          prices.set(token.outcome, Number(token.price ?? 0));
+          // Store with lowercase key for case-insensitive matching
+          prices.set(token.outcome?.toLowerCase(), Number(token.price ?? 0));
         }
       }
     }
@@ -152,9 +153,9 @@ export async function GET(request: Request) {
       const marketId = row.market_id;
       const outcome = row.outcome;
 
-      // Get current price from cached market prices
+      // Get current price from cached market prices (case-insensitive)
       const prices = marketPrices.get(marketId);
-      const curPrice = prices?.get(outcome) ?? 0;
+      const curPrice = prices?.get(outcome?.toLowerCase()) ?? 0;
 
       // Calculate position and potential
       const position = size * curPrice;
