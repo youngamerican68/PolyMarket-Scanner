@@ -38,12 +38,8 @@ export async function GET(request: Request) {
     const tier = searchParams.get("tier"); // whale, shark, dolphin
     const category = searchParams.get("category"); // sports, crypto, etc.
     const limit = Math.min(Number(searchParams.get("limit")) || 100, 500);
-    const hours = searchParams.get("hours"); // optional: filter to last N hours (e.g., 24)
-
-    // Calculate timestamp cutoff if hours filter is specified
-    const cutoffTimestamp = hours
-      ? Math.floor(Date.now() / 1000) - (Number(hours) * 60 * 60)
-      : null;
+    const minValue = searchParams.get("minValue"); // optional: minimum trade value (e.g., 100, 1000)
+    const maxValue = searchParams.get("maxValue"); // optional: maximum trade value (e.g., 5000)
 
     // Use db.connect() with transaction to force primary database read
     // The sql template tag uses read replicas which have stale data
@@ -88,9 +84,14 @@ export async function GET(request: Request) {
       params.push(category);
       paramIndex++;
     }
-    if (cutoffTimestamp) {
-      conditions.push(`wt.timestamp >= $${paramIndex}`);
-      params.push(cutoffTimestamp);
+    if (minValue) {
+      conditions.push(`wt.value >= $${paramIndex}`);
+      params.push(Number(minValue));
+      paramIndex++;
+    }
+    if (maxValue) {
+      conditions.push(`wt.value <= $${paramIndex}`);
+      params.push(Number(maxValue));
       paramIndex++;
     }
 
@@ -198,28 +199,38 @@ export async function GET(request: Request) {
       };
     });
 
-    // Get stats - use time filter if specified
-    const statsQuery = cutoffTimestamp
-      ? `SELECT
-          COUNT(*) as total_trades,
-          COUNT(DISTINCT wallet) as unique_whales,
-          SUM(value) as total_value,
-          COUNT(CASE WHEN whale_tier = 'whale' THEN 1 END) as whale_trades,
-          COUNT(CASE WHEN whale_tier = 'shark' THEN 1 END) as shark_trades,
-          COUNT(CASE WHEN whale_tier = 'dolphin' THEN 1 END) as dolphin_trades
-        FROM whale_trades
-        WHERE timestamp >= $1`
-      : `SELECT
-          COUNT(*) as total_trades,
-          COUNT(DISTINCT wallet) as unique_whales,
-          SUM(value) as total_value,
-          COUNT(CASE WHEN whale_tier = 'whale' THEN 1 END) as whale_trades,
-          COUNT(CASE WHEN whale_tier = 'shark' THEN 1 END) as shark_trades,
-          COUNT(CASE WHEN whale_tier = 'dolphin' THEN 1 END) as dolphin_trades
-        FROM whale_trades`;
+    // Get stats - use value filters if specified
+    const statsConditions: string[] = [];
+    const statsParams: number[] = [];
+    let statsParamIndex = 1;
 
-    const statsResult = cutoffTimestamp
-      ? await client.query(statsQuery, [cutoffTimestamp])
+    if (minValue) {
+      statsConditions.push(`value >= $${statsParamIndex}`);
+      statsParams.push(Number(minValue));
+      statsParamIndex++;
+    }
+    if (maxValue) {
+      statsConditions.push(`value <= $${statsParamIndex}`);
+      statsParams.push(Number(maxValue));
+      statsParamIndex++;
+    }
+
+    const statsWhereClause = statsConditions.length > 0
+      ? `WHERE ${statsConditions.join(' AND ')}`
+      : '';
+
+    const statsQuery = `SELECT
+        COUNT(*) as total_trades,
+        COUNT(DISTINCT wallet) as unique_whales,
+        SUM(value) as total_value,
+        COUNT(CASE WHEN whale_tier = 'whale' THEN 1 END) as whale_trades,
+        COUNT(CASE WHEN whale_tier = 'shark' THEN 1 END) as shark_trades,
+        COUNT(CASE WHEN whale_tier = 'dolphin' THEN 1 END) as dolphin_trades
+      FROM whale_trades
+      ${statsWhereClause}`;
+
+    const statsResult = statsParams.length > 0
+      ? await client.query(statsQuery, statsParams)
       : await client.query(statsQuery);
 
     const stats = statsResult.rows[0];
@@ -247,9 +258,9 @@ export async function GET(request: Request) {
         sharks: Number(watchlistStats.sharks),
         dolphins: Number(watchlistStats.dolphins),
       },
-      filters: { tier, category, hours: hours ? Number(hours) : null },
+      filters: { tier, category, minValue: minValue ? Number(minValue) : null, maxValue: maxValue ? Number(maxValue) : null },
       timestamp: new Date().toISOString(),
-      _apiVersion: "v7-24h-filter",
+      _apiVersion: "v8-value-filter",
       _rawTotal: watchlistStats.total_watchlist,
     }, {
       headers: {

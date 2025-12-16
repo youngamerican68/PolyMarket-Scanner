@@ -47,7 +47,8 @@ interface WhaleData {
   filters: {
     tier: string | null
     category: string | null
-    hours: number | null
+    minValue: number | null
+    maxValue: number | null
   }
   timestamp: string
 }
@@ -98,7 +99,7 @@ export default function WhalesPage() {
   const [error, setError] = useState<string | null>(null)
   const [tierFilter, setTierFilter] = useState<string>('')
   const [categoryFilter, setCategoryFilter] = useState<string>('')
-  const [hoursFilter, setHoursFilter] = useState<string>('24') // Default to 24 hours
+  const [sizeFilter, setSizeFilter] = useState<string>('') // Trade size filter
 
   useEffect(() => {
     async function fetchData() {
@@ -107,7 +108,12 @@ export default function WhalesPage() {
         const params = new URLSearchParams()
         if (tierFilter) params.set('tier', tierFilter)
         if (categoryFilter) params.set('category', categoryFilter)
-        if (hoursFilter) params.set('hours', hoursFilter) // Add time filter
+        // Parse size filter into minValue/maxValue
+        if (sizeFilter) {
+          const [min, max] = sizeFilter.split('-')
+          if (min) params.set('minValue', min)
+          if (max) params.set('maxValue', max)
+        }
         params.set('_t', Date.now().toString()) // Cache buster
 
         const url = `/api/whale-trades?${params.toString()}`
@@ -136,7 +142,7 @@ export default function WhalesPage() {
     }
 
     fetchData()
-  }, [tierFilter, categoryFilter, hoursFilter])
+  }, [tierFilter, categoryFilter, sizeFilter])
 
   if (loading) {
     return (
@@ -273,18 +279,19 @@ export default function WhalesPage() {
           </div>
           <div>
             <label className="text-poly-muted text-xs uppercase tracking-wider block mb-1">
-              Time Window
+              Trade Size
             </label>
             <select
-              value={hoursFilter}
-              onChange={(e) => setHoursFilter(e.target.value)}
+              value={sizeFilter}
+              onChange={(e) => setSizeFilter(e.target.value)}
               className="bg-poly-dark border border-poly-border rounded px-3 py-2 text-sm"
             >
-              <option value="24">Last 24 hours</option>
-              <option value="48">Last 48 hours</option>
-              <option value="72">Last 72 hours</option>
-              <option value="168">Last 7 days</option>
-              <option value="">All time</option>
+              <option value="">All Sizes</option>
+              <option value="100-">$100+</option>
+              <option value="500-">$500+</option>
+              <option value="1000-">$1K+</option>
+              <option value="1000-5000">$1K - $5K</option>
+              <option value="5000-">$5K+</option>
             </select>
           </div>
         </div>
