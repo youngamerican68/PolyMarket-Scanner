@@ -30,6 +30,8 @@ interface WhaleTrade {
   positionCashPnl: number | null
   positionCashPnlFormatted: string
   positionSnapshotAt: string | null
+  potentialWin: number | null
+  potentialWinFormatted: string
 }
 
 interface WhaleData {
@@ -279,6 +281,7 @@ export default function WhalesPage() {
                   <th className="p-3 text-right">Fill Value</th>
                   <th className="p-3 text-right">Pos Value</th>
                   <th className="p-3 text-right">Pos Avg Entry</th>
+                  <th className="p-3 text-right">Potential Win</th>
                 </tr>
               </thead>
               <tbody>
@@ -341,11 +344,16 @@ export default function WhalesPage() {
                           {trade.positionAvgPriceFormatted}
                         </span>
                       </td>
+                      <td className="p-3 text-right">
+                        <span className="text-amber-400 font-mono text-sm font-medium">
+                          {trade.potentialWinFormatted}
+                        </span>
+                      </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={8} className="p-8 text-center text-poly-muted">
+                    <td colSpan={9} className="p-8 text-center text-poly-muted">
                       No whale trades found. Add wallets to the watchlist to start tracking.
                     </td>
                   </tr>

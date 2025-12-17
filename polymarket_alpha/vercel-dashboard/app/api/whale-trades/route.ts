@@ -75,6 +75,13 @@ export async function GET(request: Request) {
       positionCashPnl: row.position_cash_pnl !== null ? Number(row.position_cash_pnl) : null,
       positionCashPnlFormatted: formatMoney(row.position_cash_pnl !== null ? Number(row.position_cash_pnl) : null),
       positionSnapshotAt: row.position_snapshot_at,
+      // Potential win: profit if position resolves correctly
+      potentialWin: row.position_size !== null && row.position_avg_price !== null
+        ? Number(row.position_size) * (1 - Number(row.position_avg_price))
+        : null,
+      potentialWinFormatted: row.position_size !== null && row.position_avg_price !== null
+        ? formatMoney(Number(row.position_size) * (1 - Number(row.position_avg_price)))
+        : 'N/A',
     }));
 
     // Get stats from alert_events

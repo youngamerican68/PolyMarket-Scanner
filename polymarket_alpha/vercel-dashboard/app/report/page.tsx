@@ -278,6 +278,7 @@ export default function ReportPage() {
                     <th className="text-right p-3 text-poly-muted font-medium">Fill Value</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Pos Avg Entry</th>
+                    <th className="text-right p-3 text-poly-muted font-medium">Potential Win</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                   </tr>
                 </thead>
@@ -315,6 +316,7 @@ export default function ReportPage() {
                       <td className="p-3 text-right text-poly-green">{alert.fillValueFormatted}</td>
                       <td className="p-3 text-right text-white font-medium">{alert.positionCurrentValueFormatted}</td>
                       <td className="p-3 text-right text-poly-muted">{alert.positionAvgPriceFormatted}</td>
+                      <td className="p-3 text-right text-amber-400 font-medium">{alert.potentialWinFormatted}</td>
                       <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(alert.fillTimestamp)}</td>
                     </tr>
                   ))}

@@ -28,6 +28,8 @@ interface Alert {
   positionCashPnl: number | null
   positionCashPnlFormatted: string
   positionSnapshotAt: string | null
+  potentialWin: number | null
+  potentialWinFormatted: string
   thresholdValueUsed: number | null
   thresholdSource: string | null
   isWhale: boolean
@@ -172,6 +174,7 @@ export default function HistoryPage() {
                     <th className="p-2 text-right">Pos Value</th>
                     <th className="p-2 text-right">Pos Avg Entry</th>
                     <th className="p-2 text-right">Pos Size</th>
+                    <th className="p-2 text-right">Potential Win</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-poly-border">
@@ -222,6 +225,9 @@ export default function HistoryPage() {
                       </td>
                       <td className="p-2 text-right text-poly-muted">
                         {alert.positionSizeFormatted}
+                      </td>
+                      <td className="p-2 text-right text-amber-400 font-medium">
+                        {alert.potentialWinFormatted}
                       </td>
                     </tr>
                   ))}
