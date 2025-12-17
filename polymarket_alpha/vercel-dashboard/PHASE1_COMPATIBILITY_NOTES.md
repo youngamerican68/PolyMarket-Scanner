@@ -1,6 +1,17 @@
 # Phase 1 Compatibility Notes
 
+**Status: DEPLOYED AND OPERATIONAL** (December 2024)
+
 This document captures important context and decisions for Phase 1 that future phases must respect.
+
+## Deployment Status
+
+- [x] Database migration (`alert_events` table) - Complete
+- [x] Ingestion endpoint (`POST /api/collect-trades`) - Secured with `CRON_SECRET`
+- [x] GitHub Actions cron job - Running every 5 minutes
+- [x] Dashboard APIs - Querying `alert_events` only
+- [x] UI updates - All three dashboards showing consistent data
+- [x] Data accuracy verified against Polymarket profiles
 
 ## Critical: Do NOT Re-introduce These Problems
 
@@ -64,16 +75,36 @@ This document captures important context and decisions for Phase 1 that future p
 ## Environment Variables Required
 
 ```env
-POSTGRES_URL=...           # Required: Database connection
+POSTGRES_URL=...              # Required: Database connection
+CRON_SECRET=...               # Required: Auth header for POST /api/collect-trades
 ENABLE_ADMIN_MIGRATIONS=true  # Required for /api/admin/migrate
-ADMIN_SECRET=...           # Required: Header auth for admin routes
+ADMIN_SECRET=...              # Required: Header auth for admin routes
 ```
 
-## Testing Checklist (Later)
+## Known Issues Fixed
 
-- [ ] Empty string handling in all Zod schemas
-- [ ] Decimal precision in fill_value_usd calculations
-- [ ] trade_dedupe_id uniqueness under concurrent writes
-- [ ] Timestamp normalization (ms vs seconds)
-- [ ] Position truncation logging
-- [ ] Admin route security (POST-only, secret header)
+### SQL INTERVAL Parameterization
+- **Problem**: Using `NOW() - INTERVAL '1 hour' * ${hours}` failed for 24-hour queries
+- **Solution**: Calculate cutoff timestamp in JavaScript, pass as ISO string:
+  ```typescript
+  const cutoffTime = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+  WHERE fill_timestamp >= ${cutoffTime}::timestamptz
+  ```
+- **Location**: `/app/api/daily-report/route.ts`
+
+### Position Size Formatting
+- **Problem**: Position size (shares) was formatted with `$` prefix like money
+- **Solution**: Added `formatShares()` function that returns just the number (e.g., "13.0K" not "$13.0K")
+- **Location**: All API routes that return `positionSizeFormatted`
+
+## Testing Checklist
+
+- [x] Empty string handling in all Zod schemas (implemented)
+- [x] Decimal precision in fill_value_usd calculations (using decimal.js-light)
+- [x] trade_dedupe_id uniqueness under concurrent writes (verified)
+- [x] Timestamp normalization (ms vs seconds) (implemented)
+- [x] Position truncation logging (implemented)
+- [x] Admin route security (POST-only, secret header) (tested 401/200)
+- [x] Data accuracy verified against Polymarket profiles (CryptoVadikOne-tg, Hauchn, KnureKnume)
+- [x] 24-hour time filter working correctly
+- [x] Cron ingestion running every 5 minutes via GitHub Actions
