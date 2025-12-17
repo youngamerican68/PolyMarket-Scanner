@@ -14,8 +14,10 @@ interface HealthStatus {
     error?: string;
   };
   ingestion: {
-    lastAlertAt: string | null;
-    lastAlertAgeMinutes: number | null;
+    lastIngestionAt: string | null;       // When cron last inserted a record
+    lastIngestionAgeMinutes: number | null;
+    lastTradeAt: string | null;           // When the most recent trade actually happened
+    lastTradeAgeMinutes: number | null;
     alertsLast24h: number;
     alertsLastHour: number;
     isStale: boolean;
@@ -34,8 +36,10 @@ export async function GET() {
       connected: false,
     },
     ingestion: {
-      lastAlertAt: null,
-      lastAlertAgeMinutes: null,
+      lastIngestionAt: null,
+      lastIngestionAgeMinutes: null,
+      lastTradeAt: null,
+      lastTradeAgeMinutes: null,
       alertsLast24h: 0,
       alertsLastHour: 0,
       isStale: true,
@@ -50,9 +54,10 @@ export async function GET() {
     // Check database connection and get ingestion stats
     const result = await sql`
       SELECT
-        MAX(created_at) as last_alert_at,
-        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours') as alerts_24h,
-        COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '1 hour') as alerts_1h
+        MAX(created_at) as last_ingestion_at,
+        MAX(fill_timestamp) as last_trade_at,
+        COUNT(*) FILTER (WHERE fill_timestamp >= NOW() - INTERVAL '24 hours') as alerts_24h,
+        COUNT(*) FILTER (WHERE fill_timestamp >= NOW() - INTERVAL '1 hour') as alerts_1h
       FROM alert_events
     `;
 
@@ -60,21 +65,28 @@ export async function GET() {
     health.checks.dbConnection = true;
 
     const row = result.rows[0];
-    const lastAlertAt = row.last_alert_at ? new Date(row.last_alert_at) : null;
+    const lastIngestionAt = row.last_ingestion_at ? new Date(row.last_ingestion_at) : null;
+    const lastTradeAt = row.last_trade_at ? new Date(row.last_trade_at) : null;
     const now = new Date();
 
-    health.ingestion.lastAlertAt = lastAlertAt?.toISOString() || null;
+    health.ingestion.lastIngestionAt = lastIngestionAt?.toISOString() || null;
+    health.ingestion.lastTradeAt = lastTradeAt?.toISOString() || null;
     health.ingestion.alertsLast24h = Number(row.alerts_24h);
     health.ingestion.alertsLastHour = Number(row.alerts_1h);
 
-    if (lastAlertAt) {
-      const ageMs = now.getTime() - lastAlertAt.getTime();
-      health.ingestion.lastAlertAgeMinutes = Math.round(ageMs / 60000);
+    if (lastIngestionAt) {
+      const ageMs = now.getTime() - lastIngestionAt.getTime();
+      health.ingestion.lastIngestionAgeMinutes = Math.round(ageMs / 60000);
 
-      // Consider "stale" if no new alerts in 30 minutes
+      // Consider "stale" if cron hasn't inserted anything in 30 minutes
       // (cron runs every 5 minutes, so 30 min gap is concerning)
       health.ingestion.isStale = ageMs > 30 * 60 * 1000;
       health.checks.recentIngestion = !health.ingestion.isStale;
+    }
+
+    if (lastTradeAt) {
+      const ageMs = now.getTime() - lastTradeAt.getTime();
+      health.ingestion.lastTradeAgeMinutes = Math.round(ageMs / 60000);
     }
 
     // Determine overall status
