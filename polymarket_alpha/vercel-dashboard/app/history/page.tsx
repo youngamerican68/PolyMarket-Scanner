@@ -3,47 +3,50 @@
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
 
-interface HistoricalTrade {
+interface Alert {
   id: string
   wallet: string
-  name: string
-  marketId: string
-  eventSlug: string
+  traderName: string
+  conditionId: string
+  eventSlug: string | null
   title: string
   outcome: string
-  timestamp: number
-  price: number
-  size: number
-  value: number
-  resolved: boolean
-  won: boolean | null
-  pnl: number | null
-  resolutionState: 'unresolved' | 'inferred' | 'confirmed'
-  resolutionSource: 'official_api' | 'price_inference' | 'manual' | null
-  curPrice: number
-  position: number
-  potential: number
-  inferredStatus: 'confirmed_won' | 'confirmed_lost' | 'inferred_won' | 'inferred_lost' | 'likely_won' | 'likely_lost' | 'holding'
-  whaleTier: 'whale' | 'shark' | 'dolphin' | null
+  fillTimestamp: string
+  fillPrice: number
+  fillPriceFormatted: string
+  fillSize: number
+  fillValueUsd: number
+  fillValueFormatted: string
+  positionSize: number | null
+  positionSizeFormatted: string
+  positionAvgPrice: number | null
+  positionAvgPriceFormatted: string
+  positionCurrentValue: number | null
+  positionCurrentValueFormatted: string
+  positionInitialValue: number | null
+  positionInitialValueFormatted: string
+  positionCashPnl: number | null
+  positionCashPnlFormatted: string
+  positionSnapshotAt: string | null
+  thresholdValueUsed: number | null
+  thresholdSource: string | null
+  isWhale: boolean
+  whaleLabel: string | null
+  whaleTier: string | null
+  whaleCategory: string | null
+  createdAt: string
 }
 
 interface HistoryStats {
-  totalTrades: number
+  totalAlerts: number
   uniqueWallets: number
   totalValue: number
-  resolvedCount: number
-  wonCount: number
-  winRate: string | null
+  totalValueFormatted: string
+  whaleAlerts: number
 }
 
-function formatMoney(value: number): string {
-  if (value >= 1000000) return `$${(value / 1000000).toFixed(1)}M`
-  if (value >= 1000) return `$${(value / 1000).toFixed(1)}K`
-  return `$${value.toFixed(0)}`
-}
-
-function formatDate(timestamp: number): string {
-  return new Date(timestamp * 1000).toLocaleDateString('en-US', {
+function formatDate(timestamp: string): string {
+  return new Date(timestamp).toLocaleDateString('en-US', {
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
@@ -61,29 +64,35 @@ function getWhaleTierEmoji(tier: string | null): string | null {
 }
 
 export default function HistoryPage() {
-  const [trades, setTrades] = useState<HistoricalTrade[]>([])
+  const [alerts, setAlerts] = useState<Alert[]>([])
   const [stats, setStats] = useState<HistoryStats | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [offset, setOffset] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+
+  const fetchData = async (pageOffset: number = 0) => {
+    try {
+      setLoading(true)
+      const res = await fetch(`/api/longshot-history?limit=500&offset=${pageOffset}`)
+      if (!res.ok) throw new Error('Failed to fetch history')
+      const data = await res.json()
+      setAlerts(data.alerts || [])
+      setStats(data.stats || null)
+      setHasMore(data.pagination?.hasMore || false)
+      setOffset(pageOffset)
+    } catch (err) {
+      setError(String(err))
+    } finally {
+      setLoading(false)
+    }
+  }
 
   useEffect(() => {
-    async function fetchData() {
-      try {
-        const res = await fetch('/api/longshot-history')
-        if (!res.ok) throw new Error('Failed to fetch history')
-        const data = await res.json()
-        setTrades(data.trades || [])
-        setStats(data.stats || null)
-      } catch (err) {
-        setError(String(err))
-      } finally {
-        setLoading(false)
-      }
-    }
-    fetchData()
+    fetchData(0)
   }, [])
 
-  if (loading) {
+  if (loading && alerts.length === 0) {
     return (
       <main className="min-h-screen bg-poly-dark text-white p-8 flex items-center justify-center">
         <div className="text-xl">Loading history...</div>
@@ -107,7 +116,7 @@ export default function HistoryPage() {
           <div>
             <h1 className="text-3xl font-bold">Longshot History</h1>
             <p className="text-poly-gray mt-1">
-              All $5K+ longshot trades (never pruned)
+              All $2.5K+ longshot alerts (position snapshots from ingestion time)
             </p>
           </div>
           <Link
@@ -120,28 +129,22 @@ export default function HistoryPage() {
 
         {/* Stats Cards */}
         {stats && (
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 mb-8">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
             <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
-              <div className="text-poly-gray text-sm">Total Trades</div>
-              <div className="text-2xl font-bold text-white">{stats.totalTrades}</div>
+              <div className="text-poly-gray text-sm">Total Alerts</div>
+              <div className="text-2xl font-bold text-white">{stats.totalAlerts}</div>
             </div>
             <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
               <div className="text-poly-gray text-sm">Unique Wallets</div>
               <div className="text-2xl font-bold text-white">{stats.uniqueWallets}</div>
             </div>
             <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
-              <div className="text-poly-gray text-sm">Total Value</div>
-              <div className="text-2xl font-bold text-poly-green">{formatMoney(stats.totalValue)}</div>
+              <div className="text-poly-gray text-sm">Total Fill Value</div>
+              <div className="text-2xl font-bold text-poly-green">{stats.totalValueFormatted}</div>
             </div>
             <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
-              <div className="text-poly-gray text-sm">Resolved</div>
-              <div className="text-2xl font-bold text-white">{stats.resolvedCount}</div>
-            </div>
-            <div className="bg-poly-card rounded-xl p-4 border border-poly-border">
-              <div className="text-poly-gray text-sm">Win Rate</div>
-              <div className="text-2xl font-bold text-poly-blue">
-                {stats.winRate ? `${stats.winRate}%` : 'N/A'}
-              </div>
+              <div className="text-poly-gray text-sm">Whale Alerts</div>
+              <div className="text-2xl font-bold text-purple-400">{stats.whaleAlerts}</div>
             </div>
           </div>
         )}
@@ -152,93 +155,73 @@ export default function HistoryPage() {
             <h2 className="text-xl font-semibold">All Historical Longshots</h2>
           </div>
 
-          {trades.length === 0 ? (
+          {alerts.length === 0 ? (
             <div className="p-8 text-center text-poly-gray">
-              No trades yet. History will build up as new $5K+ longshots are detected.
+              No alerts yet. History will build up as new longshots are detected.
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full table-fixed">
+              <table className="w-full">
                 <thead className="bg-poly-dark/50">
                   <tr className="text-poly-gray text-xs uppercase tracking-wider">
-                    <th className="p-2 text-left w-[100px]">Date</th>
+                    <th className="p-2 text-left">Date</th>
                     <th className="p-2 text-left">Market</th>
-                    <th className="p-2 text-left w-[120px]">Trader</th>
-                    <th className="p-2 text-center w-[80px]">Status</th>
-                    <th className="p-2 text-right w-[60px]">Odds</th>
-                    <th className="p-2 text-right w-[70px]">Bet</th>
-                    <th className="p-2 text-right w-[80px]">Position</th>
-                    <th className="p-2 text-right w-[80px]">Potential</th>
+                    <th className="p-2 text-left">Trader</th>
+                    <th className="p-2 text-right">Fill Price</th>
+                    <th className="p-2 text-right">Fill Value</th>
+                    <th className="p-2 text-right">Pos Value</th>
+                    <th className="p-2 text-right">Pos Avg Entry</th>
+                    <th className="p-2 text-right">Pos Size</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-poly-border">
-                  {trades.map((trade) => (
-                    <tr key={trade.id} className="hover:bg-poly-dark/30">
-                      <td className="p-2 text-poly-gray text-sm">
-                        {formatDate(trade.timestamp)}
+                  {alerts.map((alert) => (
+                    <tr key={alert.id} className="hover:bg-poly-dark/30">
+                      <td className="p-2 text-poly-gray text-sm whitespace-nowrap">
+                        {formatDate(alert.fillTimestamp)}
                       </td>
-                      <td className="p-2">
+                      <td className="p-2 max-w-xs">
                         <a
-                          href={`https://polymarket.com/event/${trade.eventSlug}`}
+                          href={`https://polymarket.com/event/${alert.eventSlug}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-white hover:text-poly-blue transition-colors block truncate"
                         >
-                          {trade.title || 'Unknown'}
+                          {alert.title || 'Unknown'}
                         </a>
-                        <div className="text-poly-gray text-xs truncate">{trade.outcome}</div>
+                        <div className="text-poly-gray text-xs truncate">{alert.outcome}</div>
                       </td>
                       <td className="p-2">
                         <div className="flex items-center gap-1">
-                          {trade.whaleTier && (
-                            <span title={`Watchlist: ${trade.whaleTier}`}>
-                              {getWhaleTierEmoji(trade.whaleTier)}
+                          {alert.whaleTier && (
+                            <span title={`Watchlist: ${alert.whaleTier}`}>
+                              {getWhaleTierEmoji(alert.whaleTier)}
                             </span>
                           )}
                           <a
-                            href={`https://polymarket.com/profile/${trade.wallet}`}
+                            href={`https://polymarket.com/profile/${alert.wallet}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="text-poly-blue hover:underline truncate"
                           >
-                            {trade.name || trade.wallet.slice(0, 10) + '...'}
+                            {alert.traderName}
                           </a>
                         </div>
                       </td>
-                      <td className="p-2 text-center">
-                        {trade.inferredStatus === 'confirmed_won' && (
-                          <span className="text-emerald-500 font-medium" title="Officially confirmed by Polymarket">✅ Won</span>
-                        )}
-                        {trade.inferredStatus === 'confirmed_lost' && (
-                          <span className="text-red-500 font-medium" title="Officially confirmed by Polymarket">❌ Lost</span>
-                        )}
-                        {trade.inferredStatus === 'inferred_won' && (
-                          <span className="text-emerald-400" title="Inferred from price (98%+) - not yet officially confirmed">📈 Won*</span>
-                        )}
-                        {trade.inferredStatus === 'inferred_lost' && (
-                          <span className="text-red-400" title="Inferred from price (2% or less) - not yet officially confirmed">📉 Lost*</span>
-                        )}
-                        {trade.inferredStatus === 'likely_won' && (
-                          <span className="text-emerald-300" title="Live price near 100% - not yet recorded">🔄 Likely Won</span>
-                        )}
-                        {trade.inferredStatus === 'likely_lost' && (
-                          <span className="text-red-300" title="Live price near zero - not yet recorded">🔄 Likely Lost</span>
-                        )}
-                        {trade.inferredStatus === 'holding' && (
-                          <span className="text-poly-muted">⏳ Holding</span>
-                        )}
-                      </td>
                       <td className="p-2 text-right text-amber-400">
-                        {(trade.price * 100).toFixed(1)}%
+                        {alert.fillPriceFormatted}
                       </td>
                       <td className="p-2 text-right text-poly-green font-medium">
-                        {formatMoney(trade.value)}
+                        {alert.fillValueFormatted}
                       </td>
                       <td className="p-2 text-right text-white font-medium">
-                        {formatMoney(trade.position)}
+                        {alert.positionCurrentValueFormatted}
                       </td>
-                      <td className="p-2 text-right text-poly-blue">
-                        {formatMoney(trade.potential)}
+                      <td className="p-2 text-right text-poly-muted">
+                        {alert.positionAvgPriceFormatted}
+                      </td>
+                      <td className="p-2 text-right text-poly-muted">
+                        {alert.positionSizeFormatted}
                       </td>
                     </tr>
                   ))}
@@ -246,13 +229,36 @@ export default function HistoryPage() {
               </table>
             </div>
           )}
+
+          {/* Pagination */}
+          {(offset > 0 || hasMore) && (
+            <div className="p-4 border-t border-poly-border flex justify-between items-center">
+              <button
+                onClick={() => fetchData(Math.max(0, offset - 500))}
+                disabled={offset === 0 || loading}
+                className="px-4 py-2 bg-poly-border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Previous
+              </button>
+              <span className="text-poly-gray">
+                Showing {offset + 1} - {offset + alerts.length}
+              </span>
+              <button
+                onClick={() => fetchData(offset + 500)}
+                disabled={!hasMore || loading}
+                className="px-4 py-2 bg-poly-border rounded disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Footer note */}
         <div className="text-center text-poly-gray text-sm mt-6 space-y-1">
-          <p>Position and Potential values are calculated from current market prices.</p>
+          <p>Phase 1: High-accuracy data from alert_events</p>
           <p className="text-xs">
-            Status: ✅❌ = Officially confirmed | 📈📉 Won*/Lost* = Inferred from price | 🔄 = Live price inference | ⏳ = Open
+            Position values are snapshots from ingestion time (not live)
           </p>
         </div>
       </div>

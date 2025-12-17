@@ -1,561 +1,202 @@
-// app/api/daily-report/route.ts
-// Thin wrapper around lib/ for daily report generation
+// /app/api/daily-report/route.ts
+// Phase 1: Query alert_events only, no external API calls
 
-import { NextRequest, NextResponse } from "next/server";
-import { sql } from "@vercel/postgres";
-import { fetchTradesFromDB, enrichTradesWithSettlement, fetchWalletProfiles, fetchOpenPositions, fetchWalletsLastActivity, detectHedgedPositions, checkMarketResolution, OpenPosition } from "@/lib/polymarket";
-import { rankAnomalousWallets, formatMoney, formatOdds, detectSharpConvergence, detectDormantSharps } from "@/lib/scoring";
+import { NextRequest, NextResponse } from 'next/server';
+import { sql } from '@vercel/postgres';
 
-// Force dynamic rendering
-export const dynamic = "force-dynamic";
+export const dynamic = 'force-dynamic';
 
-function parseDateParam(value: string | null): Date | null {
-  if (!value) return null;
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return null;
-  return d;
+interface AlertEvent {
+  id: string;
+  created_at: string;
+  trade_dedupe_id: string;
+  transaction_hash: string | null;
+  fill_timestamp: string;
+  side: string;
+  fill_price: number;
+  fill_size: number;
+  fill_value_usd: number;
+  wallet: string;
+  trader_name: string | null;
+  trader_pseudonym: string | null;
+  asset: string;
+  condition_id: string;
+  outcome: string;
+  outcome_index: number;
+  title: string | null;
+  slug: string | null;
+  event_slug: string | null;
+  position_size: number | null;
+  position_avg_price: number | null;
+  position_cur_price: number | null;
+  position_initial_value: number | null;
+  position_current_value: number | null;
+  position_cash_pnl: number | null;
+  position_snapshot_at: string | null;
+  longshot_threshold: number;
+  min_position_threshold: number;
+  qualifies_longshot: boolean;
+  qualifies_min_position: boolean;
+  threshold_value_used: number | null;
+  threshold_source: string | null;
+  is_whale: boolean;
+  whale_label: string | null;
+  whale_tier: string | null;
+  whale_category: string | null;
+}
+
+function formatMoney(value: number | null): string {
+  if (value === null || value === undefined) return 'N/A';
+  if (Math.abs(value) >= 1000) {
+    return `$${(value / 1000).toFixed(1)}K`;
+  }
+  return `$${value.toFixed(0)}`;
+}
+
+function formatOdds(price: number | null): string {
+  if (price === null || price === undefined) return 'N/A';
+  return `${(price * 100).toFixed(1)}%`;
 }
 
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-    const fromParam = parseDateParam(searchParams.get("from"));
-    const toParam = parseDateParam(searchParams.get("to"));
-    const minOddsParam = searchParams.get("minOdds");
-    const maxOddsParam = searchParams.get("maxOdds");
+    const hoursParam = searchParams.get('hours');
+    const hours = hoursParam ? parseInt(hoursParam) : 24;
 
-    // Default: last 24 hours
-    const to = toParam ?? new Date();
-    const from = fromParam ?? new Date(to.getTime() - 24 * 60 * 60 * 1000);
-
-    // Odds range filter (default 0-25%)
-    const minPrice = minOddsParam ? parseFloat(minOddsParam) : 0;
-    const maxPrice = maxOddsParam ? parseFloat(maxOddsParam) : 0.25;
-
-    // Fetch longshot trades from database (populated by collector)
-    const rawTrades = await fetchTradesFromDB({
-      from,
-      to,
-      minPrice,
-      maxPrice,
-    });
-
-    // Enrich with settlement data for z-score calculation
-    const trades = await enrichTradesWithSettlement(rawTrades);
-
-    // Fetch wallet profiles for historical context
-    const uniqueWallets = Array.from(new Set(trades.map((t) => t.wallet)));
-    const walletProfiles = await fetchWalletProfiles(uniqueWallets);
-
-    // Rank wallets by anomaly score with historical context
-    // Only include wallets with anomalyScore > 0 (actual statistical anomalies)
-    const anomalousWallets = rankAnomalousWallets(
-      trades,
-      {
-        minLongshots: 5,
-        maxPrice,
-        minAnomalyScore: 0.01, // Filter out wallets with no anomaly
-      },
-      walletProfiles
-    );
-
-    // Aggregate trades by wallet + market + outcome to avoid duplicates
-    const aggregatedTrades = new Map<string, {
-      wallet: string;
-      name: string;
-      marketId: string;
-      eventSlug: string;
-      title: string;
-      outcome: string;
-      totalSize: number;
-      totalValue: number;
-      avgPrice: number;
-      tradeCount: number;
-      latestTimestamp: string; // Most recent trade timestamp
-    }>();
-
-    for (const t of trades) {
-      const key = `${t.wallet}:${t.marketId}:${t.outcome}`;
-      const existing = aggregatedTrades.get(key);
-      const value = t.price * t.size;
-
-      if (existing) {
-        existing.totalSize += t.size;
-        existing.totalValue += value;
-        existing.tradeCount += 1;
-        // Weighted average price
-        existing.avgPrice = existing.totalValue / existing.totalSize;
-        // Track most recent trade
-        if (t.timestamp > existing.latestTimestamp) {
-          existing.latestTimestamp = t.timestamp;
-        }
-      } else {
-        aggregatedTrades.set(key, {
-          wallet: t.wallet,
-          name: t.name,
-          marketId: t.marketId,
-          eventSlug: t.eventSlug,
-          title: t.title,
-          outcome: t.outcome,
-          totalSize: t.size,
-          totalValue: value,
-          avgPrice: t.price,
-          tradeCount: 1,
-          latestTimestamp: t.timestamp,
-        });
-      }
-    }
-
-    // Get all aggregated positions with $5K+ bet size, sorted by lowest odds
-    const MIN_BET_VALUE = 5000;
-    const topAggregated = Array.from(aggregatedTrades.values())
-      .filter((t) => t.totalValue >= MIN_BET_VALUE)
-      .sort((a, b) => a.avgPrice - b.avgPrice);
-
-    // Fetch open positions for all wallets in topAggregated to check if still holding
-    const walletsToCheck = Array.from(new Set(topAggregated.map((t) => t.wallet)));
-    const openPositionsByWallet = new Map<string, OpenPosition[]>();
-
-    // Fetch in parallel for speed (max ~50 wallets)
-    await Promise.all(
-      walletsToCheck.map(async (wallet) => {
-        const positions = await fetchOpenPositions(wallet);
-        openPositionsByWallet.set(wallet, positions);
-      })
-    );
-
-    // Helper to check if a position is still open and not settled
-    const getPositionData = (wallet: string, marketId: string, outcome: string): { status: 'holding' | 'sold' | 'unknown', totalPosition: number, curPrice: number } => {
-      const openPositions = openPositionsByWallet.get(wallet);
-      if (!openPositions) return { status: 'unknown', totalPosition: 0, curPrice: 0 };
-
-      // Find the matching position that's not settled (curPrice between 0 and 1 exclusive)
-      const position = openPositions.find(
-        (p) => p.conditionId === marketId && p.outcome === outcome && p.size > 0 && p.curPrice > 0 && p.curPrice < 1
-      );
-
-      if (position) {
-        return { status: 'holding', totalPosition: position.size, curPrice: position.curPrice };
-      }
-      return { status: 'sold', totalPosition: 0, curPrice: 0 };
-    };
-
-    // Query longshot_history for resolution states of these trades
-    const historyLookupResult = await sql`
-      SELECT wallet, market_id, outcome, resolution_state, won
-      FROM longshot_history
-      WHERE resolution_state IN ('confirmed', 'inferred')
+    // Query alert_events for last N hours
+    const result = await sql`
+      SELECT *
+      FROM alert_events
+      WHERE fill_timestamp >= NOW() - INTERVAL '1 hour' * ${hours}
+      ORDER BY fill_timestamp DESC
+      LIMIT 500
     `;
-    const historyResolutions = new Map<string, { state: string; won: boolean }>();
-    for (const row of historyLookupResult.rows) {
-      const key = `${row.wallet}:${row.market_id}:${row.outcome}`;
-      historyResolutions.set(key, { state: row.resolution_state, won: row.won });
-    }
 
-    // Build topLongshots with position status, filter out sold/settled positions
-    const topLongshotsRaw = topAggregated
-      .map((t) => {
-        const profile = walletProfiles.get(t.wallet);
-        const positionData = getPositionData(t.wallet, t.marketId, t.outcome);
-
-        // Determine status: first check longshot_history for confirmed/inferred, then fall back to live price
-        const curPrice = positionData.curPrice;
-        let inferredStatus: 'pending' | 'likely_lost' | 'likely_won' | 'confirmed_won' | 'confirmed_lost' | 'inferred_won' | 'inferred_lost' = 'pending';
-
-        // Check if this trade has a resolution in longshot_history
-        const historyKey = `${t.wallet}:${t.marketId}:${t.outcome}`;
-        const historyResolution = historyResolutions.get(historyKey);
-
-        if (historyResolution) {
-          // Use database resolution state
-          if (historyResolution.state === 'confirmed') {
-            inferredStatus = historyResolution.won ? 'confirmed_won' : 'confirmed_lost';
-          } else if (historyResolution.state === 'inferred') {
-            inferredStatus = historyResolution.won ? 'inferred_won' : 'inferred_lost';
-          }
-        } else if (positionData.status === 'holding') {
-          // Fall back to live price inference
-          // Compare to entry price to detect actual price movement
-          const entryPrice = t.avgPrice;
-          if (curPrice >= 0.98) {
-            // Price at 98%+ = market effectively settled to YES
-            inferredStatus = 'likely_won';
-          } else if (curPrice <= 0.02 && curPrice > 0 && curPrice < entryPrice * 0.5) {
-            // Price at 2% or less AND dropped 50%+ from entry = market likely settled to NO
-            // This prevents marking stable low-odds positions (like 1.7% staying at 1.7%) as "lost"
-            inferredStatus = 'likely_lost';
-          }
-        }
-        // For sold positions without history, inferredStatus stays 'pending' - we don't know outcome
-
-        return {
-          id: `${t.wallet}:${t.marketId}:${t.outcome}`,
-          wallet: t.wallet,
-          name: t.name,
-          marketId: t.marketId,
-          eventSlug: t.eventSlug,
-          title: t.title,
-          outcome: t.outcome,
-          price: t.avgPrice,
-          size: t.totalSize,
-          value: t.totalValue,
-          potential: t.totalSize,
-          // Most recent trade timestamp
-          latestTimestamp: t.latestTimestamp,
-          // Total position VALUE from Polymarket (size * curPrice)
-          totalPosition: positionData.totalPosition * positionData.curPrice,
-          totalPositionFormatted: formatMoney(positionData.totalPosition * positionData.curPrice),
-          // Total potential payout if they win (full share count = payout at $1 each)
-          totalPotential: positionData.totalPosition,
-          totalPotentialFormatted: formatMoney(positionData.totalPosition),
-          // Current market odds
-          currentOdds: positionData.curPrice,
-          currentOddsFormatted: formatOdds(positionData.curPrice),
-          oddsFormatted: formatOdds(t.avgPrice),
-          valueFormatted: formatMoney(t.totalValue),
-          potentialFormatted: formatMoney(t.totalSize),
-          tradeCount: t.tradeCount,
-          positionStatus: positionData.status,
-          // Inferred resolution status based on price (pending, likely_lost, likely_won)
-          inferredStatus,
-          // Trader's historical longshot record (held to settlement only)
-          longshotWins: profile?.longshotWins ?? null,
-          longshotLosses: profile?.longshotLosses ?? null,
-          longshotSoldEarly: profile?.longshotSoldEarly ?? null,
-          // Format: "5W/3L (2 sold)" or "5W/3L" if no sold early
-          longshotRecord: profile
-            ? profile.longshotSoldEarly > 0
-              ? `${profile.longshotWins}W/${profile.longshotLosses}L (${profile.longshotSoldEarly} sold)`
-              : `${profile.longshotWins}W/${profile.longshotLosses}L`
-            : null,
-          // Flag new wallets (5 or fewer historical positions)
-          totalPositions: profile?.totalPositions ?? 0,
-          isNewWallet: (profile?.totalPositions ?? 0) <= 5,
-        };
-      })
-      // Include all positions - holding and sold (UI will indicate status)
-      .filter((t) => t.positionStatus === 'holding' || t.positionStatus === 'sold');
-
-    // Detect hedged positions for top longshots
-    const hedgeCheckMap = new Map<string, boolean>();
-    for (const t of topLongshotsRaw) {
-      const key = `${t.wallet}:${t.marketId}`;
-      if (!hedgeCheckMap.has(key)) {
-        const hedgeInfo = await detectHedgedPositions(t.wallet, [t.marketId]);
-        const info = hedgeInfo.get(t.marketId);
-        hedgeCheckMap.set(key, info?.hasHedge ?? false);
-      }
-    }
-
-    // Add isHedged flag to topLongshots
-    const topLongshots = topLongshotsRaw.map((t) => ({
-      ...t,
-      isHedged: hedgeCheckMap.get(`${t.wallet}:${t.marketId}`) ?? false,
+    const alerts: AlertEvent[] = result.rows.map((row) => ({
+      id: row.id,
+      created_at: row.created_at,
+      trade_dedupe_id: row.trade_dedupe_id,
+      transaction_hash: row.transaction_hash,
+      fill_timestamp: row.fill_timestamp,
+      side: row.side,
+      fill_price: Number(row.fill_price),
+      fill_size: Number(row.fill_size),
+      fill_value_usd: Number(row.fill_value_usd),
+      wallet: row.wallet,
+      trader_name: row.trader_name,
+      trader_pseudonym: row.trader_pseudonym,
+      asset: row.asset,
+      condition_id: row.condition_id,
+      outcome: row.outcome,
+      outcome_index: row.outcome_index,
+      title: row.title,
+      slug: row.slug,
+      event_slug: row.event_slug,
+      position_size: row.position_size !== null ? Number(row.position_size) : null,
+      position_avg_price: row.position_avg_price !== null ? Number(row.position_avg_price) : null,
+      position_cur_price: row.position_cur_price !== null ? Number(row.position_cur_price) : null,
+      position_initial_value: row.position_initial_value !== null ? Number(row.position_initial_value) : null,
+      position_current_value: row.position_current_value !== null ? Number(row.position_current_value) : null,
+      position_cash_pnl: row.position_cash_pnl !== null ? Number(row.position_cash_pnl) : null,
+      position_snapshot_at: row.position_snapshot_at,
+      longshot_threshold: Number(row.longshot_threshold),
+      min_position_threshold: Number(row.min_position_threshold),
+      qualifies_longshot: row.qualifies_longshot,
+      qualifies_min_position: row.qualifies_min_position,
+      threshold_value_used: row.threshold_value_used !== null ? Number(row.threshold_value_used) : null,
+      threshold_source: row.threshold_source,
+      is_whale: row.is_whale,
+      whale_label: row.whale_label,
+      whale_tier: row.whale_tier,
+      whale_category: row.whale_category,
     }));
 
-    // Debug: count how many $5K+ trades exist and their statuses
-    const allWithStatus = topAggregated.map((t) => {
-      const posData = getPositionData(t.wallet, t.marketId, t.outcome);
-      return {
-        title: t.title.slice(0, 40),
-        status: posData.status,
-        value: t.totalValue,
-        curPrice: posData.curPrice,
-        avgPrice: t.avgPrice,
-      };
-    });
-    const soldTrades = allWithStatus.filter(t => t.status === 'sold');
-    const won = soldTrades.filter(t => t.curPrice === 1 || t.curPrice >= 0.99).length;
-    const lost = soldTrades.filter(t => t.curPrice === 0 || t.curPrice <= 0.01).length;
-    console.log('$5K+ trade status breakdown:', {
-      total5kPlus: topAggregated.length,
-      holding: allWithStatus.filter(t => t.status === 'holding').length,
-      sold: soldTrades.length,
-      soldWon: won,
-      soldLost: lost,
-    });
-    // Log all $5K+ trades sorted by odds to verify nothing under 18% is missed
-    console.log('All $5K+ trades by odds:', allWithStatus.sort((a, b) => a.avgPrice - b.avgPrice).map(t => ({
-      odds: `${(t.avgPrice * 100).toFixed(1)}%`,
-      status: t.status,
-      value: `$${(t.value/1000).toFixed(1)}K`,
-      title: t.title,
-    })));
+    // Calculate summary stats
+    const uniqueWallets = new Set(alerts.map((a) => a.wallet));
+    const totalValue = alerts.reduce((sum, a) => sum + a.fill_value_usd, 0);
+    const totalPotential = alerts.reduce((sum, a) => sum + a.fill_size, 0);
 
-    // Log trades under 10% odds regardless of size
-    const under10Trades = Array.from(aggregatedTrades.values())
-      .filter((t) => t.avgPrice < 0.10)
-      .sort((a, b) => a.avgPrice - b.avgPrice)
-      .slice(0, 20);
-    console.log('Trades under 10% odds (any size, top 20):', under10Trades.map(t => ({
-      odds: `${(t.avgPrice * 100).toFixed(1)}%`,
-      value: `$${t.totalValue.toFixed(0)}`,
-      title: t.title.slice(0, 35),
-      wallet: t.name || t.wallet.slice(0, 10),
-    })));
-
-    // Get data coverage: time span from earliest to latest trade
-    // trades.timestamp is ISO string, need to parse it
-    const timestamps = trades
-      .map(t => new Date(t.timestamp).getTime())
-      .filter(ts => !isNaN(ts) && ts > 0);
-
+    // Get time range from data
+    const timestamps = alerts.map((a) => new Date(a.fill_timestamp).getTime());
     const earliestMs = timestamps.length > 0 ? Math.min(...timestamps) : null;
     const latestMs = timestamps.length > 0 ? Math.max(...timestamps) : null;
-
-    const dataStartTime = earliestMs ? new Date(earliestMs) : null;
-    const dataEndTime = latestMs ? new Date(latestMs) : null;
-
-    // Calculate hours from earliest to latest trade
-    const hoursOfData = (earliestMs && latestMs)
+    const hoursOfData = earliestMs && latestMs
       ? Math.round((latestMs - earliestMs) / (1000 * 60 * 60) * 10) / 10
       : 0;
 
-    console.log('[daily-report] Data coverage:', {
-      tradesCount: trades.length,
-      timestampsCount: timestamps.length,
-      earliestMs,
-      latestMs,
-      dataStartTime: dataStartTime?.toISOString(),
-      dataEndTime: dataEndTime?.toISOString(),
-      hoursOfData
-    });
+    // Format alerts for response
+    const formattedAlerts = alerts.map((a) => ({
+      id: a.id,
+      fillTimestamp: a.fill_timestamp,
+      wallet: a.wallet,
+      traderName: a.trader_name || a.trader_pseudonym || 'Anonymous',
+      title: a.title || 'Unknown Market',
+      outcome: a.outcome,
+      eventSlug: a.event_slug,
+      // Fill data (this trade)
+      fillPrice: a.fill_price,
+      fillPriceFormatted: formatOdds(a.fill_price),
+      fillSize: a.fill_size,
+      fillValueUsd: a.fill_value_usd,
+      fillValueFormatted: formatMoney(a.fill_value_usd),
+      // Position snapshot (from ingestion time)
+      positionSize: a.position_size,
+      positionSizeFormatted: a.position_size !== null ? formatMoney(a.position_size) : 'N/A',
+      positionAvgPrice: a.position_avg_price,
+      positionAvgPriceFormatted: formatOdds(a.position_avg_price),
+      positionCurrentValue: a.position_current_value,
+      positionCurrentValueFormatted: formatMoney(a.position_current_value),
+      positionInitialValue: a.position_initial_value,
+      positionInitialValueFormatted: formatMoney(a.position_initial_value),
+      positionCashPnl: a.position_cash_pnl,
+      positionCashPnlFormatted: formatMoney(a.position_cash_pnl),
+      positionSnapshotAt: a.position_snapshot_at,
+      // Threshold info
+      thresholdValueUsed: a.threshold_value_used,
+      thresholdSource: a.threshold_source,
+      // Whale metadata
+      isWhale: a.is_whale,
+      whaleLabel: a.whale_label,
+      whaleTier: a.whale_tier,
+      whaleCategory: a.whale_category,
+    }));
 
-    // Summary stats
-    const summary = {
-      totalTrades: trades.length,
-      totalWallets: new Set(trades.map((t) => t.wallet)).size,
-      totalVolume: trades.reduce((sum, t) => sum + t.price * t.size, 0),
-      totalPotential: trades.reduce((sum, t) => sum + t.size, 0),
-      dataStartTime: dataStartTime?.toISOString() || null,
-      hoursOfData,
-    };
+    // Separate whale alerts from regular alerts
+    const whaleAlerts = formattedAlerts.filter((a) => a.isWhale);
+    const regularAlerts = formattedAlerts.filter((a) => !a.isWhale);
 
-    // Detect convergence: 2+ wallets betting $2.5K+ on same longshot
-    // Filter: bet size + hedge detection (no position count filter - conviction is what matters)
-    const sharpConvergencesRaw = detectSharpConvergence(trades, walletProfiles, {
-      minBetValue: 2500,      // $2.5K+ bet = high conviction (matches collection threshold)
-      minWalletCount: 2,      // 2+ wallets = convergence
-      maxPrice,
-    });
-
-    // Detect hedged positions and filter out settled markets
-    // For each convergence, check if market has resolved via CLOB API
-    const sharpConvergencesWithStatus = await Promise.all(
-      sharpConvergencesRaw.map(async (convergence) => {
-        // First check if market is resolved via CLOB API (most reliable)
-        const resolution = await checkMarketResolution(convergence.marketId);
-
-        if (resolution.resolved) {
-          return {
-            ...convergence,
-            isSettled: true,
-            winner: resolution.winner,
-            sharpWallets: convergence.sharpWallets.map((sw) => ({
-              ...sw,
-              isHedged: false,
-              positionStatus: 'unknown' as const,
-            })),
-          };
-        }
-
-        // If not resolved, check hedges and position status
-        const walletsToCheck = convergence.sharpWallets.slice(0, 10); // Limit API calls
-        const hedgeResults = new Map<string, boolean>();
-        const positionStatusResults = new Map<string, 'holding' | 'sold' | 'unknown'>();
-
-        for (const sw of walletsToCheck) {
-          const hedgeInfo = await detectHedgedPositions(sw.wallet, [convergence.marketId]);
-          const info = hedgeInfo.get(convergence.marketId);
-          hedgeResults.set(sw.wallet, info?.positionFound && info?.hasHedge ? true : false);
-
-          // Check if wallet still holds the position
-          const positionData = getPositionData(sw.wallet, convergence.marketId, convergence.outcome);
-          positionStatusResults.set(sw.wallet, positionData.status);
-        }
-
-        return {
-          ...convergence,
-          isSettled: false,
-          winner: null,
-          sharpWallets: convergence.sharpWallets.map((sw) => ({
-            ...sw,
-            isHedged: hedgeResults.get(sw.wallet) ?? false,
-            positionStatus: (positionStatusResults.get(sw.wallet) ?? 'unknown') as 'holding' | 'sold' | 'unknown',
-          })),
-        };
-      })
-    );
-
-    // Filter out settled markets - only show actionable alerts
-    const sharpConvergences = sharpConvergencesWithStatus.filter(c => !c.isSettled);
-
-    // Fetch last activity for wallets that have profiles (potential dormant sharps)
-    const potentialDormantWallets = Array.from(walletProfiles.entries())
-      .filter(([, profile]) => profile.totalPnl >= 5000)
-      .map(([wallet]) => wallet)
-      .slice(0, 20);
-
-    const walletLastActivity = await fetchWalletsLastActivity(potentialDormantWallets, from);
-
-    // Detect dormant sharps (7+ days inactive, now trading)
-    const dormantSharps = detectDormantSharps(trades, walletProfiles, walletLastActivity, {
-      minPnl: 5000,
-      minWinRate: 0.25,
-      minLongshotTrades: 3,
-      minDormantDays: 7,
-      maxPrice,
-    });
-
-    // Query repeat winners from longshot_history (traders with 2+ wins)
-    const repeatWinnersResult = await sql`
-      SELECT
-        wallet,
-        MAX(name) as name,
-        COUNT(*) FILTER (WHERE won = true) as wins,
-        COUNT(*) FILTER (WHERE resolved = true) as resolved_bets,
-        COUNT(*) as total_bets,
-        SUM(CASE WHEN won = true THEN value ELSE 0 END) as total_won_value,
-        SUM(CASE WHEN won = true THEN (size - value) ELSE 0 END) as total_profit
-      FROM longshot_history
-      GROUP BY wallet
-      HAVING COUNT(*) FILTER (WHERE won = true) >= 2
-      ORDER BY COUNT(*) FILTER (WHERE won = true) DESC, SUM(CASE WHEN won = true THEN (size - value) ELSE 0 END) DESC
-      LIMIT 20
-    `;
-
-    // Get recent wins for each repeat winner
-    const repeatWinners = await Promise.all(
-      repeatWinnersResult.rows.map(async (row) => {
-        const recentWinsResult = await sql`
-          SELECT title, outcome, price, size, value, timestamp
-          FROM longshot_history
-          WHERE wallet = ${row.wallet} AND won = true
-          ORDER BY timestamp DESC
-          LIMIT 5
-        `;
-
-        return {
-          wallet: row.wallet,
-          name: row.name || "Anonymous",
-          wins: Number(row.wins),
-          resolvedBets: Number(row.resolved_bets),
-          totalBets: Number(row.total_bets),
-          winRate: row.resolved_bets > 0 ? (Number(row.wins) / Number(row.resolved_bets) * 100).toFixed(1) : null,
-          totalWonValue: Number(row.total_won_value || 0),
-          totalWonValueFormatted: formatMoney(Number(row.total_won_value || 0)),
-          totalProfit: Number(row.total_profit || 0),
-          totalProfitFormatted: formatMoney(Number(row.total_profit || 0)),
-          recentWins: recentWinsResult.rows.map((w) => ({
-            title: w.title,
-            outcome: w.outcome,
-            odds: (Number(w.price) * 100).toFixed(1) + '%',
-            bet: formatMoney(Number(w.value)),
-            payout: formatMoney(Number(w.size)),
-            profit: formatMoney(Number(w.size) - Number(w.value)),
-          })),
-        };
-      })
-    );
+    // Get count of whale alerts
+    const whaleCount = whaleAlerts.length;
 
     return NextResponse.json({
-      window: {
-        from: from.toISOString(),
-        to: to.toISOString(),
-      },
       summary: {
-        ...summary,
-        totalVolumeFormatted: formatMoney(summary.totalVolume),
-        totalPotentialFormatted: formatMoney(summary.totalPotential),
+        totalAlerts: alerts.length,
+        whaleAlerts: whaleCount,
+        uniqueWallets: uniqueWallets.size,
+        totalValue,
+        totalValueFormatted: formatMoney(totalValue),
+        totalPotential,
+        totalPotentialFormatted: formatMoney(totalPotential),
+        hoursOfData,
+        dataStartTime: earliestMs ? new Date(earliestMs).toISOString() : null,
+        dataEndTime: latestMs ? new Date(latestMs).toISOString() : null,
       },
-      anomalousWallets: anomalousWallets.map((w) => ({
-        wallet: w.wallet,
-        name: w.name,
-        anomalyScore: w.anomalyScore,
-        level: w.level,
-        levelReason: w.levelReason,
-        longshotCount: w.longshotCount,
-        expectedWins: w.expectedWins,
-        actualWins: w.actualWins,
-        zScore: w.zScore,
-        totalStake: w.totalStake,
-        totalValue: w.totalValue,
-        totalValueFormatted: formatMoney(w.totalValue),
-        totalStakeFormatted: formatMoney(w.totalStake),
-        // Historical context
-        historicalPnl: w.historicalPnl,
-        historicalPnlFormatted: w.historicalPnl != null ? formatMoney(w.historicalPnl) : null,
-        historicalLongshotWins: w.historicalLongshotWins,
-        historicalLongshotLosses: w.historicalLongshotLosses,
-        historicalLongshotPnl: w.historicalLongshotPnl,
-        historicalLongshotPnlFormatted: w.historicalLongshotPnl != null ? formatMoney(w.historicalLongshotPnl) : null,
-        totalPositions: w.totalPositions,
-        topTrades: w.topTrades.map((t) => ({
-          title: t.title,
-          outcome: t.outcome,
-          price: t.price,
-          oddsFormatted: formatOdds(t.price),
-          size: t.size,
-          value: t.price * t.size,
-          valueFormatted: formatMoney(t.price * t.size),
-        })),
-      })),
-      topLongshots,
-      // Sharp convergence alerts (3+ sharp wallets on same longshot)
-      sharpConvergences: sharpConvergences.map((c) => ({
-        marketId: c.marketId,
-        eventSlug: c.eventSlug,
-        title: c.title,
-        outcome: c.outcome,
-        avgPrice: c.avgPrice,
-        oddsFormatted: formatOdds(c.avgPrice),
-        totalValue: c.totalValue,
-        totalValueFormatted: formatMoney(c.totalValue),
-        sharpCount: c.sharpCount,
-        sharpWallets: c.sharpWallets.map((w) => ({
-          wallet: w.wallet,
-          name: w.name,
-          historicalPnl: w.historicalPnl,
-          historicalPnlFormatted: formatMoney(w.historicalPnl),
-          size: w.size,
-          value: w.value,
-          valueFormatted: formatMoney(w.value),
-          potential: w.size, // If bet wins, payout = size (shares)
-          potentialFormatted: formatMoney(w.size),
-          isHedged: w.isHedged ?? false,
-          positionStatus: w.positionStatus ?? 'unknown',
-        })),
-      })),
-      // Dormant sharp alerts (7+ days inactive, now trading)
-      dormantSharps: dormantSharps.map((d) => ({
-        wallet: d.wallet,
-        name: d.name,
-        historicalPnl: d.historicalPnl,
-        historicalPnlFormatted: formatMoney(d.historicalPnl),
-        longshotWinRate: d.longshotWinRate,
-        winRateFormatted: `${(d.longshotWinRate * 100).toFixed(0)}%`,
-        longshotRecord: d.longshotRecord,
-        totalPositions: d.totalPositions,
-        daysSinceLastTrade: d.daysSinceLastTrade,
-        currentTrades: d.currentTrades.slice(0, 3).map((t) => ({
-          title: t.title,
-          outcome: t.outcome,
-          price: t.price,
-          oddsFormatted: formatOdds(t.price),
-          size: t.size,
-          value: t.value,
-          valueFormatted: formatMoney(t.value),
-        })),
-        totalCurrentValue: d.totalCurrentValue,
-        totalCurrentValueFormatted: formatMoney(d.totalCurrentValue),
-      })),
-      // Repeat winners alert (traders with 2+ longshot wins)
-      repeatWinners,
+      // Top longshots by position value (descending)
+      topLongshots: regularAlerts
+        .sort((a, b) => (b.positionCurrentValue ?? 0) - (a.positionCurrentValue ?? 0))
+        .slice(0, 50),
+      // Whale trades
+      whaleTrades: whaleAlerts
+        .sort((a, b) => new Date(b.fillTimestamp).getTime() - new Date(a.fillTimestamp).getTime())
+        .slice(0, 50),
+      // All alerts for detailed view
+      allAlerts: formattedAlerts,
     });
   } catch (err) {
-    console.error("Error in /api/daily-report:", err);
+    console.error('[daily-report] Error:', err);
     return NextResponse.json(
-      { error: "Failed to generate daily report" },
+      { error: 'Failed to generate daily report', details: String(err) },
       { status: 500 }
     );
   }

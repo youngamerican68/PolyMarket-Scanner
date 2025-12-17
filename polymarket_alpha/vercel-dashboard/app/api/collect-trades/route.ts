@@ -1,526 +1,357 @@
-// app/api/collect-trades/route.ts
-// Cron job to collect longshot trades from Polymarket API
-// Runs every 30 minutes via Vercel cron
+// /app/api/collect-trades/route.ts
+// Phase 1: Ingestion into alert_events table
+// Runs on schedule via Vercel cron
 
-import { NextResponse } from "next/server";
-import { sql } from "@vercel/postgres";
+import { NextResponse } from 'next/server';
+import { sql } from '@vercel/postgres';
+import {
+  fetchRawTrades,
+  fetchPositionsForWallets,
+  matchTradeToPosition,
+  Trade,
+  Position,
+} from '@/lib/polymarket';
+import { generateTradeDedupeId } from '@/lib/dedupe';
+import { computeFillValue } from '@/lib/decimal';
+import { normalizeTimestamp } from '@/lib/schemas';
 
-export const dynamic = "force-dynamic";
-export const maxDuration = 60; // Allow up to 60 seconds for this job
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+export const maxDuration = 120;
 
-const DATA_API = "https://data-api.polymarket.com";
+// Thresholds from spec
+const LONGSHOT_THRESHOLD = 0.25;
+const MIN_POSITION_THRESHOLD = 2500;
 
-interface RawTrade {
-  id: string;
-  proxyWallet: string;
-  name?: string;
-  pseudonym?: string;
-  conditionId: string;
-  eventSlug?: string;
-  slug?: string;
-  title?: string;
-  outcome?: string;
-  outcomeIndex?: number;
-  asset?: string; // Token ID - stable unique identifier per outcome
-  timestamp: number;
-  price: number;
-  size: number;
-  side: string;
-  transactionHash?: string;
+// Auth check for cron requests
+function isAuthorized(request: Request): boolean {
+  const secret = request.headers.get('x-cron-secret');
+  const expectedSecret = process.env.CRON_SECRET;
+
+  // If CRON_SECRET is not set, allow requests (dev mode)
+  if (!expectedSecret) {
+    console.warn('[collect-trades] CRON_SECRET not set - allowing unauthenticated request');
+    return true;
+  }
+
+  return secret === expectedSecret;
 }
 
-async function fetchRecentTrades(): Promise<RawTrade[]> {
-  const allTrades: RawTrade[] = [];
-  const pageSize = 500;
-  const maxPages = 20; // 10,000 trades max per run (increased from 10)
-
-  for (let page = 0; page < maxPages; page++) {
-    const offset = page * pageSize;
-    const url = `${DATA_API}/trades?limit=${pageSize}&offset=${offset}&filterType=CASH&filterAmount=100&takerOnly=true`;
-
-    try {
-      const res = await fetch(url, {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-        cache: "no-store",
-      });
-
-      if (!res.ok) {
-        console.error(`API error: ${res.status}`);
-        break;
-      }
-
-      const trades = await res.json();
-
-      if (!Array.isArray(trades) || trades.length === 0) {
-        break;
-      }
-
-      // Filter to longshots (<25% odds) and BUY only
-      const longshots = trades.filter(
-        (t: RawTrade) => t.price < 0.25 && t.side === "BUY"
-      );
-
-      allTrades.push(...longshots);
-      console.log(
-        `Page ${page + 1}: fetched ${trades.length} trades, ${longshots.length} longshots`
-      );
-
-      // If we got less than pageSize, we've hit the end
-      if (trades.length < pageSize) {
-        break;
-      }
-    } catch (err) {
-      console.error(`Error fetching page ${page}:`, err);
-      break;
-    }
-  }
-
-  return allTrades;
+interface IngestionSummary {
+  trades_fetched: number;
+  candidates_after_filter: number;
+  unique_wallets_queried: number;
+  positions_fetched: number;
+  positions_at_limit_warning: number;
+  alerts_inserted: number;
+  skipped_duplicate: number;
+  skipped_no_position_match: number;
+  skipped_validation_failed: number;
+  skipped_below_threshold: number;
+  errors: string[];
 }
 
-async function storeTrades(trades: RawTrade[]): Promise<{
-  inserted: number;
-  legacyIdCount: number;
-  legacyIdSamples: string[];
-  missingAssetCount: number;
-  missingAssetSamples: string[];
-}> {
-  let inserted = 0;
-  let legacyIdCount = 0;
-  let missingAssetCount = 0;
-  const legacyIdSamples: string[] = []; // Collect up to 3 samples for debugging
-  const missingAssetSamples: string[] = []; // Track missing asset separately
-
-  for (const t of trades) {
-    try {
-      // Normalize asset: trim whitespace, ensure string
-      const normalizedAsset = t.asset ? String(t.asset).trim() : null;
-
-      // Use transactionHash + asset (tokenId) as unique trade ID
-      // transactionHash is blockchain-unique, asset is the immutable token ID
-      // asset is more stable than outcomeIndex or outcome display label
-      let tradeId: string;
-      if (t.transactionHash && normalizedAsset) {
-        tradeId = `${t.transactionHash}_${normalizedAsset}`;
-      } else if (t.transactionHash) {
-        // MISSING ASSET FALLBACK: Has txHash but no asset - track this regression
-        tradeId = `${t.transactionHash}_${t.outcomeIndex ?? 0}`;
-        missingAssetCount++;
-        if (missingAssetSamples.length < 3) {
-          missingAssetSamples.push(`txHash=${t.transactionHash.slice(0,10)}...`);
-        }
-        console.warn(`[MISSING_ASSET] Has transactionHash but missing asset: txHash=${t.transactionHash.slice(0,10)}, market=${t.conditionId.slice(0,10)}`);
-      } else {
-        // LEGACY FALLBACK: Missing transactionHash entirely - this shouldn't happen
-        tradeId = `${t.proxyWallet}-${t.conditionId}-${t.timestamp}-${Math.round(t.size)}`;
-        legacyIdCount++;
-        if (legacyIdSamples.length < 3) {
-          legacyIdSamples.push(tradeId);
-        }
-        console.warn(`[LEGACY_ID] Missing transactionHash for trade: wallet=${t.proxyWallet.slice(0,10)}, market=${t.conditionId.slice(0,10)}, ts=${t.timestamp}`);
-      }
-
-      // Use INSERT ... ON CONFLICT DO NOTHING to skip duplicates
-      const result = await sql`
-        INSERT INTO trades (id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size)
-        VALUES (
-          ${tradeId},
-          ${t.proxyWallet},
-          ${t.name || t.pseudonym || "Anonymous"},
-          ${t.conditionId},
-          ${t.eventSlug || t.slug || ""},
-          ${t.title || ""},
-          ${t.outcome || ""},
-          ${t.timestamp},
-          ${t.price},
-          ${t.size}
-        )
-        ON CONFLICT (id) DO NOTHING
-      `;
-
-      if (result.rowCount && result.rowCount > 0) {
-        inserted++;
-      }
-    } catch (err) {
-      // Skip errors for individual trades
-      console.error(`Error inserting trade:`, err);
-    }
+// POST-only, requires x-cron-secret header
+export async function POST(request: Request) {
+  // Auth check
+  if (!isAuthorized(request)) {
+    return NextResponse.json(
+      { error: 'Unauthorized' },
+      { status: 401 }
+    );
   }
 
-  if (missingAssetCount > 0) {
-    console.warn(`[MISSING_ASSET_SUMMARY] ${missingAssetCount} trades missing asset field (using outcomeIndex fallback)`);
-    console.warn(`[MISSING_ASSET_SAMPLES] ${missingAssetSamples.join(', ')}`);
-  }
-
-  if (legacyIdCount > 0) {
-    console.warn(`[LEGACY_ID_SUMMARY] ${legacyIdCount} trades used legacy ID format (missing transactionHash)`);
-    console.warn(`[LEGACY_ID_SAMPLES] ${legacyIdSamples.join(', ')}`);
-  }
-
-  return { inserted, legacyIdCount, legacyIdSamples, missingAssetCount, missingAssetSamples };
-}
-
-async function pruneOldTrades(): Promise<number> {
-  // Delete trades older than 48 hours
-  const cutoffTimestamp = Math.floor(Date.now() / 1000) - 48 * 60 * 60;
-
-  const result = await sql`
-    DELETE FROM trades WHERE timestamp < ${cutoffTimestamp}
-  `;
-
-  return result.rowCount || 0;
-}
-
-// Store qualifying longshots ($5K+, <25% odds) to permanent history
-// Aggregates trades by wallet+market+outcome to catch positions built from multiple small trades
-async function storeToHistory(trades: RawTrade[]): Promise<number> {
-  let inserted = 0;
-  const MIN_VALUE = 2500; // $2.5K minimum
-
-  // Aggregate trades by wallet + market + outcome
-  const aggregated = new Map<string, {
-    wallet: string;
-    name: string;
-    marketId: string;
-    eventSlug: string;
-    title: string;
-    outcome: string;
-    totalSize: number;
-    totalValue: number;
-    latestTimestamp: number;
-    avgPrice: number;
-  }>();
-
-  for (const t of trades) {
-    const key = `${t.proxyWallet}:${t.conditionId}:${t.outcome}`;
-    const value = t.price * t.size;
-    const existing = aggregated.get(key);
-
-    if (existing) {
-      existing.totalSize += t.size;
-      existing.totalValue += value;
-      existing.avgPrice = existing.totalValue / existing.totalSize;
-      if (t.timestamp > existing.latestTimestamp) {
-        existing.latestTimestamp = t.timestamp;
-      }
-    } else {
-      aggregated.set(key, {
-        wallet: t.proxyWallet,
-        name: t.name || t.pseudonym || "Anonymous",
-        marketId: t.conditionId,
-        eventSlug: t.eventSlug || t.slug || "",
-        title: t.title || "",
-        outcome: t.outcome || "",
-        totalSize: t.size,
-        totalValue: value,
-        latestTimestamp: t.timestamp,
-        avgPrice: t.price,
-      });
-    }
-  }
-
-  // Store aggregated positions that meet $5K threshold
-  const positions = Array.from(aggregated.values());
-  for (const pos of positions) {
-    if (pos.totalValue < MIN_VALUE) continue;
-
-    try {
-      // Use wallet + market + outcome as the unique ID (no timestamp - position identity only)
-      const tradeId = `${pos.wallet}-${pos.marketId}-${pos.outcome}`;
-
-      const result = await sql`
-        INSERT INTO longshot_history (id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size, value)
-        VALUES (
-          ${tradeId},
-          ${pos.wallet},
-          ${pos.name},
-          ${pos.marketId},
-          ${pos.eventSlug},
-          ${pos.title},
-          ${pos.outcome},
-          ${pos.latestTimestamp},
-          ${pos.avgPrice},
-          ${pos.totalSize},
-          ${pos.totalValue}
-        )
-        ON CONFLICT (id) DO UPDATE SET
-          timestamp = EXCLUDED.timestamp,
-          price = EXCLUDED.price,
-          size = EXCLUDED.size,
-          value = EXCLUDED.value
-      `;
-
-      if (result.rowCount && result.rowCount > 0) {
-        inserted++;
-        console.log(`[history] Saved: ${pos.name} - ${pos.title?.slice(0, 30)} @ ${(pos.avgPrice * 100).toFixed(1)}% = $${pos.totalValue.toFixed(0)}`);
-      }
-    } catch (err) {
-      console.error(`Error inserting to history:`, err);
-    }
-  }
-
-  return inserted;
-}
-
-// Update whale watchlist with wallet addresses when we see matching names
-async function updateWhaleWatchlistMappings(trades: RawTrade[]): Promise<number> {
-  let updated = 0;
-
-  // Get all watchlist names that are missing wallets
-  const pendingResult = await sql`
-    SELECT name FROM whale_watchlist WHERE wallet IS NULL
-  `;
-  const pendingNames = new Set(pendingResult.rows.map(r => r.name.toLowerCase()));
-
-  if (pendingNames.size === 0) return 0;
-
-  for (const t of trades) {
-    const name = t.name || t.pseudonym;
-    if (!name) continue;
-
-    if (pendingNames.has(name.toLowerCase())) {
-      try {
-        const result = await sql`
-          UPDATE whale_watchlist
-          SET wallet = ${t.proxyWallet}
-          WHERE LOWER(name) = ${name.toLowerCase()} AND wallet IS NULL
-        `;
-        if (result.rowCount && result.rowCount > 0) {
-          updated++;
-          console.log(`[whale-watchlist] Linked wallet for ${name}: ${t.proxyWallet}`);
-          pendingNames.delete(name.toLowerCase());
-        }
-      } catch (err) {
-        console.error(`Error updating whale watchlist:`, err);
-      }
-    }
-  }
-
-  return updated;
-}
-
-// Store longshot trades from whale watchlist wallets
-async function storeWhaleTrades(trades: RawTrade[]): Promise<number> {
-  let stored = 0;
-
-  // Get all whale watchlist wallets with their metadata
-  const watchlistResult = await sql`
-    SELECT wallet, name, tier, category FROM whale_watchlist WHERE wallet IS NOT NULL
-  `;
-  const whaleWallets = new Map(
-    watchlistResult.rows.map(r => [r.wallet.toLowerCase(), { name: r.name, tier: r.tier, category: r.category }])
-  );
-
-  if (whaleWallets.size === 0) return 0;
-
-  for (const t of trades) {
-    const whaleInfo = whaleWallets.get(t.proxyWallet.toLowerCase());
-    if (!whaleInfo) continue;
-
-    try {
-      // Normalize asset: trim whitespace, ensure string
-      const normalizedAsset = t.asset ? String(t.asset).trim() : null;
-
-      // Use transactionHash + asset (tokenId) as unique trade ID
-      let tradeId: string;
-      if (t.transactionHash && normalizedAsset) {
-        tradeId = `${t.transactionHash}_${normalizedAsset}`;
-      } else if (t.transactionHash) {
-        tradeId = `${t.transactionHash}_${t.outcomeIndex ?? 0}`;
-        console.warn(`[MISSING_ASSET] Whale trade missing asset: txHash=${t.transactionHash.slice(0,10)}`);
-      } else {
-        tradeId = `${t.proxyWallet}-${t.conditionId}-${t.timestamp}-${Math.round(t.size)}`;
-        console.warn(`[LEGACY_ID] Missing transactionHash for whale trade: wallet=${t.proxyWallet.slice(0,10)}, ts=${t.timestamp}`);
-      }
-      const value = t.price * t.size;
-
-      const result = await sql`
-        INSERT INTO whale_trades (id, wallet, name, whale_tier, whale_category, market_id, event_slug, title, outcome, timestamp, price, size, value)
-        VALUES (
-          ${tradeId},
-          ${t.proxyWallet},
-          ${t.name || t.pseudonym || whaleInfo.name},
-          ${whaleInfo.tier},
-          ${whaleInfo.category},
-          ${t.conditionId},
-          ${t.eventSlug || t.slug || ""},
-          ${t.title || ""},
-          ${t.outcome || ""},
-          ${t.timestamp},
-          ${t.price},
-          ${t.size},
-          ${value}
-        )
-        ON CONFLICT (id) DO NOTHING
-      `;
-
-      if (result.rowCount && result.rowCount > 0) {
-        stored++;
-        console.log(`[whale-trade] ${whaleInfo.name} (${whaleInfo.tier}): ${t.title?.slice(0, 30)} @ ${(t.price * 100).toFixed(1)}% = $${value.toFixed(0)}`);
-      }
-    } catch (err) {
-      console.error(`Error storing whale trade:`, err);
-    }
-  }
-
-  return stored;
-}
-
-// Aggregate trades from DB and save qualifying positions to history
-// This catches positions built from multiple smaller trades across different API fetches
-async function syncHistoryFromDb(): Promise<number> {
-  const MIN_VALUE = 2500; // $2.5K minimum
-  const cutoff24h = Math.floor(Date.now() / 1000) - 24 * 60 * 60;
-
-  // Get aggregated positions from trades table (last 24h)
-  // IMPORTANT: Only GROUP BY wallet, market_id, outcome to match real-time aggregation
-  // Use MAX() for display fields (name, event_slug, title) since they may vary across trades
-  const result = await sql`
-    SELECT
-      wallet,
-      MAX(name) as name,
-      market_id,
-      MAX(event_slug) as event_slug,
-      MAX(title) as title,
-      outcome,
-      SUM(size) as total_size,
-      SUM(price * size) as total_value,
-      SUM(price * size) / SUM(size) as avg_price,
-      MAX(timestamp) as latest_timestamp
-    FROM trades
-    WHERE timestamp >= ${cutoff24h}
-    GROUP BY wallet, market_id, outcome
-    HAVING SUM(price * size) >= ${MIN_VALUE}
-  `;
-
-  let inserted = 0;
-
-  for (const row of result.rows) {
-    try {
-      // Use wallet + market + outcome as unique ID (no timestamp - position identity only)
-      const tradeId = `${row.wallet}-${row.market_id}-${row.outcome}`;
-
-      const insertResult = await sql`
-        INSERT INTO longshot_history (id, wallet, name, market_id, event_slug, title, outcome, timestamp, price, size, value)
-        VALUES (
-          ${tradeId},
-          ${row.wallet},
-          ${row.name},
-          ${row.market_id},
-          ${row.event_slug},
-          ${row.title},
-          ${row.outcome},
-          ${row.latest_timestamp},
-          ${Number(row.avg_price)},
-          ${Number(row.total_size)},
-          ${Number(row.total_value)}
-        )
-        ON CONFLICT (id) DO UPDATE SET
-          timestamp = EXCLUDED.timestamp,
-          price = EXCLUDED.price,
-          size = EXCLUDED.size,
-          value = EXCLUDED.value
-      `;
-
-      if (insertResult.rowCount && insertResult.rowCount > 0) {
-        inserted++;
-        console.log(`[history-sync] Saved: ${row.name} - ${row.title?.slice(0, 30)} @ ${(Number(row.avg_price) * 100).toFixed(1)}% = $${Number(row.total_value).toFixed(0)}`);
-      }
-    } catch (err) {
-      console.error(`Error syncing to history:`, err);
-    }
-  }
-
-  return inserted;
-}
-
-export async function GET() {
   const startTime = Date.now();
+  const summary: IngestionSummary = {
+    trades_fetched: 0,
+    candidates_after_filter: 0,
+    unique_wallets_queried: 0,
+    positions_fetched: 0,
+    positions_at_limit_warning: 0,
+    alerts_inserted: 0,
+    skipped_duplicate: 0,
+    skipped_no_position_match: 0,
+    skipped_validation_failed: 0,
+    skipped_below_threshold: 0,
+    errors: [],
+  };
 
   try {
-    console.log("Starting trade collection...");
-    console.log(`Time: ${new Date().toISOString()}`);
+    console.log('[collect-trades] Starting Phase 1 ingestion...');
 
-    // Fetch recent trades
-    const trades = await fetchRecentTrades();
-    console.log(`Fetched ${trades.length} longshot trades total`);
+    // Step 1: Fetch recent trades with per-item validation
+    const { trades, skipped: validationSkipped, errors: validationErrors } = await fetchRawTrades({
+      minValue: 100,
+      limit: 500,
+    });
 
-    // Store in database
-    const { inserted, legacyIdCount, legacyIdSamples, missingAssetCount, missingAssetSamples } = await storeTrades(trades);
-    console.log(`Inserted ${inserted} new trades${legacyIdCount > 0 ? ` (${legacyIdCount} legacy ID)` : ''}${missingAssetCount > 0 ? ` (${missingAssetCount} missing asset)` : ''}`);
+    summary.trades_fetched = trades.length + validationSkipped;
+    summary.skipped_validation_failed = validationSkipped;
 
-    // Update whale watchlist with wallet mappings
-    const whaleWalletsLinked = await updateWhaleWatchlistMappings(trades);
-    console.log(`Linked ${whaleWalletsLinked} whale wallet mappings`);
-
-    // Store whale trades
-    const whaleTradesStored = await storeWhaleTrades(trades);
-    console.log(`Stored ${whaleTradesStored} whale trades`);
-
-    // Store qualifying trades to permanent history (from fresh API data)
-    const historyInserted = await storeToHistory(trades);
-    console.log(`Inserted ${historyInserted} trades to history from API`);
-
-    // Also sync aggregated positions from DB to history
-    // This catches positions built from multiple smaller trades
-    const historySynced = await syncHistoryFromDb();
-    console.log(`Synced ${historySynced} additional trades to history from DB aggregation`);
-
-    // Prune old trades (from rolling 48h table only)
-    const pruned = await pruneOldTrades();
-    console.log(`Pruned ${pruned} old trades`);
-
-    // Report current state
-    const countResult = await sql`SELECT COUNT(*) as count FROM trades`;
-    const totalTrades = countResult.rows[0].count;
-    console.log(`Database now has ${totalTrades} trades`);
-
-    const historyCountResult = await sql`SELECT COUNT(*) as count FROM longshot_history`;
-    const historyTotal = historyCountResult.rows[0].count;
-    console.log(`History has ${historyTotal} longshot trades`);
-
-    // Get whale stats
-    let whaleWatchlistTotal = 0;
-    let whaleTradesTotal = 0;
-    try {
-      const whaleWatchlistResult = await sql`SELECT COUNT(*) as count FROM whale_watchlist`;
-      whaleWatchlistTotal = Number(whaleWatchlistResult.rows[0].count);
-      const whaleTradesResult = await sql`SELECT COUNT(*) as count FROM whale_trades`;
-      whaleTradesTotal = Number(whaleTradesResult.rows[0].count);
-    } catch {
-      // Tables may not exist yet
+    if (validationErrors.length > 0) {
+      summary.errors.push(...validationErrors.slice(0, 5));
     }
 
-    const duration = Date.now() - startTime;
+    console.log(`[collect-trades] Fetched ${trades.length} valid trades (${validationSkipped} failed validation)`);
+
+    // Step 2: Filter to longshot candidates (BUY side, price <= 25%)
+    const candidates = trades.filter(
+      (t) => t.side === 'BUY' && t.price <= LONGSHOT_THRESHOLD
+    );
+    summary.candidates_after_filter = candidates.length;
+
+    console.log(`[collect-trades] ${candidates.length} longshot candidates after filter`);
+
+    if (candidates.length === 0) {
+      return NextResponse.json({
+        success: true,
+        summary,
+        durationMs: Date.now() - startTime,
+      });
+    }
+
+    // Step 3: Generate dedupe IDs and check for existing entries
+    const candidatesWithDedupeId = candidates.map((trade) => ({
+      trade,
+      dedupeId: generateTradeDedupeId({
+        transactionHash: trade.transactionHash,
+        wallet: trade.proxyWallet,
+        asset: trade.asset,
+        side: trade.side,
+        timestamp: trade.timestamp,
+        price: trade.price,
+        size: trade.size,
+      }),
+    }));
+
+    // Check which dedupe IDs already exist in database
+    const dedupeIds = candidatesWithDedupeId.map((c) => c.dedupeId);
+
+    // Build the query with proper array handling for Vercel Postgres
+    const existingDedupeIds = new Set<string>();
+    if (dedupeIds.length > 0) {
+      const existingResult = await sql.query(
+        `SELECT trade_dedupe_id FROM alert_events WHERE trade_dedupe_id = ANY($1::text[])`,
+        [dedupeIds]
+      );
+      for (const row of existingResult.rows) {
+        existingDedupeIds.add(row.trade_dedupe_id);
+      }
+    }
+
+    // Filter out already-ingested trades
+    const newCandidates = candidatesWithDedupeId.filter((c) => !existingDedupeIds.has(c.dedupeId));
+    summary.skipped_duplicate = candidatesWithDedupeId.length - newCandidates.length;
+
+    console.log(`[collect-trades] ${newCandidates.length} new candidates (${summary.skipped_duplicate} duplicates skipped)`);
+
+    if (newCandidates.length === 0) {
+      return NextResponse.json({
+        success: true,
+        summary,
+        durationMs: Date.now() - startTime,
+      });
+    }
+
+    // Step 4: Group candidates by wallet
+    const walletSet = new Set(newCandidates.map((c) => c.trade.proxyWallet));
+    const uniqueWallets = Array.from(walletSet);
+    summary.unique_wallets_queried = uniqueWallets.length;
+
+    console.log(`[collect-trades] Fetching positions for ${uniqueWallets.length} unique wallets...`);
+
+    // Step 5: Fetch positions for all wallets (with concurrency control)
+    const { positionsByWallet, atLimitWallets } = await fetchPositionsForWallets(uniqueWallets);
+
+    summary.positions_at_limit_warning = atLimitWallets.length;
+    let totalPositions = 0;
+    for (const positions of Array.from(positionsByWallet.values())) {
+      totalPositions += positions.length;
+    }
+    summary.positions_fetched = totalPositions;
+
+    console.log(`[collect-trades] Fetched ${totalPositions} positions (${atLimitWallets.length} wallets at limit)`);
+
+    // Step 6: Fetch whale watchlist for metadata lookup
+    const whaleResult = await sql`
+      SELECT LOWER(wallet) as wallet, name as label, tier, category
+      FROM whale_watchlist
+      WHERE wallet IS NOT NULL
+    `;
+    const whalesByWallet = new Map(
+      whaleResult.rows.map((r) => [r.wallet, { label: r.label, tier: r.tier, category: r.category }])
+    );
+
+    // Step 7: Process each candidate
+    const snapshotAt = new Date().toISOString();
+
+    for (const { trade, dedupeId } of newCandidates) {
+      try {
+        const walletLower = trade.proxyWallet.toLowerCase();
+        const positions = positionsByWallet.get(walletLower) || [];
+
+        // Match trade to position
+        const matchedPosition = matchTradeToPosition(trade, positions);
+
+        if (!matchedPosition) {
+          summary.skipped_no_position_match++;
+          continue;
+        }
+
+        // Compute threshold qualification
+        let thresholdValue: number | null = null;
+        let thresholdSource: string | null = null;
+
+        if (matchedPosition.initialValue !== null && matchedPosition.initialValue !== undefined) {
+          thresholdValue = matchedPosition.initialValue;
+          thresholdSource = 'initialValue';
+        } else if (matchedPosition.currentValue !== null && matchedPosition.currentValue !== undefined) {
+          thresholdValue = matchedPosition.currentValue;
+          thresholdSource = 'currentValue';
+        }
+
+        const qualifiesMinPosition = thresholdValue !== null && thresholdValue >= MIN_POSITION_THRESHOLD;
+
+        if (!qualifiesMinPosition) {
+          summary.skipped_below_threshold++;
+          continue;
+        }
+
+        // Compute fill value using decimal-safe math
+        const fillValueUsd = computeFillValue(trade.price, trade.size);
+
+        // Generate UUID
+        const id = crypto.randomUUID();
+
+        // Convert timestamp to ISO for TIMESTAMPTZ
+        const timestampSeconds = normalizeTimestamp(trade.timestamp);
+        const fillTimestamp = new Date(timestampSeconds * 1000).toISOString();
+
+        // Lookup whale metadata
+        const whaleInfo = whalesByWallet.get(walletLower);
+        const isWhale = !!whaleInfo;
+
+        // Insert into alert_events
+        const insertResult = await sql`
+          INSERT INTO alert_events (
+            id,
+            trade_dedupe_id,
+            transaction_hash,
+            fill_timestamp,
+            side,
+            fill_price,
+            fill_size,
+            fill_value_usd,
+            wallet,
+            trader_name,
+            trader_pseudonym,
+            asset,
+            condition_id,
+            outcome,
+            outcome_index,
+            title,
+            slug,
+            event_slug,
+            position_size,
+            position_avg_price,
+            position_cur_price,
+            position_initial_value,
+            position_current_value,
+            position_cash_pnl,
+            position_snapshot_at,
+            longshot_threshold,
+            min_position_threshold,
+            qualifies_longshot,
+            qualifies_min_position,
+            threshold_value_used,
+            threshold_source,
+            is_whale,
+            whale_label,
+            whale_tier,
+            whale_category
+          ) VALUES (
+            ${id},
+            ${dedupeId},
+            ${trade.transactionHash || null},
+            ${fillTimestamp},
+            ${trade.side},
+            ${trade.price},
+            ${trade.size},
+            ${fillValueUsd},
+            ${walletLower},
+            ${trade.name || null},
+            ${trade.pseudonym || null},
+            ${trade.asset},
+            ${trade.conditionId},
+            ${trade.outcome},
+            ${trade.outcomeIndex},
+            ${trade.title || null},
+            ${trade.slug || null},
+            ${trade.eventSlug || null},
+            ${matchedPosition.size},
+            ${matchedPosition.avgPrice},
+            ${matchedPosition.curPrice},
+            ${matchedPosition.initialValue},
+            ${matchedPosition.currentValue},
+            ${matchedPosition.cashPnl},
+            ${snapshotAt},
+            ${LONGSHOT_THRESHOLD},
+            ${MIN_POSITION_THRESHOLD},
+            ${true},
+            ${qualifiesMinPosition},
+            ${thresholdValue},
+            ${thresholdSource},
+            ${isWhale},
+            ${whaleInfo?.label || null},
+            ${whaleInfo?.tier || null},
+            ${whaleInfo?.category || null}
+          )
+          ON CONFLICT (trade_dedupe_id) DO NOTHING
+        `;
+
+        if (insertResult.rowCount && insertResult.rowCount > 0) {
+          summary.alerts_inserted++;
+          console.log(
+            `[collect-trades] Inserted: ${trade.name || walletLower.slice(0, 8)} - ${trade.title?.slice(0, 30) || 'Unknown'} @ ${(trade.price * 100).toFixed(1)}% = $${fillValueUsd}`
+          );
+        }
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        summary.errors.push(`Insert failed: ${errMsg}`);
+        if (summary.errors.length <= 5) {
+          console.error('[collect-trades] Insert error:', err);
+        }
+      }
+    }
+
+    console.log('[collect-trades] Ingestion complete:', JSON.stringify(summary, null, 2));
 
     return NextResponse.json({
       success: true,
-      fetched: trades.length,
-      inserted,
-      // Data quality metrics - all should be 0 in normal operation
-      legacyIdCount, // Missing transactionHash entirely
-      legacyIdSamples, // Sample IDs for debugging (max 3)
-      missingAssetCount, // Has txHash but missing asset field
-      missingAssetSamples, // Sample txHashes for debugging (max 3)
-      whaleWalletsLinked,
-      whaleTradesStored,
-      historyInserted,
-      historySynced,
-      pruned,
-      totalInDb: totalTrades,
-      historyTotal,
-      whaleWatchlistTotal,
-      whaleTradesTotal,
-      durationMs: duration,
+      summary,
+      durationMs: Date.now() - startTime,
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    console.error("Error in collect-trades:", err);
+    console.error('[collect-trades] Fatal error:', err);
+    summary.errors.push(`Fatal: ${err instanceof Error ? err.message : String(err)}`);
+
     return NextResponse.json(
-      { error: "Failed to collect trades", details: String(err) },
+      {
+        success: false,
+        error: 'Ingestion failed',
+        summary,
+        durationMs: Date.now() - startTime,
+      },
       { status: 500 }
     );
   }
 }
-// trigger redeploy Fri Dec 12 16:04:45 EST 2025
+
+// Reject GET requests
+export async function GET() {
+  return NextResponse.json(
+    { error: 'Method not allowed. Use POST with x-cron-secret header.' },
+    { status: 405, headers: { 'Allow': 'POST' } }
+  );
+}

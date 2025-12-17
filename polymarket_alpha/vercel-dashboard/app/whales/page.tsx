@@ -6,24 +6,30 @@ import Link from 'next/link'
 interface WhaleTrade {
   id: string
   wallet: string
-  name: string
-  tier: string
-  category: string
-  profit: string
-  marketId: string
-  eventSlug: string
+  traderName: string
+  tier: string | null
+  category: string | null
+  whaleLabel: string | null
+  conditionId: string
+  eventSlug: string | null
   title: string
   outcome: string
-  timestamp: number
-  entryPrice: number
-  curPrice: number
-  size: number
-  value: number
-  position: number
-  potential: number
-  plPercent: number
-  inferredStatus: 'likely_won' | 'likely_lost' | 'holding'
-  createdAt: string
+  fillTimestamp: string
+  fillPrice: number
+  fillPriceFormatted: string
+  fillSize: number
+  fillValueUsd: number
+  fillValueFormatted: string
+  positionSize: number | null
+  positionAvgPrice: number | null
+  positionAvgPriceFormatted: string
+  positionCurrentValue: number | null
+  positionCurrentValueFormatted: string
+  positionInitialValue: number | null
+  positionInitialValueFormatted: string
+  positionCashPnl: number | null
+  positionCashPnlFormatted: string
+  positionSnapshotAt: string | null
 }
 
 interface WhaleData {
@@ -32,9 +38,10 @@ interface WhaleData {
     totalTrades: number
     uniqueWhales: number
     totalValue: number
-    whaleTrades: number
-    sharkTrades: number
-    dolphinTrades: number
+    totalValueFormatted: string
+    whaleTierCount: number
+    sharkTierCount: number
+    dolphinTierCount: number
   }
   watchlist: {
     total: number
@@ -47,35 +54,28 @@ interface WhaleData {
   filters: {
     tier: string | null
     category: string | null
-    minValue: number | null
-    maxValue: number | null
   }
   timestamp: string
 }
 
-function formatTimeAgo(timestamp: number): string {
-  const now = Math.floor(Date.now() / 1000)
-  const diff = now - timestamp
+function formatTimeAgo(timestamp: string): string {
+  const date = new Date(timestamp)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / (1000 * 60))
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60))
 
-  if (diff < 60) return `${diff}s ago`
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`
-  if (diff < 86400) {
-    const hours = Math.floor(diff / 3600)
-    const mins = Math.floor((diff % 3600) / 60)
-    return mins > 0 ? `${hours}h ${mins}m ago` : `${hours}h ago`
+  if (diffMins < 60) return `${diffMins}m ago`
+  if (diffHours < 24) {
+    const mins = diffMins % 60
+    return mins > 0 ? `${diffHours}h ${mins}m ago` : `${diffHours}h ago`
   }
-  const days = Math.floor(diff / 86400)
-  const hours = Math.floor((diff % 86400) / 3600)
+  const days = Math.floor(diffHours / 24)
+  const hours = diffHours % 24
   return hours > 0 ? `${days}d ${hours}h ago` : `${days}d ago`
 }
 
-function formatCurrency(value: number): string {
-  if (value >= 1000000) return `$${(value / 1000000).toFixed(1)}M`
-  if (value >= 1000) return `$${(value / 1000).toFixed(1)}K`
-  return `$${value.toFixed(0)}`
-}
-
-function getTierEmoji(tier: string): string {
+function getTierEmoji(tier: string | null): string {
   switch (tier?.toLowerCase()) {
     case 'whale': return '🐋'
     case 'shark': return '🦈'
@@ -84,7 +84,7 @@ function getTierEmoji(tier: string): string {
   }
 }
 
-function getTierColor(tier: string): string {
+function getTierColor(tier: string | null): string {
   switch (tier?.toLowerCase()) {
     case 'whale': return 'text-purple-400'
     case 'shark': return 'text-blue-400'
@@ -99,7 +99,6 @@ export default function WhalesPage() {
   const [error, setError] = useState<string | null>(null)
   const [tierFilter, setTierFilter] = useState<string>('')
   const [categoryFilter, setCategoryFilter] = useState<string>('')
-  const [sizeFilter, setSizeFilter] = useState<string>('') // Trade size filter
 
   useEffect(() => {
     async function fetchData() {
@@ -108,13 +107,7 @@ export default function WhalesPage() {
         const params = new URLSearchParams()
         if (tierFilter) params.set('tier', tierFilter)
         if (categoryFilter) params.set('category', categoryFilter)
-        // Parse size filter into minValue/maxValue
-        if (sizeFilter) {
-          const [min, max] = sizeFilter.split('-')
-          if (min) params.set('minValue', min)
-          if (max) params.set('maxValue', max)
-        }
-        params.set('_t', Date.now().toString()) // Cache buster
+        params.set('_t', Date.now().toString())
 
         const url = `/api/whale-trades?${params.toString()}`
         const res = await fetch(url, { cache: 'no-store' })
@@ -125,13 +118,6 @@ export default function WhalesPage() {
         }
 
         const json = await res.json()
-        // Debug: log raw response
-        console.log("WHALE API RESPONSE:", JSON.stringify({
-          _apiVersion: json._apiVersion,
-          _rawTotal: json._rawTotal,
-          watchlistTotal: json.watchlist?.total,
-          fullWatchlist: json.watchlist
-        }))
         setData(json)
         setError(null)
       } catch (err) {
@@ -142,7 +128,7 @@ export default function WhalesPage() {
     }
 
     fetchData()
-  }, [tierFilter, categoryFilter, sizeFilter])
+  }, [tierFilter, categoryFilter])
 
   if (loading) {
     return (
@@ -177,7 +163,7 @@ export default function WhalesPage() {
               🐋 Whale Watchlist
             </h1>
             <p className="text-poly-muted text-sm mt-1">
-              Tracking longshot trades from top Polymarket traders
+              Tracking longshot trades from whale watchlist
             </p>
           </div>
           <Link
@@ -207,15 +193,15 @@ export default function WhalesPage() {
           <div className="bg-poly-card border border-poly-border rounded-lg p-4">
             <div className="text-poly-muted text-xs uppercase tracking-wider mb-1">Total Volume</div>
             <div className="text-2xl font-bold text-poly-green">
-              {formatCurrency(data?.stats.totalValue || 0)}
+              {data?.stats.totalValueFormatted || 'N/A'}
             </div>
           </div>
           <div className="bg-poly-card border border-poly-border rounded-lg p-4">
             <div className="text-poly-muted text-xs uppercase tracking-wider mb-1">By Tier</div>
             <div className="flex items-center gap-3 text-sm">
-              <span className="text-purple-400">🐋 {data?.stats.whaleTrades || 0}</span>
-              <span className="text-blue-400">🦈 {data?.stats.sharkTrades || 0}</span>
-              <span className="text-cyan-400">🐬 {data?.stats.dolphinTrades || 0}</span>
+              <span className="text-purple-400">🐋 {data?.stats.whaleTierCount || 0}</span>
+              <span className="text-blue-400">🦈 {data?.stats.sharkTierCount || 0}</span>
+              <span className="text-cyan-400">🐬 {data?.stats.dolphinTierCount || 0}</span>
             </div>
           </div>
         </div>
@@ -277,40 +263,22 @@ export default function WhalesPage() {
               <option value="economics">Economics</option>
             </select>
           </div>
-          <div>
-            <label className="text-poly-muted text-xs uppercase tracking-wider block mb-1">
-              Trade Size
-            </label>
-            <select
-              value={sizeFilter}
-              onChange={(e) => setSizeFilter(e.target.value)}
-              className="bg-poly-dark border border-poly-border rounded px-3 py-2 text-sm"
-            >
-              <option value="">All Sizes</option>
-              <option value="100-">$100+</option>
-              <option value="500-">$500+</option>
-              <option value="1000-">$1K+</option>
-              <option value="1000-5000">$1K - $5K</option>
-              <option value="5000-">$5K+</option>
-            </select>
-          </div>
         </div>
 
         {/* Trades Table */}
         <div className="bg-poly-card border border-poly-border rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full table-fixed">
+            <table className="w-full">
               <thead className="bg-poly-dark/50">
                 <tr className="text-poly-muted text-xs uppercase tracking-wider">
-                  <th className="p-3 text-left w-[100px]">Time</th>
+                  <th className="p-3 text-left">Time</th>
                   <th className="p-3 text-left">Market</th>
-                  <th className="p-3 text-left w-[140px]">Trader</th>
-                  <th className="p-3 text-center w-[80px]">Tier</th>
-                  <th className="p-3 text-right w-[60px]">Odds</th>
-                  <th className="p-3 text-right w-[80px]">Bet</th>
-                  <th className="p-3 text-right w-[80px]">Position</th>
-                  <th className="p-3 text-right w-[80px]">Potential</th>
-                  <th className="p-3 text-center w-[80px]">Status</th>
+                  <th className="p-3 text-left">Trader</th>
+                  <th className="p-3 text-center">Tier</th>
+                  <th className="p-3 text-right">Fill Price</th>
+                  <th className="p-3 text-right">Fill Value</th>
+                  <th className="p-3 text-right">Pos Value</th>
+                  <th className="p-3 text-right">Pos Avg Entry</th>
                 </tr>
               </thead>
               <tbody>
@@ -320,15 +288,15 @@ export default function WhalesPage() {
                       key={trade.id}
                       className="border-t border-poly-border hover:bg-poly-dark/30 transition-colors"
                     >
-                      <td className="p-3 text-poly-muted text-sm">
-                        {formatTimeAgo(trade.timestamp)}
+                      <td className="p-3 text-poly-muted text-sm whitespace-nowrap">
+                        {formatTimeAgo(trade.fillTimestamp)}
                       </td>
-                      <td className="p-3">
+                      <td className="p-3 max-w-xs">
                         <a
                           href={`https://polymarket.com/event/${trade.eventSlug}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-poly-blue hover:underline text-sm truncate block"
+                          className="text-poly-blue hover:underline text-sm block truncate"
                           title={trade.title}
                         >
                           {trade.title?.slice(0, 50)}{trade.title?.length > 50 ? '...' : ''}
@@ -340,58 +308,44 @@ export default function WhalesPage() {
                           href={`https://polymarket.com/profile/${trade.wallet}`}
                           target="_blank"
                           rel="noopener noreferrer"
-                          className="text-poly-green hover:underline text-sm truncate block"
+                          className="text-poly-green hover:underline text-sm block truncate"
                         >
-                          {trade.name || trade.wallet.slice(0, 10) + '...'}
+                          {trade.whaleLabel || trade.traderName}
                         </a>
-                        <span className="text-xs text-poly-muted">
-                          {trade.profit || ''}
-                        </span>
                       </td>
                       <td className="p-3 text-center">
                         <span className={`${getTierColor(trade.tier)} text-lg`}>
                           {getTierEmoji(trade.tier)}
                         </span>
                         <span className="text-poly-muted text-xs block capitalize">
-                          {trade.tier}
+                          {trade.tier || '—'}
                         </span>
                       </td>
                       <td className="p-3 text-right">
                         <span className="text-poly-yellow font-mono text-sm">
-                          {(trade.entryPrice * 100).toFixed(0)}%
+                          {trade.fillPriceFormatted}
                         </span>
                       </td>
                       <td className="p-3 text-right">
-                        <span className="text-poly-text font-mono text-sm">
-                          {formatCurrency(trade.value)}
+                        <span className="text-poly-green font-mono text-sm">
+                          {trade.fillValueFormatted}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right">
+                        <span className="text-white font-mono text-sm font-medium">
+                          {trade.positionCurrentValueFormatted}
                         </span>
                       </td>
                       <td className="p-3 text-right">
                         <span className="text-poly-muted font-mono text-sm">
-                          {formatCurrency(trade.position)}
+                          {trade.positionAvgPriceFormatted}
                         </span>
-                      </td>
-                      <td className="p-3 text-right">
-                        <span className="text-poly-blue font-mono text-sm">
-                          {formatCurrency(trade.potential)}
-                        </span>
-                      </td>
-                      <td className="p-3 text-center text-xs">
-                        {trade.inferredStatus === 'likely_lost' && (
-                          <span className="text-red-400" title="Price near zero - likely lost">📉 Likely Lost</span>
-                        )}
-                        {trade.inferredStatus === 'likely_won' && (
-                          <span className="text-emerald-400" title="Price near 100% - likely won">📈 Likely Won</span>
-                        )}
-                        {trade.inferredStatus === 'holding' && (
-                          <span className="text-poly-muted">⏳ Holding</span>
-                        )}
                       </td>
                     </tr>
                   ))
                 ) : (
                   <tr>
-                    <td colSpan={9} className="p-8 text-center text-poly-muted">
+                    <td colSpan={8} className="p-8 text-center text-poly-muted">
                       No whale trades found. Add wallets to the watchlist to start tracking.
                     </td>
                   </tr>
@@ -403,9 +357,10 @@ export default function WhalesPage() {
 
         {/* Footer */}
         <div className="text-center text-poly-muted text-xs mt-8">
-          Last updated: {data?.timestamp ? new Date(data.timestamp).toLocaleString() : 'N/A'}
-          {' | '}API: {(data as any)?._apiVersion || 'unknown'}
-          {' | '}Raw: {String((data as any)?._rawTotal || 'N/A')}
+          <p>Phase 1: High-accuracy data from alert_events</p>
+          <p className="mt-1">
+            Last updated: {data?.timestamp ? new Date(data.timestamp).toLocaleString() : 'N/A'}
+          </p>
         </div>
       </div>
     </div>
