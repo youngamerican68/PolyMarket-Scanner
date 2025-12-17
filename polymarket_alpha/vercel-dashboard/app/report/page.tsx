@@ -361,9 +361,6 @@ export default function ReportPage() {
                   <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of position">
                     Pos Avg Entry
                   </th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="Position size in shares">
-                    Pos Size
-                  </th>
                   <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if position wins">
                     Potential Win
                   </th>
@@ -381,7 +378,7 @@ export default function ReportPage() {
                   if (sortedAlerts.length === 0) {
                     return (
                       <tr>
-                        <td className="p-4 text-center text-poly-muted" colSpan={9}>
+                        <td className="p-4 text-center text-poly-muted" colSpan={8}>
                           No longshot alerts found in this time period.
                         </td>
                       </tr>
@@ -414,7 +411,6 @@ export default function ReportPage() {
                       <td className="p-3 text-right text-poly-green">{alert.fillValueFormatted}</td>
                       <td className="p-3 text-right text-white font-medium">{alert.positionCurrentValueFormatted}</td>
                       <td className="p-3 text-right text-poly-muted">{alert.positionAvgPriceFormatted}</td>
-                      <td className="p-3 text-right text-poly-muted">{alert.positionSizeFormatted}</td>
                       <td className="p-3 text-right text-amber-400 font-medium">{alert.potentialWinFormatted}</td>
                       <td className="p-3 text-right text-poly-muted text-xs whitespace-nowrap">
                         {formatTimeAgo(alert.fillTimestamp)}

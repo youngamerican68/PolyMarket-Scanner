@@ -173,7 +173,6 @@ export default function HistoryPage() {
                     <th className="p-2 text-right">Fill Value</th>
                     <th className="p-2 text-right">Pos Value</th>
                     <th className="p-2 text-right">Pos Avg Entry</th>
-                    <th className="p-2 text-right">Pos Size</th>
                     <th className="p-2 text-right">Potential Win</th>
                   </tr>
                 </thead>
@@ -222,9 +221,6 @@ export default function HistoryPage() {
                       </td>
                       <td className="p-2 text-right text-poly-muted">
                         {alert.positionAvgPriceFormatted}
-                      </td>
-                      <td className="p-2 text-right text-poly-muted">
-                        {alert.positionSizeFormatted}
                       </td>
                       <td className="p-2 text-right text-amber-400 font-medium">
                         {alert.potentialWinFormatted}
