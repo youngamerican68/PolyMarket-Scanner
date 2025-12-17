@@ -93,7 +93,9 @@ export default function ReportPage() {
   const fetchReport = async () => {
     try {
       setLoading(true)
-      const res = await fetch(`/api/daily-report?hours=${hoursFilter}`)
+      const res = await fetch(`/api/daily-report?hours=${hoursFilter}&_t=${Date.now()}`, {
+        cache: 'no-store',
+      })
       if (!res.ok) throw new Error('Failed to fetch report')
       const data = await res.json()
       setReport(data)

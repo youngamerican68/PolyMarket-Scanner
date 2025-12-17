@@ -207,6 +207,12 @@ export async function GET(req: NextRequest) {
         .slice(0, 50),
       // All alerts for detailed view
       allAlerts: formattedAlerts,
+      timestamp: new Date().toISOString(),
+    }, {
+      headers: {
+        'Cache-Control': 'no-store, no-cache, must-revalidate',
+        'Pragma': 'no-cache',
+      },
     });
   } catch (err) {
     console.error('[daily-report] Error:', err);
