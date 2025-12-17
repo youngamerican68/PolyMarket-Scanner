@@ -160,6 +160,13 @@ export async function GET(req: NextRequest) {
       positionCashPnl: a.position_cash_pnl,
       positionCashPnlFormatted: formatMoney(a.position_cash_pnl),
       positionSnapshotAt: a.position_snapshot_at,
+      // Potential win: profit if position resolves correctly
+      potentialWin: a.position_size !== null && a.position_avg_price !== null
+        ? a.position_size * (1 - a.position_avg_price)
+        : null,
+      potentialWinFormatted: a.position_size !== null && a.position_avg_price !== null
+        ? formatMoney(a.position_size * (1 - a.position_avg_price))
+        : 'N/A',
       // Threshold info
       thresholdValueUsed: a.threshold_value_used,
       thresholdSource: a.threshold_source,
