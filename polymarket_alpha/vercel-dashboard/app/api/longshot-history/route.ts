@@ -19,6 +19,14 @@ function formatOdds(price: number | null): string {
   return `${(price * 100).toFixed(1)}%`;
 }
 
+function formatShares(shares: number | null): string {
+  if (shares === null || shares === undefined) return 'N/A';
+  if (Math.abs(shares) >= 1000) {
+    return `${(shares / 1000).toFixed(1)}K`;
+  }
+  return shares.toFixed(0);
+}
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -56,7 +64,7 @@ export async function GET(request: NextRequest) {
       fillValueFormatted: formatMoney(Number(row.fill_value_usd)),
       // Position snapshot (from ingestion time)
       positionSize: row.position_size !== null ? Number(row.position_size) : null,
-      positionSizeFormatted: row.position_size !== null ? formatMoney(Number(row.position_size)) : 'N/A',
+      positionSizeFormatted: formatShares(row.position_size !== null ? Number(row.position_size) : null),
       positionAvgPrice: row.position_avg_price !== null ? Number(row.position_avg_price) : null,
       positionAvgPriceFormatted: formatOdds(row.position_avg_price !== null ? Number(row.position_avg_price) : null),
       positionCurrentValue: row.position_current_value !== null ? Number(row.position_current_value) : null,
