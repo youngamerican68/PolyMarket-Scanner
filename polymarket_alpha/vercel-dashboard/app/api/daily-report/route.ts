@@ -72,14 +72,21 @@ export async function GET(req: NextRequest) {
     const hoursParam = searchParams.get('hours');
     const hours = hoursParam ? parseInt(hoursParam) : 24;
 
+    // Calculate cutoff timestamp in JS to avoid SQL parameter issues
+    const cutoffTime = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+    console.log(`[daily-report] Querying alerts since ${cutoffTime} (${hours}h ago)`);
+
     // Query alert_events for last N hours
     const result = await sql`
       SELECT *
       FROM alert_events
-      WHERE fill_timestamp >= NOW() - INTERVAL '1 hour' * ${hours}
+      WHERE fill_timestamp >= ${cutoffTime}::timestamptz
       ORDER BY fill_timestamp DESC
       LIMIT 500
     `;
+
+    console.log(`[daily-report] Found ${result.rows.length} alerts for ${hours}h window`);
 
     const alerts: AlertEvent[] = result.rows.map((row) => ({
       id: row.id,
