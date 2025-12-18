@@ -286,6 +286,8 @@ export async function GET(req: NextRequest) {
           FROM alert_events
           WHERE fill_timestamp >= ${alertCutoff}::timestamptz
             AND fill_price <= ${maxOdds}
+            AND position_current_value IS NOT NULL
+            AND position_current_value >= ${minPosition}
             AND is_whale = TRUE
             AND whale_category = ${category}
           ORDER BY fill_timestamp DESC, id DESC
@@ -302,6 +304,8 @@ export async function GET(req: NextRequest) {
           FROM alert_events
           WHERE fill_timestamp >= ${alertCutoff}::timestamptz
             AND fill_price <= ${maxOdds}
+            AND position_current_value IS NOT NULL
+            AND position_current_value >= ${minPosition}
             AND is_whale = TRUE
           ORDER BY fill_timestamp DESC, id DESC
           LIMIT ${pageSize} OFFSET ${offset}
@@ -317,6 +321,8 @@ export async function GET(req: NextRequest) {
           FROM alert_events
           WHERE fill_timestamp >= ${alertCutoff}::timestamptz
             AND fill_price <= ${maxOdds}
+            AND position_current_value IS NOT NULL
+            AND position_current_value >= ${minPosition}
             AND whale_category = ${category}
           ORDER BY fill_timestamp DESC, id DESC
           LIMIT ${pageSize} OFFSET ${offset}
@@ -332,6 +338,8 @@ export async function GET(req: NextRequest) {
           FROM alert_events
           WHERE fill_timestamp >= ${alertCutoff}::timestamptz
             AND fill_price <= ${maxOdds}
+            AND position_current_value IS NOT NULL
+            AND position_current_value >= ${minPosition}
           ORDER BY fill_timestamp DESC, id DESC
           LIMIT ${pageSize} OFFSET ${offset}
         `;
@@ -393,6 +401,8 @@ export async function GET(req: NextRequest) {
           FROM alert_events
           WHERE fill_timestamp >= ${alertCutoff}::timestamptz
             AND fill_price <= ${maxOdds}
+            AND position_current_value IS NOT NULL
+            AND position_current_value >= ${minPosition}
             AND is_whale = TRUE
             AND whale_category = ${category}
         `;
@@ -405,6 +415,8 @@ export async function GET(req: NextRequest) {
           FROM alert_events
           WHERE fill_timestamp >= ${alertCutoff}::timestamptz
             AND fill_price <= ${maxOdds}
+            AND position_current_value IS NOT NULL
+            AND position_current_value >= ${minPosition}
             AND is_whale = TRUE
         `;
         break;
@@ -416,6 +428,8 @@ export async function GET(req: NextRequest) {
           FROM alert_events
           WHERE fill_timestamp >= ${alertCutoff}::timestamptz
             AND fill_price <= ${maxOdds}
+            AND position_current_value IS NOT NULL
+            AND position_current_value >= ${minPosition}
             AND whale_category = ${category}
         `;
         break;
@@ -427,6 +441,8 @@ export async function GET(req: NextRequest) {
           FROM alert_events
           WHERE fill_timestamp >= ${alertCutoff}::timestamptz
             AND fill_price <= ${maxOdds}
+            AND position_current_value IS NOT NULL
+            AND position_current_value >= ${minPosition}
         `;
     }
 
