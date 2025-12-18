@@ -1,5 +1,60 @@
 # Polymarket Tracker - Development Progress
 
+## Session: December 17, 2025
+
+### Phase 2: Longshot Alpha Report (Completed)
+
+**Goal:** Build a new `/report` page that's DB-only (no external API calls at render time) with convergence detection to identify when multiple wallets bet on the same outcome.
+
+**Features Implemented:**
+
+1. **Convergence Detection**
+   - Groups trades by market/outcome to find multi-wallet convergence
+   - Qualification thresholds: 6h = 2+ wallets; 24h/72h = 3+ wallets OR $10K+ total value
+   - Shows odds range (min-max %) for each convergence group
+   - Expandable wallet details with individual odds, position value, potential win
+
+2. **Alerts Table**
+   - Paginated (50 per page) with Prev/Next/First/Last navigation
+   - Sortable columns (time, odds, fill value, position value)
+   - Filters: time window (6h/24h/72h), whales only, category
+   - Shows: Market, Trader, Odds, Fill Value, Position Value, Avg Price, Potential Win, Time
+
+3. **Potential Win Calculation**
+   - Formula: `position_size × (1 - avg_price)`
+   - Shows profit if position resolves to $1
+
+**Bug Fixes:**
+
+| Issue | Fix |
+|-------|-----|
+| Convergence always showing 6h window | Client was sending `hours` but API expected `alertWindowHours`. Now sends both `alertWindowHours` and `convergenceWindowHours` |
+| Trades under $2.5K appearing in table | Alerts query was missing `position_current_value >= minPosition` filter |
+| Type mismatches after deployment | Updated client interfaces to match API response fields |
+
+**Files Created/Modified:**
+- `app/api/report/route.ts` - DB-only report endpoint with convergence detection
+- `app/report/page.tsx` - New Longshot Alpha Report UI
+- `app/api/admin/migrate/route.ts` - Added convergence indexes
+
+**Database Indexes Added:**
+```sql
+CREATE INDEX idx_alert_events_convergence
+  ON alert_events (condition_id, outcome, wallet, fill_timestamp DESC);
+CREATE INDEX idx_alert_events_convergence_filtered
+  ON alert_events (fill_timestamp DESC, fill_price)
+  INCLUDE (position_current_value, condition_id, outcome, wallet, is_whale, whale_category)
+  WHERE position_current_value IS NOT NULL;
+```
+
+**UI Components:**
+- Summary cards: Total Alerts, Whales, Unique Wallets, Page
+- Convergence section with expandable groups
+- Alerts table with pagination
+- Filter controls: Window dropdown, Whales Only checkbox, Category dropdown
+
+---
+
 ## Session: December 15, 2025
 
 ### Phase 1: Trade ID Uniqueness (Completed)
