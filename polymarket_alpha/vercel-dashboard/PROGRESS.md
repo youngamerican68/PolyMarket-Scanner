@@ -1,5 +1,209 @@
 # Polymarket Tracker - Development Progress
 
+## Session: December 18, 2025 (Hardening)
+
+### Production Hardening (Completed)
+
+**Goal:** Harden Phase 3 & 4 implementation for production reliability.
+
+**Changes Made:**
+
+1. **Database Constraints**
+   - Added CHECK constraint on `outcome_price_cache.price` (0-1 range)
+   - Deduplication query to handle any historical duplicates
+   - PRIMARY KEY on `(condition_id, outcome)` ensures uniqueness
+
+2. **Refresh Job Robustness**
+   - Advisory lock (`pg_advisory_lock`) prevents overlapping job runs
+   - Returns 409 Conflict if job is already running
+   - Hard cap of 1000 outcomes per run (deterministic ordering)
+   - Price validation (reject prices outside 0-1 range)
+   - Enhanced metrics: `capApplied`, `oldestFetchedAt`
+   - Cache-Control: no-store headers on all responses
+
+3. **Auth Consistency**
+   - Migrate route now uses middleware Basic Auth (removed x-admin-secret)
+   - Cron auth supports: Bearer token, x-cron-secret header, query param (`?cronSecret=`)
+   - Production default-deny if CRON_SECRET not set
+
+4. **Admin Dashboard Ops**
+   - Freshness warning banner if last refresh >30 min ago
+   - Warning if no successful refresh ever recorded
+   - "Run Refresh Now" button for manual triggers
+   - Cache coverage metrics: active outcomes, cached count, missing count, coverage %
+   - Color-coded coverage indicator (green ≥95%, yellow ≥80%, red <80%)
+
+5. **Post-Migration Optimization**
+   - ANALYZE runs on `outcome_price_cache` and `job_runs` tables after migration
+   - Ensures query planner has fresh statistics
+
+---
+
+### Pre-Deploy Checklist (Vercel)
+
+**1. Environment Variables** - Set in all environments:
+- `ADMIN_BASIC_USER`
+- `ADMIN_BASIC_PASS`
+- `CRON_SECRET`
+
+**2. Middleware Default-Deny Confirmed**
+- Verify hitting `/admin` without auth returns 401 in prod preview/prod
+
+**3. Cron Config Sanity**
+- Confirm cron schedule points to `/api/jobs/refresh-prices`
+- If cron provider can't send headers, use query-param fallback only there
+
+---
+
+### Post-Deploy Smoke Tests (5 minutes)
+
+**A) Migration**
+```bash
+curl -X POST https://your-domain.vercel.app/api/admin/migrate \
+  -u "admin:password"
+```
+- Confirm returns success
+- Rerun to confirm idempotent (no errors on second run)
+
+**B) Job Run + Metrics**
+```bash
+# Any of these work:
+curl -X POST https://your-domain.vercel.app/api/jobs/refresh-prices \
+  -H "Authorization: Bearer YOUR_CRON_SECRET"
+
+curl -X POST https://your-domain.vercel.app/api/jobs/refresh-prices \
+  -H "x-cron-secret: YOUR_CRON_SECRET"
+
+curl -X POST "https://your-domain.vercel.app/api/jobs/refresh-prices?cronSecret=YOUR_CRON_SECRET"
+```
+- Check `/admin` dashboard:
+  - New `job_runs` entry appears
+  - Status transitions `running` → `success`
+  - Metrics show: `requested`, `updated`, `failed`, `capApplied`, `oldestFetchedAt`
+
+**C) Concurrency Lock**
+- Trigger two refresh calls back-to-back
+- Confirm second returns `409 Conflict`
+- Verify no zombie `running` record left behind
+
+**D) Report Uses Cache Correctly**
+- Load `/report` and spot check:
+  - "missing" prices show "Price unavailable" (not $0)
+  - Stale badge appears for prices > 30min old
+  - Sorting still works with null prices
+
+**E) Coverage Card Sanity**
+- In `/admin`, verify:
+  - "Active Outcomes (72h)" matches expected traffic
+  - `Cached + Missing ≈ Active Outcomes`
+  - Small discrepancies only if cap applied (1000 limit)
+
+---
+
+### Operational Notes
+
+**If cache coverage dips, check:**
+1. **Cron not running / auth failing** - Check job_runs for errors
+2. **Upstream API rate limiting** - Look for high `failed` count in metrics
+3. **Active outcomes grew beyond 1000 cap** - `capApplied: true` in metrics
+
+The admin dashboard cards show which one at a glance.
+
+---
+
+### Phase 3: Price Cache (Completed)
+
+**Goal:** Cache current outcome prices in DB with 10-minute refresh, removing the need for external API calls at render time.
+
+**Features Implemented:**
+
+1. **Price Cache Table**
+   - `outcome_price_cache` table keyed by `(condition_id, outcome)`
+   - Stores `price`, `fetched_at`, and `source`
+   - Indexed by `fetched_at` for staleness queries
+
+2. **Price Refresh Job**
+   - `/api/jobs/refresh-prices` endpoint
+   - Fetches prices from Polymarket CLOB API (`/midpoint` endpoint)
+   - Queries active outcomes from last 72h of alert_events
+   - Batch processing with concurrency control (50 at a time)
+   - Runs every 10 minutes via Vercel cron
+
+3. **Report Page Integration**
+   - LEFT JOIN on `outcome_price_cache` for each alert
+   - Shows "Current Price" column with cached market price
+   - Price status: `fresh` (≤30min), `stale` (>30min), `missing` (no cache)
+   - Yellow warning indicator for stale prices
+   - "Price unavailable" instead of $0 for missing
+
+**Database Schema:**
+```sql
+CREATE TABLE outcome_price_cache (
+  condition_id TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  price NUMERIC(10, 6) NOT NULL,
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  source TEXT,
+  PRIMARY KEY (condition_id, outcome)
+);
+```
+
+---
+
+### Phase 4: Job Tracking + Admin Dashboard (Completed)
+
+**Goal:** Track cron job executions and provide admin visibility into system health.
+
+**Features Implemented:**
+
+1. **Job Runs Table**
+   - `job_runs` table tracking all job executions
+   - Fields: `job_name`, `status`, `started_at`, `finished_at`, `duration_ms`, `metrics`, `error`
+   - Status: `running`, `success`, `error`
+
+2. **Admin Dashboard** (`/admin`)
+   - Price cache stats: total cached, fresh count, stale count
+   - Job status summary: latest run per job, last success/error times
+   - Recent runs table: last 100 job executions with metrics
+   - Error display for failed jobs
+
+3. **Security**
+   - Basic Auth for `/admin`, `/api/admin/*`, `/api/jobs/*`
+   - Bearer token bypass for cron jobs (`CRON_SECRET`)
+   - Env vars: `ADMIN_BASIC_USER`, `ADMIN_BASIC_PASS`, `CRON_SECRET`
+
+**Database Schema:**
+```sql
+CREATE TABLE job_runs (
+  id TEXT PRIMARY KEY,
+  job_name TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('running', 'success', 'error')),
+  started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  finished_at TIMESTAMPTZ,
+  duration_ms INTEGER,
+  metrics JSONB,
+  error TEXT
+);
+```
+
+**Files Created/Modified:**
+- `app/api/admin/migrate/route.ts` - Added Phase 3-4 table migrations
+- `app/api/jobs/refresh-prices/route.ts` - New price refresh job endpoint
+- `app/api/report/route.ts` - Added cached price lookup via LEFT JOIN
+- `app/report/page.tsx` - Added Current Price column with status indicators
+- `app/admin/page.tsx` - New admin dashboard
+- `middleware.ts` - Added Basic Auth for admin routes
+- `vercel.json` - Added cron schedule for price refresh
+
+**Environment Variables Required:**
+```
+ADMIN_BASIC_USER=<admin username>
+ADMIN_BASIC_PASS=<admin password>
+CRON_SECRET=<secret for cron jobs>
+```
+
+---
+
 ## Session: December 17, 2025
 
 ### Phase 2: Longshot Alpha Report (Completed)

@@ -5,20 +5,148 @@ import type { NextRequest } from 'next/server'
 // Set DASHBOARD_PASSWORD in Vercel Environment Variables
 const PROTECTED = process.env.DASHBOARD_PASSWORD
 
+// Basic Auth credentials for admin routes
+const ADMIN_USER = process.env.ADMIN_BASIC_USER
+const ADMIN_PASS = process.env.ADMIN_BASIC_PASS
+
+// Cron secret for job endpoints (Bearer token)
+const CRON_SECRET = process.env.CRON_SECRET
+
+// Check if this is an admin/jobs path requiring Basic Auth
+function isAdminPath(pathname: string): boolean {
+  return (
+    pathname === '/admin' ||
+    pathname.startsWith('/admin/') ||
+    pathname.startsWith('/api/admin/') ||
+    pathname.startsWith('/api/jobs/')
+  )
+}
+
+// Verify Basic Auth header
+function verifyBasicAuth(request: NextRequest): boolean {
+  if (!ADMIN_USER || !ADMIN_PASS) {
+    // If credentials not configured, warn in dev and deny in production
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[middleware] ADMIN_BASIC_USER/ADMIN_BASIC_PASS not set - allowing in dev mode')
+      return true
+    }
+    return false
+  }
+
+  const authHeader = request.headers.get('authorization')
+  if (!authHeader?.startsWith('Basic ')) {
+    return false
+  }
+
+  const base64Credentials = authHeader.slice(6)
+  try {
+    const credentials = atob(base64Credentials)
+    const [user, pass] = credentials.split(':')
+    return user === ADMIN_USER && pass === ADMIN_PASS
+  } catch {
+    return false
+  }
+}
+
+// Verify cron auth - Bearer token, x-cron-secret header, or query param (for jobs only)
+function verifyCronAuth(request: NextRequest, allowQueryParam: boolean = false): boolean {
+  if (!CRON_SECRET) {
+    // In production without CRON_SECRET, deny cron auth
+    if (process.env.NODE_ENV !== 'development') {
+      return false
+    }
+    console.warn('[middleware] CRON_SECRET not set')
+    return false
+  }
+
+  const authHeader = request.headers.get('authorization')
+  if (authHeader?.startsWith('Bearer ')) {
+    const token = authHeader.slice(7)
+    if (token === CRON_SECRET) {
+      return true
+    }
+  }
+
+  // Check x-cron-secret header (alternative)
+  const cronSecretHeader = request.headers.get('x-cron-secret')
+  if (cronSecretHeader === CRON_SECRET) {
+    return true
+  }
+
+  // Check query param fallback (only for /api/jobs/* endpoints)
+  if (allowQueryParam) {
+    const url = new URL(request.url)
+    const cronSecretParam = url.searchParams.get('cronSecret')
+    if (cronSecretParam === CRON_SECRET) {
+      return true
+    }
+  }
+
+  return false
+}
+
+// Return Basic Auth challenge response
+function unauthorizedResponse(): NextResponse {
+  return new NextResponse('Unauthorized', {
+    status: 401,
+    headers: {
+      'WWW-Authenticate': 'Basic realm="Admin"',
+    },
+  })
+}
+
 export function middleware(request: NextRequest) {
+  const url = new URL(request.url)
+  const pathname = url.pathname
+
+  // =========================================================================
+  // Handle Admin/Jobs paths - require Basic Auth or Bearer/cron token
+  // =========================================================================
+  if (isAdminPath(pathname)) {
+    // For job endpoints, allow cron auth (Bearer/header/query param) or Basic Auth
+    if (pathname.startsWith('/api/jobs/')) {
+      // Allow query param for jobs endpoints only
+      if (verifyCronAuth(request, true) || verifyBasicAuth(request)) {
+        // Add header to indicate auth passed (for route handler to check)
+        const response = NextResponse.next()
+        response.headers.set('x-middleware-auth', 'passed')
+        return response
+      }
+      return unauthorizedResponse()
+    }
+
+    // For admin pages/APIs, require Basic Auth only
+    if (!verifyBasicAuth(request)) {
+      return unauthorizedResponse()
+    }
+
+    const response = NextResponse.next()
+    response.headers.set('x-middleware-auth', 'passed')
+    return response
+  }
+
+  // =========================================================================
+  // Handle cron job endpoint (existing behavior for collect-trades)
+  // =========================================================================
+  if (pathname === '/api/collect-trades') {
+    // Verify it's from Vercel cron (has the special header) or has cron auth
+    const cronHeader = request.headers.get('x-vercel-cron')
+    if (cronHeader) {
+      return NextResponse.next()
+    }
+    // Also allow cron auth (Bearer or x-cron-secret header)
+    if (verifyCronAuth(request, false)) {
+      return NextResponse.next()
+    }
+  }
+
+  // =========================================================================
+  // Handle regular dashboard pages - cookie-based auth
+  // =========================================================================
+
   // Skip auth if no password is configured
   if (!PROTECTED) {
     return NextResponse.next()
-  }
-
-  // Skip auth for cron job endpoint (Vercel cron can't provide auth)
-  const url = new URL(request.url)
-  if (url.pathname === '/api/collect-trades') {
-    // Verify it's from Vercel cron (has the special header)
-    const cronSecret = request.headers.get('x-vercel-cron')
-    if (cronSecret) {
-      return NextResponse.next()
-    }
   }
 
   // Check for auth cookie
@@ -32,7 +160,7 @@ export function middleware(request: NextRequest) {
 
   if (password === PROTECTED) {
     // Set auth cookie and redirect to clean URL
-    const response = NextResponse.redirect(new URL(url.pathname, request.url))
+    const response = NextResponse.redirect(new URL(pathname, request.url))
     response.cookies.set('dashboard_auth', PROTECTED, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
@@ -107,6 +235,17 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // Protect all pages and APIs except collect-trades (needs to be accessible by Vercel cron)
-  matcher: ['/', '/report', '/history', '/api/daily-report', '/api/longshot-history', '/api/suspicious'],
+  // Protect all pages and APIs
+  matcher: [
+    '/',
+    '/report',
+    '/history',
+    '/admin',
+    '/admin/:path*',
+    '/api/daily-report',
+    '/api/longshot-history',
+    '/api/suspicious',
+    '/api/admin/:path*',
+    '/api/jobs/:path*',
+  ],
 }

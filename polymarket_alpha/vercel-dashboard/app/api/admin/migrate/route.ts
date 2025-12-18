@@ -1,6 +1,7 @@
 // /app/api/admin/migrate/route.ts
-// Secure migration endpoint for Phase 1
-// POST-only, requires ADMIN_SECRET header and ENABLE_ADMIN_MIGRATIONS=true
+// Secure migration endpoint for Phases 1-4
+// POST-only, protected by middleware Basic Auth
+// Additionally requires ENABLE_ADMIN_MIGRATIONS=true env var
 
 import { NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
@@ -9,7 +10,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
-  // 1. Check ENABLE_ADMIN_MIGRATIONS env var
+  // 1. Check ENABLE_ADMIN_MIGRATIONS env var (additional safety gate)
   if (process.env.ENABLE_ADMIN_MIGRATIONS !== 'true') {
     return NextResponse.json(
       { error: 'Admin migrations disabled. Set ENABLE_ADMIN_MIGRATIONS=true' },
@@ -17,18 +18,21 @@ export async function POST(request: Request) {
     );
   }
 
-  // 2. Verify ADMIN_SECRET header
-  const secret = request.headers.get('x-admin-secret');
-  if (!secret || secret !== process.env.ADMIN_SECRET) {
+  // 2. Auth is handled by middleware (Basic Auth for /api/admin/*)
+  // Verify middleware passed the request through
+  const middlewareAuth = request.headers.get('x-middleware-auth');
+  if (middlewareAuth !== 'passed') {
+    // In case middleware didn't run (shouldn't happen), deny access
+    console.warn('[migrate] Request reached route without middleware auth');
     return NextResponse.json(
-      { error: 'Invalid admin secret' },
+      { error: 'Unauthorized - use Basic Auth' },
       { status: 401 }
     );
   }
 
   // 3. Run idempotent migrations
   try {
-    console.log('[migrate] Starting Phase 1 migration...');
+    console.log('[migrate] Starting migrations (Phases 1-4)...');
 
     // Create alert_events table
     await sql`
@@ -102,12 +106,94 @@ export async function POST(request: Request) {
       console.warn('[migrate] Could not create whale_watchlist index (table may not exist):', err);
     }
 
+    // =========================================================================
+    // Phase 3: Price Cache table
+    // =========================================================================
+    await sql`
+      CREATE TABLE IF NOT EXISTS outcome_price_cache (
+        condition_id TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        price NUMERIC(10, 6) NOT NULL,
+        fetched_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        source TEXT,
+        PRIMARY KEY (condition_id, outcome)
+      )
+    `;
+    console.log('[migrate] Created outcome_price_cache table');
+
+    // Add CHECK constraint for valid price range (0-1 inclusive)
+    // Using try/catch for idempotency since ALTER TABLE ADD CONSTRAINT is not IF NOT EXISTS
+    try {
+      await sql`
+        ALTER TABLE outcome_price_cache
+        ADD CONSTRAINT chk_price_range CHECK (price >= 0 AND price <= 1)
+      `;
+      console.log('[migrate] Added price range constraint');
+    } catch (err) {
+      // Constraint likely already exists
+      console.log('[migrate] Price range constraint already exists or failed:', String(err).slice(0, 100));
+    }
+
+    // Deduplicate any existing rows (keep newest by fetched_at)
+    // This handles any historical duplicates before the PK was enforced
+    try {
+      const dedupeResult = await sql`
+        WITH duplicates AS (
+          SELECT condition_id, outcome, fetched_at,
+                 ROW_NUMBER() OVER (PARTITION BY condition_id, outcome ORDER BY fetched_at DESC) as rn
+          FROM outcome_price_cache
+        )
+        DELETE FROM outcome_price_cache
+        WHERE (condition_id, outcome, fetched_at) IN (
+          SELECT condition_id, outcome, fetched_at FROM duplicates WHERE rn > 1
+        )
+      `;
+      if (dedupeResult.rowCount && dedupeResult.rowCount > 0) {
+        console.log(`[migrate] Removed ${dedupeResult.rowCount} duplicate price cache rows`);
+      }
+    } catch (err) {
+      console.log('[migrate] Deduplication skipped (PK already enforces uniqueness)');
+    }
+
+    await sql`CREATE INDEX IF NOT EXISTS idx_outcome_price_cache_fetched_at ON outcome_price_cache (fetched_at DESC)`;
+    console.log('[migrate] Created outcome_price_cache indexes');
+
+    // =========================================================================
+    // Phase 4: Job Runs table for tracking cron jobs
+    // =========================================================================
+    await sql`
+      CREATE TABLE IF NOT EXISTS job_runs (
+        id TEXT PRIMARY KEY,
+        job_name TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('running', 'success', 'error')),
+        started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        finished_at TIMESTAMPTZ,
+        duration_ms INTEGER,
+        metrics JSONB,
+        error TEXT
+      )
+    `;
+    console.log('[migrate] Created job_runs table');
+
+    await sql`CREATE INDEX IF NOT EXISTS idx_job_runs_job_name_started ON job_runs (job_name, started_at DESC)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_job_runs_status ON job_runs (status) WHERE status = 'running'`;
+    console.log('[migrate] Created job_runs indexes');
+
+    // Post-migration: run ANALYZE on touched tables for query planner
+    try {
+      await sql`ANALYZE outcome_price_cache`;
+      await sql`ANALYZE job_runs`;
+      console.log('[migrate] ANALYZE completed on cache and job tables');
+    } catch (err) {
+      console.warn('[migrate] ANALYZE failed (non-critical):', String(err).slice(0, 100));
+    }
+
     console.log('[migrate] Migration complete');
 
     return NextResponse.json({
       success: true,
-      message: 'Phase 1 migration complete',
-      tables: ['alert_events'],
+      message: 'Phases 1-4 migration complete (hardened)',
+      tables: ['alert_events', 'outcome_price_cache', 'job_runs'],
       indexes: [
         'idx_alert_events_fill_timestamp',
         'idx_alert_events_wallet_timestamp',
@@ -118,6 +204,13 @@ export async function POST(request: Request) {
         'idx_alert_events_qualifies_longshot',
         'idx_alert_events_convergence',
         'idx_alert_events_convergence_filtered',
+        'idx_outcome_price_cache_fetched_at',
+        'idx_job_runs_job_name_started',
+        'idx_job_runs_status',
+      ],
+      constraints: [
+        'outcome_price_cache PRIMARY KEY (condition_id, outcome)',
+        'outcome_price_cache CHECK (price >= 0 AND price <= 1)',
       ],
     });
   } catch (err) {

@@ -3,6 +3,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 
+// Price status type
+type PriceStatus = 'fresh' | 'stale' | 'missing'
+
 // Types matching the API response
 interface AlertRow {
   id: string
@@ -33,6 +36,11 @@ interface AlertRow {
   whaleLabel: string | null
   whaleTier: string | null
   whaleCategory: string | null
+  // Cached price fields (Phase 3)
+  currentPrice: number | null
+  currentPriceFormatted: string
+  priceStatus: PriceStatus
+  priceFetchedAt: string | null
 }
 
 interface ConvergenceWallet {
@@ -124,8 +132,32 @@ function formatOdds(price: number | null): string {
   return `${(price * 100).toFixed(1)}%`
 }
 
-type SortField = 'fillPrice' | 'fillValue' | 'positionValue' | 'time'
+type SortField = 'fillPrice' | 'fillValue' | 'positionValue' | 'time' | 'currentPrice'
 type SortDirection = 'asc' | 'desc'
+
+// Price status indicator component
+function PriceStatusBadge({ status }: { status: PriceStatus }) {
+  if (status === 'fresh') return null
+  if (status === 'stale') {
+    return <span className="ml-1 text-xs text-yellow-500" title="Price may be outdated">⚠ stale</span>
+  }
+  return null
+}
+
+// Price display component with status handling
+function PriceDisplay({ alert }: { alert: AlertRow }) {
+  if (alert.priceStatus === 'missing' || alert.currentPrice === null) {
+    return <span className="text-poly-muted text-xs">Price unavailable</span>
+  }
+  return (
+    <>
+      <span className={alert.priceStatus === 'stale' ? 'text-yellow-400' : 'text-cyan-400'}>
+        {alert.currentPriceFormatted}
+      </span>
+      <PriceStatusBadge status={alert.priceStatus} />
+    </>
+  )
+}
 
 export default function ReportPage() {
   const [report, setReport] = useState<ReportData | null>(null)
@@ -204,25 +236,34 @@ export default function ReportPage() {
 
   const getSortedAlerts = (alerts: AlertRow[]): AlertRow[] => {
     return [...alerts].sort((a, b) => {
-      let aVal: number, bVal: number
+      // For null values, sort them to the end regardless of direction
+      let aVal: number | null, bVal: number | null
       switch (sortField) {
         case 'fillPrice':
-          aVal = a.fillPrice ?? 0
-          bVal = b.fillPrice ?? 0
+          aVal = a.fillPrice
+          bVal = b.fillPrice
           break
         case 'fillValue':
-          aVal = a.fillValueUsd ?? 0
-          bVal = b.fillValueUsd ?? 0
+          aVal = a.fillValueUsd
+          bVal = b.fillValueUsd
           break
         case 'positionValue':
-          aVal = a.positionCurrentValue ?? 0
-          bVal = b.positionCurrentValue ?? 0
+          aVal = a.positionCurrentValue
+          bVal = b.positionCurrentValue
+          break
+        case 'currentPrice':
+          aVal = a.currentPrice
+          bVal = b.currentPrice
           break
         case 'time':
           aVal = new Date(a.fillTimestamp).getTime()
           bVal = new Date(b.fillTimestamp).getTime()
           break
       }
+      // Handle nulls - sort them to the end
+      if (aVal === null && bVal === null) return 0
+      if (aVal === null) return 1
+      if (bVal === null) return -1
       return sortDirection === 'asc' ? aVal - bVal : bVal - aVal
     })
   }
@@ -509,6 +550,7 @@ export default function ReportPage() {
                     <th className="text-left p-3 text-poly-muted font-medium">Whale</th>
                     <th className="text-left p-3 text-poly-muted font-medium">Market</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Fill Price</th>
+                    <th className="text-right p-3 text-poly-muted font-medium" title="Current market price (cached)">Current Price</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Pos Avg Entry</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Potential Win</th>
@@ -546,6 +588,7 @@ export default function ReportPage() {
                         <span className="text-poly-muted ml-2">({alert.outcome})</span>
                       </td>
                       <td className="p-3 text-right text-poly-yellow">{alert.fillPriceFormatted}</td>
+                      <td className="p-3 text-right"><PriceDisplay alert={alert} /></td>
                       <td className="p-3 text-right text-white font-medium">{alert.positionCurrentValueFormatted}</td>
                       <td className="p-3 text-right text-poly-muted">{alert.positionAvgPriceFormatted}</td>
                       <td className="p-3 text-right text-amber-400 font-medium">{alert.potentialWinFormatted}</td>
@@ -577,6 +620,13 @@ export default function ReportPage() {
                     title="Price at which this trade filled"
                   >
                     Fill Price<SortIcon field="fillPrice" />
+                  </th>
+                  <th
+                    className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
+                    onClick={() => handleSort('currentPrice')}
+                    title="Current market price (cached, refreshes every 10min)"
+                  >
+                    Current Price<SortIcon field="currentPrice" />
                   </th>
                   <th
                     className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
@@ -612,7 +662,7 @@ export default function ReportPage() {
                   if (displayAlerts.length === 0) {
                     return (
                       <tr>
-                        <td className="p-4 text-center text-poly-muted" colSpan={8}>
+                        <td className="p-4 text-center text-poly-muted" colSpan={9}>
                           No alerts found matching filters.
                         </td>
                       </tr>
@@ -643,6 +693,7 @@ export default function ReportPage() {
                         {alert.isWhale && <span className="ml-1 text-purple-400">🐋</span>}
                       </td>
                       <td className="p-3 text-right text-poly-yellow">{alert.fillPriceFormatted}</td>
+                      <td className="p-3 text-right"><PriceDisplay alert={alert} /></td>
                       <td className="p-3 text-right text-poly-green">{alert.fillValueFormatted}</td>
                       <td className="p-3 text-right text-white font-medium">{alert.positionCurrentValueFormatted}</td>
                       <td className="p-3 text-right text-poly-muted">{alert.positionAvgPriceFormatted}</td>
@@ -700,7 +751,12 @@ export default function ReportPage() {
       {/* Footer */}
       <footer className="text-center text-poly-muted text-sm py-4 border-t border-poly-border">
         <p>Convergence detection enabled</p>
-        <p className="mt-1">Position values are snapshots from ingestion time • All data from alert_events</p>
+        <p className="mt-1">Position values are snapshots from ingestion time • Current prices refresh every 10 min</p>
+        <p className="mt-1 text-xs">
+          Price status: <span className="text-cyan-400">fresh</span> (&le;30min) &bull;
+          <span className="text-yellow-400 ml-2">stale</span> (&gt;30min) &bull;
+          <span className="text-poly-muted ml-2">unavailable</span> (no cache)
+        </p>
       </footer>
     </div>
   )

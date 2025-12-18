@@ -1,5 +1,5 @@
 // /app/api/report/route.ts
-// Phase 2: DB-only report endpoint with convergence detection
+// Phase 2-3: DB-only report endpoint with convergence detection and cached prices
 // NO external API calls at render time
 // Uses parameterized queries to prevent SQL injection
 
@@ -9,6 +9,9 @@ import Decimal from 'decimal.js-light';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+// Price staleness threshold in milliseconds (30 minutes)
+const PRICE_STALE_THRESHOLD_MS = 30 * 60 * 1000;
 
 // ============================================================================
 // Constants - Convergence qualification thresholds (keep in one place)
@@ -54,6 +57,9 @@ function parseFloatParam(value: string | null, defaultValue: number, min: number
 // Type definitions
 // ============================================================================
 
+// Price status for cached prices
+type PriceStatus = 'fresh' | 'stale' | 'missing';
+
 // Row types for SQL results (nullable fields marked as string | null)
 type AlertRow = {
   id: string;
@@ -77,6 +83,9 @@ type AlertRow = {
   whale_label: string | null;
   whale_tier: string | null;
   whale_category: string | null;
+  // Cached price fields (from LEFT JOIN)
+  cached_price: string | null;
+  price_fetched_at: string | null;
 };
 
 type SummaryRow = {
@@ -144,6 +153,11 @@ interface FormattedAlert {
   whaleLabel: string | null;
   whaleTier: string | null;
   whaleCategory: string | null;
+  // Cached price fields (Phase 3)
+  currentPrice: number | null;
+  currentPriceFormatted: string;
+  priceStatus: PriceStatus;
+  priceFetchedAt: string | null;
 }
 
 interface WalletDetail {
@@ -203,6 +217,14 @@ function parseNumeric(value: string | null): number | null {
 
 function getMarketTitle(row: { title: string | null; slug: string | null; event_slug: string | null; condition_id: string }): string {
   return row.title || row.slug || row.event_slug || row.condition_id;
+}
+
+function getPriceStatus(fetchedAt: string | null): PriceStatus {
+  if (!fetchedAt) return 'missing';
+  const fetchedTime = new Date(fetchedAt).getTime();
+  const now = Date.now();
+  const age = now - fetchedTime;
+  return age > PRICE_STALE_THRESHOLD_MS ? 'stale' : 'fresh';
 }
 
 // ============================================================================
@@ -278,69 +300,77 @@ export async function GET(req: NextRequest) {
     switch (filterMode) {
       case 'both':
         alertsResult = await sql<AlertRow>`
-          SELECT id, fill_timestamp, wallet, trader_name, trader_pseudonym,
-            title, slug, event_slug, outcome, condition_id, outcome_index,
-            fill_price, fill_size, fill_value_usd,
-            position_current_value, position_avg_price, position_size,
-            is_whale, whale_label, whale_tier, whale_category
-          FROM alert_events
-          WHERE fill_timestamp >= ${alertCutoff}::timestamptz
-            AND fill_price <= ${maxOdds}
-            AND position_current_value IS NOT NULL
-            AND position_current_value >= ${minPosition}
-            AND is_whale = TRUE
-            AND whale_category = ${category}
-          ORDER BY fill_timestamp DESC, id DESC
+          SELECT ae.id, ae.fill_timestamp, ae.wallet, ae.trader_name, ae.trader_pseudonym,
+            ae.title, ae.slug, ae.event_slug, ae.outcome, ae.condition_id, ae.outcome_index,
+            ae.fill_price, ae.fill_size, ae.fill_value_usd,
+            ae.position_current_value, ae.position_avg_price, ae.position_size,
+            ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
+            opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at
+          FROM alert_events ae
+          LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
+          WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
+            AND ae.fill_price <= ${maxOdds}
+            AND ae.position_current_value IS NOT NULL
+            AND ae.position_current_value >= ${minPosition}
+            AND ae.is_whale = TRUE
+            AND ae.whale_category = ${category}
+          ORDER BY ae.fill_timestamp DESC, ae.id DESC
           LIMIT ${pageSize} OFFSET ${offset}
         `;
         break;
       case 'whalesOnly':
         alertsResult = await sql<AlertRow>`
-          SELECT id, fill_timestamp, wallet, trader_name, trader_pseudonym,
-            title, slug, event_slug, outcome, condition_id, outcome_index,
-            fill_price, fill_size, fill_value_usd,
-            position_current_value, position_avg_price, position_size,
-            is_whale, whale_label, whale_tier, whale_category
-          FROM alert_events
-          WHERE fill_timestamp >= ${alertCutoff}::timestamptz
-            AND fill_price <= ${maxOdds}
-            AND position_current_value IS NOT NULL
-            AND position_current_value >= ${minPosition}
-            AND is_whale = TRUE
-          ORDER BY fill_timestamp DESC, id DESC
+          SELECT ae.id, ae.fill_timestamp, ae.wallet, ae.trader_name, ae.trader_pseudonym,
+            ae.title, ae.slug, ae.event_slug, ae.outcome, ae.condition_id, ae.outcome_index,
+            ae.fill_price, ae.fill_size, ae.fill_value_usd,
+            ae.position_current_value, ae.position_avg_price, ae.position_size,
+            ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
+            opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at
+          FROM alert_events ae
+          LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
+          WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
+            AND ae.fill_price <= ${maxOdds}
+            AND ae.position_current_value IS NOT NULL
+            AND ae.position_current_value >= ${minPosition}
+            AND ae.is_whale = TRUE
+          ORDER BY ae.fill_timestamp DESC, ae.id DESC
           LIMIT ${pageSize} OFFSET ${offset}
         `;
         break;
       case 'categoryOnly':
         alertsResult = await sql<AlertRow>`
-          SELECT id, fill_timestamp, wallet, trader_name, trader_pseudonym,
-            title, slug, event_slug, outcome, condition_id, outcome_index,
-            fill_price, fill_size, fill_value_usd,
-            position_current_value, position_avg_price, position_size,
-            is_whale, whale_label, whale_tier, whale_category
-          FROM alert_events
-          WHERE fill_timestamp >= ${alertCutoff}::timestamptz
-            AND fill_price <= ${maxOdds}
-            AND position_current_value IS NOT NULL
-            AND position_current_value >= ${minPosition}
-            AND whale_category = ${category}
-          ORDER BY fill_timestamp DESC, id DESC
+          SELECT ae.id, ae.fill_timestamp, ae.wallet, ae.trader_name, ae.trader_pseudonym,
+            ae.title, ae.slug, ae.event_slug, ae.outcome, ae.condition_id, ae.outcome_index,
+            ae.fill_price, ae.fill_size, ae.fill_value_usd,
+            ae.position_current_value, ae.position_avg_price, ae.position_size,
+            ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
+            opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at
+          FROM alert_events ae
+          LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
+          WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
+            AND ae.fill_price <= ${maxOdds}
+            AND ae.position_current_value IS NOT NULL
+            AND ae.position_current_value >= ${minPosition}
+            AND ae.whale_category = ${category}
+          ORDER BY ae.fill_timestamp DESC, ae.id DESC
           LIMIT ${pageSize} OFFSET ${offset}
         `;
         break;
       default:
         alertsResult = await sql<AlertRow>`
-          SELECT id, fill_timestamp, wallet, trader_name, trader_pseudonym,
-            title, slug, event_slug, outcome, condition_id, outcome_index,
-            fill_price, fill_size, fill_value_usd,
-            position_current_value, position_avg_price, position_size,
-            is_whale, whale_label, whale_tier, whale_category
-          FROM alert_events
-          WHERE fill_timestamp >= ${alertCutoff}::timestamptz
-            AND fill_price <= ${maxOdds}
-            AND position_current_value IS NOT NULL
-            AND position_current_value >= ${minPosition}
-          ORDER BY fill_timestamp DESC, id DESC
+          SELECT ae.id, ae.fill_timestamp, ae.wallet, ae.trader_name, ae.trader_pseudonym,
+            ae.title, ae.slug, ae.event_slug, ae.outcome, ae.condition_id, ae.outcome_index,
+            ae.fill_price, ae.fill_size, ae.fill_value_usd,
+            ae.position_current_value, ae.position_avg_price, ae.position_size,
+            ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
+            opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at
+          FROM alert_events ae
+          LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
+          WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
+            AND ae.fill_price <= ${maxOdds}
+            AND ae.position_current_value IS NOT NULL
+            AND ae.position_current_value >= ${minPosition}
+          ORDER BY ae.fill_timestamp DESC, ae.id DESC
           LIMIT ${pageSize} OFFSET ${offset}
         `;
     }
@@ -352,11 +382,15 @@ export async function GET(req: NextRequest) {
       const positionCurrentValue = parseNumeric(row.position_current_value);
       const positionAvgPrice = parseNumeric(row.position_avg_price);
       const positionSize = parseNumeric(row.position_size);
+      const cachedPrice = parseNumeric(row.cached_price);
 
       // Potential win = shares * (1 - avg_price) = profit if position resolves to $1
       const potentialWin = (positionSize !== null && positionAvgPrice !== null)
         ? positionSize * (1 - positionAvgPrice)
         : null;
+
+      // Price status based on cache freshness
+      const priceStatus = getPriceStatus(row.price_fetched_at);
 
       return {
         id: row.id,
@@ -383,6 +417,11 @@ export async function GET(req: NextRequest) {
         whaleLabel: row.whale_label,
         whaleTier: row.whale_tier,
         whaleCategory: row.whale_category,
+        // Cached price fields
+        currentPrice: cachedPrice,
+        currentPriceFormatted: cachedPrice !== null ? formatOdds(cachedPrice) : 'Price unavailable',
+        priceStatus,
+        priceFetchedAt: row.price_fetched_at,
       };
     });
 
