@@ -135,6 +135,9 @@ export default function ReportPage() {
   const [whalesOnly, setWhalesOnly] = useState(false)
   const [category, setCategory] = useState<string>('')
 
+  // Pagination
+  const [currentPage, setCurrentPage] = useState(1)
+
   // Sorting
   const [sortField, setSortField] = useState<SortField>('time')
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
@@ -142,13 +145,14 @@ export default function ReportPage() {
   // Convergence expanded state
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
-  const fetchReport = useCallback(async () => {
+  const fetchReport = useCallback(async (page = currentPage) => {
     try {
       setLoading(true)
       const params = new URLSearchParams({
         alertWindowHours: windowHours.toString(),
         convergenceWindowHours: windowHours.toString(),
-        limit: '100',
+        page: page.toString(),
+        pageSize: '50',
         _t: Date.now().toString(),
       })
       if (whalesOnly) params.set('whalesOnly', 'true')
@@ -163,6 +167,7 @@ export default function ReportPage() {
       }
       const data: ReportData = await res.json()
       setReport(data)
+      setCurrentPage(page)
       setLastUpdate(new Date())
       setError(null)
     } catch (err) {
@@ -170,13 +175,20 @@ export default function ReportPage() {
     } finally {
       setLoading(false)
     }
-  }, [windowHours, whalesOnly, category])
+  }, [windowHours, whalesOnly, category, currentPage])
 
   useEffect(() => {
-    fetchReport()
-    const interval = setInterval(fetchReport, 10 * 60 * 1000)
+    fetchReport(1) // Reset to page 1 when filters change
+    const interval = setInterval(() => fetchReport(currentPage), 10 * 60 * 1000)
     return () => clearInterval(interval)
-  }, [fetchReport])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [windowHours, whalesOnly, category])
+
+  const goToPage = (page: number) => {
+    if (report && page >= 1 && page <= report.meta.totalPages) {
+      fetchReport(page)
+    }
+  }
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -248,7 +260,7 @@ export default function ReportPage() {
         <div className="bg-red-900/30 border border-red-500 rounded-lg p-4">
           <p className="text-red-400">Error: {error}</p>
           <button
-            onClick={fetchReport}
+            onClick={() => fetchReport()}
             className="mt-4 px-4 py-2 bg-red-600 hover:bg-red-700 rounded"
           >
             Retry
@@ -290,7 +302,7 @@ export default function ReportPage() {
               <span>🐋</span> Whales
             </Link>
             <button
-              onClick={fetchReport}
+              onClick={() => fetchReport()}
               disabled={loading}
               className="px-4 py-2 bg-poly-green text-black font-medium rounded hover:bg-poly-green/80 disabled:opacity-50"
             >
@@ -637,8 +649,43 @@ export default function ReportPage() {
               </tbody>
             </table>
           </div>
-          <div className="px-3 py-2 border-t border-poly-border text-xs text-poly-muted">
-            Showing {Math.min(sortedAlerts.length, 50)} of {meta.totalAlerts} alerts (page {meta.page})
+          <div className="px-3 py-2 border-t border-poly-border flex items-center justify-between">
+            <span className="text-xs text-poly-muted">
+              Showing {sortedAlerts.length} of {meta.totalAlerts} alerts
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => goToPage(1)}
+                disabled={meta.page <= 1}
+                className="px-2 py-1 text-xs bg-poly-card border border-poly-border rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-poly-border"
+              >
+                ««
+              </button>
+              <button
+                onClick={() => goToPage(meta.page - 1)}
+                disabled={meta.page <= 1}
+                className="px-2 py-1 text-xs bg-poly-card border border-poly-border rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-poly-border"
+              >
+                ‹ Prev
+              </button>
+              <span className="text-sm px-2">
+                Page <span className="font-bold">{meta.page}</span> of <span className="font-bold">{meta.totalPages}</span>
+              </span>
+              <button
+                onClick={() => goToPage(meta.page + 1)}
+                disabled={meta.page >= meta.totalPages}
+                className="px-2 py-1 text-xs bg-poly-card border border-poly-border rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-poly-border"
+              >
+                Next ›
+              </button>
+              <button
+                onClick={() => goToPage(meta.totalPages)}
+                disabled={meta.page >= meta.totalPages}
+                className="px-2 py-1 text-xs bg-poly-card border border-poly-border rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-poly-border"
+              >
+                »»
+              </button>
+            </div>
           </div>
         </div>
       </section>
