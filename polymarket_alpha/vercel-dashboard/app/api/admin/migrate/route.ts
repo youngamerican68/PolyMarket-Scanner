@@ -81,7 +81,18 @@ export async function POST(request: Request) {
     await sql`CREATE INDEX IF NOT EXISTS idx_alert_events_asset ON alert_events (asset)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_alert_events_is_whale ON alert_events (is_whale) WHERE is_whale = TRUE`;
     await sql`CREATE INDEX IF NOT EXISTS idx_alert_events_qualifies_longshot ON alert_events (qualifies_longshot) WHERE qualifies_longshot = TRUE`;
-    console.log('[migrate] Created alert_events indexes');
+
+    // Phase 2: Convergence detection indexes
+    // Covers GROUP BY (condition_id, outcome) with wallet deduplication and time ordering
+    await sql`CREATE INDEX IF NOT EXISTS idx_alert_events_convergence
+      ON alert_events (condition_id, outcome, wallet, fill_timestamp DESC)`;
+    // Composite for filtered convergence queries (fill_price filter + time window)
+    // Uses INCLUDE for index-only scans on commonly accessed columns
+    await sql`CREATE INDEX IF NOT EXISTS idx_alert_events_convergence_filtered
+      ON alert_events (fill_timestamp DESC, fill_price)
+      INCLUDE (position_current_value, condition_id, outcome, wallet, is_whale, whale_category)
+      WHERE position_current_value IS NOT NULL`;
+    console.log('[migrate] Created alert_events indexes (including Phase 2 convergence)');
 
     // Add whale_watchlist lowercase index (may fail if table doesn't exist)
     try {
@@ -105,6 +116,8 @@ export async function POST(request: Request) {
         'idx_alert_events_asset',
         'idx_alert_events_is_whale',
         'idx_alert_events_qualifies_longshot',
+        'idx_alert_events_convergence',
+        'idx_alert_events_convergence_filtered',
       ],
     });
   } catch (err) {
