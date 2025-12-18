@@ -227,7 +227,7 @@ export default function ReportPage() {
   if (loading && !report) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Phase 2 Report</h1>
+        <h1 className="text-2xl font-bold">Longshot Alpha Report</h1>
         <div className="flex items-center justify-center h-64">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-poly-green"></div>
           <span className="ml-4 text-poly-muted">Loading alerts from database...</span>
@@ -239,7 +239,7 @@ export default function ReportPage() {
   if (error) {
     return (
       <div className="space-y-6">
-        <h1 className="text-2xl font-bold">Phase 2 Report</h1>
+        <h1 className="text-2xl font-bold">Longshot Alpha Report</h1>
         <div className="bg-red-900/30 border border-red-500 rounded-lg p-4">
           <p className="text-red-400">Error: {error}</p>
           <button
@@ -266,7 +266,7 @@ export default function ReportPage() {
       <header className="space-y-4">
         <div className="flex justify-between items-start">
           <div>
-            <h1 className="text-2xl font-bold">Phase 2 Report</h1>
+            <h1 className="text-2xl font-bold">Longshot Alpha Report</h1>
             <p className="text-poly-muted text-sm">
               Longshot bets (&lt;25% odds) with $2.5K+ position value
             </p>
@@ -636,7 +636,7 @@ export default function ReportPage() {
 
       {/* Footer */}
       <footer className="text-center text-poly-muted text-sm py-4 border-t border-poly-border">
-        <p>Phase 2: Convergence detection + DB-only rendering</p>
+        <p>Convergence detection enabled</p>
         <p className="mt-1">Position values are snapshots from ingestion time • All data from alert_events</p>
       </footer>
     </div>
