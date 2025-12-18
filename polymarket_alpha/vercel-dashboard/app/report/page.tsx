@@ -538,8 +538,8 @@ export default function ReportPage() {
         </section>
       )}
 
-      {/* Whale Trades Section */}
-      {whaleAlerts.length > 0 && (
+      {/* Whale Trades Section - only show when NOT filtering to whales (otherwise redundant with main table) */}
+      {whaleAlerts.length > 0 && !whalesOnly && (
         <section className="space-y-4">
           <h2 className="text-xl font-bold flex items-center">
             <span className="w-3 h-3 bg-purple-500 rounded-full mr-3"></span>
