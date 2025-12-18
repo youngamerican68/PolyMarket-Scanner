@@ -21,15 +21,13 @@ interface AlertRow {
   fillValueFormatted: string
   // Position snapshot
   positionSize: number | null
-  positionSizeFormatted: string
   positionAvgPrice: number | null
   positionAvgPriceFormatted: string
   positionCurrentValue: number | null
   positionCurrentValueFormatted: string
-  positionInitialValue: number | null
-  positionInitialValueFormatted: string
-  positionCashPnl: number | null
-  positionCashPnlFormatted: string
+  // Potential win (profit if position wins)
+  potentialWin: number | null
+  potentialWinFormatted: string
   // Whale metadata
   isWhale: boolean
   whaleLabel: string | null
@@ -485,6 +483,7 @@ export default function ReportPage() {
                     <th className="text-right p-3 text-poly-muted font-medium">Fill Price</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Pos Avg Entry</th>
+                    <th className="text-right p-3 text-poly-muted font-medium">Potential Win</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                   </tr>
                 </thead>
@@ -521,6 +520,7 @@ export default function ReportPage() {
                       <td className="p-3 text-right text-poly-yellow">{alert.fillPriceFormatted}</td>
                       <td className="p-3 text-right text-white font-medium">{alert.positionCurrentValueFormatted}</td>
                       <td className="p-3 text-right text-poly-muted">{alert.positionAvgPriceFormatted}</td>
+                      <td className="p-3 text-right text-amber-400 font-medium">{alert.potentialWinFormatted}</td>
                       <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(alert.fillTimestamp)}</td>
                     </tr>
                   ))}
@@ -567,6 +567,9 @@ export default function ReportPage() {
                   <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of position">
                     Pos Avg Entry
                   </th>
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if position wins">
+                    Potential Win
+                  </th>
                   <th
                     className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
                     onClick={() => handleSort('time')}
@@ -581,7 +584,7 @@ export default function ReportPage() {
                   if (displayAlerts.length === 0) {
                     return (
                       <tr>
-                        <td className="p-4 text-center text-poly-muted" colSpan={7}>
+                        <td className="p-4 text-center text-poly-muted" colSpan={8}>
                           No alerts found matching filters.
                         </td>
                       </tr>
@@ -615,6 +618,7 @@ export default function ReportPage() {
                       <td className="p-3 text-right text-poly-green">{alert.fillValueFormatted}</td>
                       <td className="p-3 text-right text-white font-medium">{alert.positionCurrentValueFormatted}</td>
                       <td className="p-3 text-right text-poly-muted">{alert.positionAvgPriceFormatted}</td>
+                      <td className="p-3 text-right text-amber-400 font-medium">{alert.potentialWinFormatted}</td>
                       <td className="p-3 text-right text-poly-muted text-xs whitespace-nowrap">
                         {formatTimeAgo(alert.fillTimestamp)}
                       </td>

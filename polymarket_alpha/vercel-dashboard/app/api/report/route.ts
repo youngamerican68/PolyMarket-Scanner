@@ -132,6 +132,9 @@ interface FormattedAlert {
   positionCurrentValueFormatted: string;
   positionAvgPrice: number | null;
   positionAvgPriceFormatted: string;
+  positionSize: number | null;
+  potentialWin: number | null;
+  potentialWinFormatted: string;
   isWhale: boolean;
   whaleLabel: string | null;
   whaleTier: string | null;
@@ -324,6 +327,12 @@ export async function GET(req: NextRequest) {
       const fillValueUsd = parseNumeric(row.fill_value_usd);
       const positionCurrentValue = parseNumeric(row.position_current_value);
       const positionAvgPrice = parseNumeric(row.position_avg_price);
+      const positionSize = parseNumeric(row.position_size);
+
+      // Potential win = shares * (1 - avg_price) = profit if position resolves to $1
+      const potentialWin = (positionSize !== null && positionAvgPrice !== null)
+        ? positionSize * (1 - positionAvgPrice)
+        : null;
 
       return {
         id: row.id,
@@ -343,6 +352,9 @@ export async function GET(req: NextRequest) {
         positionCurrentValueFormatted: formatMoney(positionCurrentValue),
         positionAvgPrice,
         positionAvgPriceFormatted: formatOdds(positionAvgPrice),
+        positionSize,
+        potentialWin,
+        potentialWinFormatted: formatMoney(potentialWin),
         isWhale: row.is_whale,
         whaleLabel: row.whale_label,
         whaleTier: row.whale_tier,
