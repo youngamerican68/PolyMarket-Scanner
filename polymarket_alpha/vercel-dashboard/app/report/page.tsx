@@ -142,7 +142,8 @@ export default function ReportPage() {
     try {
       setLoading(true)
       const params = new URLSearchParams({
-        hours: windowHours.toString(),
+        alertWindowHours: windowHours.toString(),
+        convergenceWindowHours: windowHours.toString(),
         limit: '100',
         _t: Date.now().toString(),
       })

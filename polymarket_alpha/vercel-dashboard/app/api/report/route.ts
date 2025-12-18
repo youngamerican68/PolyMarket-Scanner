@@ -219,9 +219,13 @@ export async function GET(req: NextRequest) {
     // Parse and validate parameters with clamping
     const alertWindowHours = parseIntParam(searchParams.get('alertWindowHours'), 24, 1, 720);
     const convergenceWindowParam = searchParams.get('convergenceWindowHours');
+
+    // Default convergenceWindow to alertWindowHours if not provided and alertWindowHours is valid,
+    // otherwise fall back to 6h
+    const defaultConvergenceWindow = isValidWindowHours(alertWindowHours) ? alertWindowHours : 6;
     const convergenceWindowParsed = convergenceWindowParam
       ? parseInt(convergenceWindowParam, 10)
-      : 6;
+      : defaultConvergenceWindow;
 
     // Validate convergence window is one of the allowed values
     if (!isValidWindowHours(convergenceWindowParsed)) {
