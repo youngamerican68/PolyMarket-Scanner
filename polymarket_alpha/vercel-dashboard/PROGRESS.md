@@ -111,6 +111,39 @@ The admin dashboard cards show which one at a glance.
 
 ---
 
+### GitHub Actions: Price Refresh (Every 10 Minutes)
+
+Vercel Hobby plan limits cron jobs to once per day. GitHub Actions handles the frequent refresh instead.
+
+**Workflow:** `.github/workflows/refresh-prices.yml`
+
+**GitHub Secrets Required:**
+
+| Secret | Value |
+|--------|-------|
+| `REFRESH_PRICES_URL` | `https://poly-market-scanner.vercel.app/api/jobs/refresh-prices` |
+| `CRON_SECRET` | Same value as Vercel env var |
+
+**To set secrets:**
+1. Go to GitHub repo → Settings → Secrets and variables → Actions
+2. Click "New repository secret"
+3. Add both `REFRESH_PRICES_URL` and `CRON_SECRET`
+
+**How it works:**
+- Runs every 10 minutes via GitHub Actions scheduler
+- Calls the refresh-prices endpoint with Bearer token auth
+- 409 status (job already running) is treated as success - means advisory lock prevented overlap
+- Manual trigger available via "Run workflow" button in Actions tab
+
+**Monitoring:**
+- Check GitHub Actions tab for run history
+- Check `/admin` dashboard for job_runs entries and cache freshness
+- If jobs fail, check Actions logs for HTTP status and response
+
+**Note:** Vercel cron remains as daily backup. GitHub Actions is the primary frequent refresher.
+
+---
+
 ### Phase 3: Price Cache (Completed)
 
 **Goal:** Cache current outcome prices in DB with 10-minute refresh, removing the need for external API calls at render time.
