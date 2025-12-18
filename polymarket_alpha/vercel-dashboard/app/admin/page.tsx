@@ -477,7 +477,7 @@ export default async function AdminPage() {
       <footer className="text-center text-poly-muted text-sm py-4 border-t border-poly-border">
         <p>Admin dashboard • Protected by Basic Auth</p>
         <p className="mt-1 text-xs">
-          Refresh the page to update • Jobs run every 10 minutes via Vercel Cron
+          Refresh the page to update • Jobs run every 10 minutes via GitHub Actions
         </p>
       </footer>
     </div>
