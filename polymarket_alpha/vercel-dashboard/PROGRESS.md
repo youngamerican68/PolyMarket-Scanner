@@ -1,6 +1,28 @@
 # Polymarket Tracker - Development Progress
 
-## Session: December 18, 2025 (Hardening)
+## Session: December 18, 2025 (Hardening + Deployment)
+
+### Deployment Status: LIVE ✅
+
+**Production URL:** https://poly-market-scanner.vercel.app
+
+| Component | Status |
+|-----------|--------|
+| Admin Dashboard | ✅ Working (`/admin`) |
+| Price Cache | ✅ 50 prices cached, 73.5% coverage |
+| Migration | ✅ Phases 1-4 complete |
+| Job Tracking | ✅ Recording runs |
+| GitHub Actions (10-min refresh) | ✅ Configured |
+| Vercel Cron (daily backup) | ✅ Configured |
+
+**Verified Working:**
+- Basic Auth protecting `/admin` and `/api/admin/*`
+- Manual refresh via admin dashboard button
+- Advisory lock preventing concurrent runs (returns 409)
+- Cache coverage metrics displaying correctly
+- Job runs table recording history
+
+---
 
 ### Production Hardening (Completed)
 
