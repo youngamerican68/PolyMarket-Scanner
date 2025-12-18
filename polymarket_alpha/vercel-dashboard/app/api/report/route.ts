@@ -101,6 +101,7 @@ type WalletDetailRow = {
   outcome: string;
   wallet: string;
   position_current_value: string | null;
+  fill_price: string | null;
   fill_timestamp: string;
   trader_name: string | null;
   trader_pseudonym: string | null;
@@ -147,6 +148,8 @@ interface WalletDetail {
   positionValue: number | null;
   positionValueRaw: string | null;
   positionValueFormatted: string;
+  fillPrice: number | null;
+  fillPriceFormatted: string;
   latestTimestamp: string;
   isWhale: boolean;
   whaleLabel: string | null;
@@ -708,7 +711,7 @@ export async function GET(req: NextRequest) {
             WITH deduped AS (
               SELECT DISTINCT ON (condition_id, outcome, wallet)
                 condition_id, outcome, wallet,
-                position_current_value, fill_timestamp,
+                position_current_value, fill_price, fill_timestamp,
                 trader_name, trader_pseudonym, is_whale, whale_label
               FROM alert_events
               WHERE fill_timestamp >= ${convergenceCutoff}::timestamptz
@@ -738,7 +741,7 @@ export async function GET(req: NextRequest) {
             ),
             ranked AS (
               SELECT d.condition_id, d.outcome, d.wallet,
-                d.position_current_value, d.fill_timestamp,
+                d.position_current_value, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
@@ -754,7 +757,7 @@ export async function GET(req: NextRequest) {
             WITH deduped AS (
               SELECT DISTINCT ON (condition_id, outcome, wallet)
                 condition_id, outcome, wallet,
-                position_current_value, fill_timestamp,
+                position_current_value, fill_price, fill_timestamp,
                 trader_name, trader_pseudonym, is_whale, whale_label
               FROM alert_events
               WHERE fill_timestamp >= ${convergenceCutoff}::timestamptz
@@ -783,7 +786,7 @@ export async function GET(req: NextRequest) {
             ),
             ranked AS (
               SELECT d.condition_id, d.outcome, d.wallet,
-                d.position_current_value, d.fill_timestamp,
+                d.position_current_value, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
@@ -799,7 +802,7 @@ export async function GET(req: NextRequest) {
             WITH deduped AS (
               SELECT DISTINCT ON (condition_id, outcome, wallet)
                 condition_id, outcome, wallet,
-                position_current_value, fill_timestamp,
+                position_current_value, fill_price, fill_timestamp,
                 trader_name, trader_pseudonym, is_whale, whale_label
               FROM alert_events
               WHERE fill_timestamp >= ${convergenceCutoff}::timestamptz
@@ -828,7 +831,7 @@ export async function GET(req: NextRequest) {
             ),
             ranked AS (
               SELECT d.condition_id, d.outcome, d.wallet,
-                d.position_current_value, d.fill_timestamp,
+                d.position_current_value, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
@@ -844,7 +847,7 @@ export async function GET(req: NextRequest) {
             WITH deduped AS (
               SELECT DISTINCT ON (condition_id, outcome, wallet)
                 condition_id, outcome, wallet,
-                position_current_value, fill_timestamp,
+                position_current_value, fill_price, fill_timestamp,
                 trader_name, trader_pseudonym, is_whale, whale_label
               FROM alert_events
               WHERE fill_timestamp >= ${convergenceCutoff}::timestamptz
@@ -872,7 +875,7 @@ export async function GET(req: NextRequest) {
             ),
             ranked AS (
               SELECT d.condition_id, d.outcome, d.wallet,
-                d.position_current_value, d.fill_timestamp,
+                d.position_current_value, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
@@ -890,12 +893,15 @@ export async function GET(req: NextRequest) {
         const group = groupMap.get(key);
         if (group) {
           const posValue = parseNumeric(row.position_current_value);
+          const fillPrice = parseNumeric(row.fill_price);
           group.wallets.push({
             wallet: row.wallet,
             traderName: row.trader_name || row.trader_pseudonym || 'Anonymous',
             positionValue: posValue,
             positionValueRaw: row.position_current_value,
             positionValueFormatted: formatMoney(posValue),
+            fillPrice: fillPrice,
+            fillPriceFormatted: formatOdds(fillPrice),
             latestTimestamp: row.fill_timestamp,
             isWhale: row.is_whale,
             whaleLabel: row.whale_label,
