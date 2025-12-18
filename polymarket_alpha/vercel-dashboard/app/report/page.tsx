@@ -416,10 +416,14 @@ export default function ReportPage() {
           <p className="text-poly-muted text-sm">Page</p>
           <p className="text-2xl font-bold">{meta.page}/{meta.totalPages}</p>
         </div>
-        <div className="bg-poly-card rounded-lg p-4 border border-poly-border">
-          <p className="text-poly-muted text-sm">Whale Alerts</p>
-          <p className="text-2xl font-bold text-purple-400">{meta.whaleAlerts}</p>
-        </div>
+        <button
+          onClick={() => setWhalesOnly(!whalesOnly)}
+          className={`bg-poly-card rounded-lg p-4 border text-left transition-colors ${whalesOnly ? 'border-purple-500 bg-purple-500/10' : 'border-poly-border hover:border-purple-500/50'}`}
+          title={whalesOnly ? 'Click to show all alerts' : 'Click to show only whale alerts'}
+        >
+          <p className="text-poly-muted text-sm">Whale Alerts {whalesOnly && '✓'}</p>
+          <p className="text-2xl font-bold text-purple-400">{meta.whaleAlerts} 🐋</p>
+        </button>
         <div className="bg-poly-card rounded-lg p-4 border border-poly-border">
           <p className="text-poly-muted text-sm">Unique Wallets</p>
           <p className="text-2xl font-bold">{meta.uniqueWallets}</p>
