@@ -43,6 +43,8 @@ interface ConvergenceWallet {
   positionValueFormatted: string
   fillPrice: number | null
   fillPriceFormatted: string
+  potentialWin: number | null
+  potentialWinFormatted: string
   latestTimestamp: string
   isWhale: boolean
 }
@@ -437,6 +439,7 @@ export default function ReportPage() {
                             <th className="text-left p-3 text-poly-muted font-medium">Wallet</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Odds</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
+                            <th className="text-right p-3 text-poly-muted font-medium">Potential Win</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
                         </thead>
@@ -456,6 +459,7 @@ export default function ReportPage() {
                               </td>
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-green">{w.positionValueFormatted}</td>
+                              <td className="p-3 text-right text-cyan-400">{w.potentialWinFormatted}</td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
                           ))}
