@@ -58,6 +58,9 @@ interface ConvergenceGroup {
   distinctWallets: number
   totalPositionValue: number
   totalPositionValueFormatted: string
+  minOdds: number | null
+  maxOdds: number | null
+  oddsRangeFormatted: string
   qualifies: boolean
   wallets: ConvergenceWallet[]
 }
@@ -434,6 +437,10 @@ export default function ReportPage() {
                       <div className="text-right">
                         <span className="text-poly-muted">Wallets: </span>
                         <span className="font-bold text-amber-400">{group.distinctWallets}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-poly-muted">Odds: </span>
+                        <span className="font-bold text-yellow-400">{group.oddsRangeFormatted}</span>
                       </div>
                       <div className="text-right">
                         <span className="text-poly-muted">Total Value: </span>

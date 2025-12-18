@@ -93,6 +93,8 @@ type ConvergenceAggRow = {
   event_slug: string | null;
   distinct_wallets: number;
   total_position_value: string;
+  min_fill_price: string | null;
+  max_fill_price: string | null;
   qualifies: boolean;
 };
 
@@ -169,6 +171,9 @@ interface ConvergenceGroup {
   totalPositionValue: number;
   totalPositionValueRaw: string;
   totalPositionValueFormatted: string;
+  minOdds: number | null;
+  maxOdds: number | null;
+  oddsRangeFormatted: string;
   qualifies: boolean;
   wallets: WalletDetail[];
 }
@@ -558,7 +563,7 @@ export async function GET(req: NextRequest) {
           WITH deduped AS (
             SELECT DISTINCT ON (condition_id, outcome, wallet)
               condition_id, outcome, wallet, title, slug, event_slug,
-              position_current_value, fill_timestamp,
+              position_current_value, fill_price, fill_timestamp,
               trader_name, trader_pseudonym, is_whale, whale_label
             FROM alert_events
             WHERE fill_timestamp >= ${convergenceCutoff}::timestamptz
@@ -574,6 +579,8 @@ export async function GET(req: NextRequest) {
               MAX(title) as title, MAX(slug) as slug, MAX(event_slug) as event_slug,
               COUNT(DISTINCT wallet)::int as distinct_wallets,
               COALESCE(SUM(position_current_value::numeric), 0)::text as total_position_value,
+              MIN(fill_price)::text as min_fill_price,
+              MAX(fill_price)::text as max_fill_price,
               CASE WHEN ${convergenceWindowHours} = 6
                 THEN COUNT(DISTINCT wallet) >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
                 ELSE (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
@@ -591,7 +598,7 @@ export async function GET(req: NextRequest) {
           WITH deduped AS (
             SELECT DISTINCT ON (condition_id, outcome, wallet)
               condition_id, outcome, wallet, title, slug, event_slug,
-              position_current_value, fill_timestamp,
+              position_current_value, fill_price, fill_timestamp,
               trader_name, trader_pseudonym, is_whale, whale_label
             FROM alert_events
             WHERE fill_timestamp >= ${convergenceCutoff}::timestamptz
@@ -606,6 +613,8 @@ export async function GET(req: NextRequest) {
               MAX(title) as title, MAX(slug) as slug, MAX(event_slug) as event_slug,
               COUNT(DISTINCT wallet)::int as distinct_wallets,
               COALESCE(SUM(position_current_value::numeric), 0)::text as total_position_value,
+              MIN(fill_price)::text as min_fill_price,
+              MAX(fill_price)::text as max_fill_price,
               CASE WHEN ${convergenceWindowHours} = 6
                 THEN COUNT(DISTINCT wallet) >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
                 ELSE (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
@@ -623,7 +632,7 @@ export async function GET(req: NextRequest) {
           WITH deduped AS (
             SELECT DISTINCT ON (condition_id, outcome, wallet)
               condition_id, outcome, wallet, title, slug, event_slug,
-              position_current_value, fill_timestamp,
+              position_current_value, fill_price, fill_timestamp,
               trader_name, trader_pseudonym, is_whale, whale_label
             FROM alert_events
             WHERE fill_timestamp >= ${convergenceCutoff}::timestamptz
@@ -638,6 +647,8 @@ export async function GET(req: NextRequest) {
               MAX(title) as title, MAX(slug) as slug, MAX(event_slug) as event_slug,
               COUNT(DISTINCT wallet)::int as distinct_wallets,
               COALESCE(SUM(position_current_value::numeric), 0)::text as total_position_value,
+              MIN(fill_price)::text as min_fill_price,
+              MAX(fill_price)::text as max_fill_price,
               CASE WHEN ${convergenceWindowHours} = 6
                 THEN COUNT(DISTINCT wallet) >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
                 ELSE (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
@@ -655,7 +666,7 @@ export async function GET(req: NextRequest) {
           WITH deduped AS (
             SELECT DISTINCT ON (condition_id, outcome, wallet)
               condition_id, outcome, wallet, title, slug, event_slug,
-              position_current_value, fill_timestamp,
+              position_current_value, fill_price, fill_timestamp,
               trader_name, trader_pseudonym, is_whale, whale_label
             FROM alert_events
             WHERE fill_timestamp >= ${convergenceCutoff}::timestamptz
@@ -669,6 +680,8 @@ export async function GET(req: NextRequest) {
               MAX(title) as title, MAX(slug) as slug, MAX(event_slug) as event_slug,
               COUNT(DISTINCT wallet)::int as distinct_wallets,
               COALESCE(SUM(position_current_value::numeric), 0)::text as total_position_value,
+              MIN(fill_price)::text as min_fill_price,
+              MAX(fill_price)::text as max_fill_price,
               CASE WHEN ${convergenceWindowHours} = 6
                 THEN COUNT(DISTINCT wallet) >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
                 ELSE (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
@@ -688,6 +701,16 @@ export async function GET(req: NextRequest) {
     for (const row of convergenceAggResult.rows) {
       const totalRaw = row.total_position_value || '0';
       const totalPositionValue = new Decimal(totalRaw).toNumber();
+      const minOdds = parseNumeric(row.min_fill_price);
+      const maxOdds = parseNumeric(row.max_fill_price);
+
+      // Format odds range: "8-15%" or just "12%" if same
+      let oddsRangeFormatted = 'N/A';
+      if (minOdds !== null && maxOdds !== null) {
+        const minPct = (minOdds * 100).toFixed(0);
+        const maxPct = (maxOdds * 100).toFixed(0);
+        oddsRangeFormatted = minPct === maxPct ? `${minPct}%` : `${minPct}-${maxPct}%`;
+      }
 
       const groupKey = `${row.condition_id}:${row.outcome}`;
       groupMap.set(groupKey, {
@@ -700,6 +723,9 @@ export async function GET(req: NextRequest) {
         totalPositionValue,
         totalPositionValueRaw: totalRaw,
         totalPositionValueFormatted: formatMoney(totalPositionValue),
+        minOdds,
+        maxOdds,
+        oddsRangeFormatted,
         qualifies: row.qualifies,
         wallets: [],
       });
