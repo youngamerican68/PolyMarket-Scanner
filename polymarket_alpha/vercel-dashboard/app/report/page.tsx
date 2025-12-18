@@ -39,35 +39,40 @@ interface AlertRow {
 
 interface ConvergenceWallet {
   wallet: string
-  traderName: string | null
+  traderName: string
   whaleLabel: string | null
-  positionCurrentValue: number | null
-  fillPrice: number | null
-  fillTimestamp: string
+  positionValue: number | null
+  positionValueFormatted: string
+  latestTimestamp: string
+  isWhale: boolean
 }
 
 interface ConvergenceGroup {
   conditionId: string
   outcome: string
-  title: string | null
+  title: string
+  slug: string | null
   eventSlug: string | null
-  walletCount: number
-  totalPositionValue: number | null
-  avgFillPrice: number | null
+  distinctWallets: number
+  totalPositionValue: number
+  totalPositionValueFormatted: string
+  qualifies: boolean
   wallets: ConvergenceWallet[]
 }
 
 interface ReportMeta {
+  alertWindowHours: number
+  convergenceWindowHours: number
+  whalesOnly: boolean
+  category: string | null
+  minPosition: number
+  maxOdds: number
   totalAlerts: number
-  totalFiltered: number
-  uniqueWallets: number
   whaleAlerts: number
-  windowHours: number
-  cutoffTime: string
-  filtersApplied: {
-    whalesOnly: boolean
-    category: string | null
-  }
+  uniqueWallets: number
+  page: number
+  pageSize: number
+  totalPages: number
 }
 
 interface ReportData {
@@ -330,14 +335,14 @@ export default function ReportPage() {
           </div>
 
           <div className="text-xs text-poly-muted ml-auto">
-            {meta.filtersApplied.whalesOnly && <span className="mr-2">🐋 whales only</span>}
-            {meta.filtersApplied.category && <span className="mr-2">📁 {meta.filtersApplied.category}</span>}
+            {meta.whalesOnly && <span className="mr-2">🐋 whales only</span>}
+            {meta.category && <span className="mr-2">📁 {meta.category}</span>}
           </div>
         </div>
 
         {lastUpdate && (
           <p className="text-xs text-poly-muted">
-            Last refresh: {lastUpdate.toLocaleTimeString()} • Data since: {new Date(meta.cutoffTime).toLocaleString()}
+            Last refresh: {lastUpdate.toLocaleTimeString()} • Window: {meta.alertWindowHours}h alerts, {meta.convergenceWindowHours}h convergence
           </p>
         )}
       </header>
@@ -349,8 +354,8 @@ export default function ReportPage() {
           <p className="text-2xl font-bold">{meta.totalAlerts.toLocaleString()}</p>
         </div>
         <div className="bg-poly-card rounded-lg p-4 border border-poly-border">
-          <p className="text-poly-muted text-sm">Filtered</p>
-          <p className="text-2xl font-bold">{meta.totalFiltered.toLocaleString()}</p>
+          <p className="text-poly-muted text-sm">Page</p>
+          <p className="text-2xl font-bold">{meta.page}/{meta.totalPages}</p>
         </div>
         <div className="bg-poly-card rounded-lg p-4 border border-poly-border">
           <p className="text-poly-muted text-sm">Whale Alerts</p>
@@ -413,15 +418,11 @@ export default function ReportPage() {
                     <div className="flex items-center gap-6 text-sm">
                       <div className="text-right">
                         <span className="text-poly-muted">Wallets: </span>
-                        <span className="font-bold text-amber-400">{group.walletCount}</span>
+                        <span className="font-bold text-amber-400">{group.distinctWallets}</span>
                       </div>
                       <div className="text-right">
                         <span className="text-poly-muted">Total Value: </span>
-                        <span className="font-bold text-poly-green">{formatMoney(group.totalPositionValue)}</span>
-                      </div>
-                      <div className="text-right">
-                        <span className="text-poly-muted">Avg Price: </span>
-                        <span className="font-bold text-poly-yellow">{formatOdds(group.avgFillPrice)}</span>
+                        <span className="font-bold text-poly-green">{group.totalPositionValueFormatted}</span>
                       </div>
                       <span className="text-poly-muted">{isExpanded ? '▼' : '▶'}</span>
                     </div>
@@ -434,7 +435,6 @@ export default function ReportPage() {
                           <tr>
                             <th className="text-left p-3 text-poly-muted font-medium">Wallet</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
-                            <th className="text-right p-3 text-poly-muted font-medium">Fill Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
                         </thead>
@@ -450,11 +450,10 @@ export default function ReportPage() {
                                 >
                                   {w.whaleLabel || w.traderName || `${w.wallet.slice(0, 8)}...`}
                                 </a>
-                                {w.whaleLabel && <span className="ml-1 text-purple-400">🐋</span>}
+                                {w.isWhale && <span className="ml-1 text-purple-400">🐋</span>}
                               </td>
-                              <td className="p-3 text-right text-poly-green">{formatMoney(w.positionCurrentValue)}</td>
-                              <td className="p-3 text-right text-poly-yellow">{formatOdds(w.fillPrice)}</td>
-                              <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.fillTimestamp)}</td>
+                              <td className="p-3 text-right text-poly-green">{w.positionValueFormatted}</td>
+                              <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
                           ))}
                         </tbody>
@@ -626,7 +625,7 @@ export default function ReportPage() {
             </table>
           </div>
           <div className="px-3 py-2 border-t border-poly-border text-xs text-poly-muted">
-            Showing {Math.min(sortedAlerts.length, 50)} of {meta.totalFiltered} filtered alerts
+            Showing {Math.min(sortedAlerts.length, 50)} of {meta.totalAlerts} alerts (page {meta.page})
           </div>
         </div>
       </section>
