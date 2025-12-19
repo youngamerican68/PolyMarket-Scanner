@@ -168,6 +168,8 @@ interface WalletDetail {
   positionValueFormatted: string;
   fillPrice: number | null;
   fillPriceFormatted: string;
+  positionAvgPrice: number | null;
+  positionAvgPriceFormatted: string;
   potentialWin: number | null;
   potentialWinFormatted: string;
   latestTimestamp: string;
@@ -957,6 +959,8 @@ export async function GET(req: NextRequest) {
             positionValueFormatted: formatMoney(posValue),
             fillPrice: fillPrice,
             fillPriceFormatted: formatOdds(fillPrice),
+            positionAvgPrice: positionAvgPrice,
+            positionAvgPriceFormatted: formatOdds(positionAvgPrice),
             potentialWin: potentialWin,
             potentialWinFormatted: formatMoney(potentialWin),
             latestTimestamp: row.fill_timestamp,

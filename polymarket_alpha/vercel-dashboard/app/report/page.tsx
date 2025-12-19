@@ -51,6 +51,8 @@ interface ConvergenceWallet {
   positionValueFormatted: string
   fillPrice: number | null
   fillPriceFormatted: string
+  positionAvgPrice: number | null
+  positionAvgPriceFormatted: string
   potentialWin: number | null
   potentialWinFormatted: string
   latestTimestamp: string
@@ -587,9 +589,10 @@ export default function ReportPage() {
                         <thead className="bg-poly-border/50">
                           <tr>
                             <th className="text-left p-3 text-poly-muted font-medium">Wallet</th>
-                            <th className="text-right p-3 text-poly-muted font-medium">Odds</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade">Fill Price</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
-                            <th className="text-right p-3 text-poly-muted font-medium">Potential Win</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Profit if position wins (based on avg entry)">Potential Win</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
                         </thead>
@@ -608,6 +611,7 @@ export default function ReportPage() {
                                 {w.isWhale && <span className="ml-1 text-purple-400">🐋</span>}
                               </td>
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
+                              <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-green">{w.positionValueFormatted}</td>
                               <td className="p-3 text-right text-cyan-400">{w.potentialWinFormatted}</td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
@@ -689,9 +693,10 @@ export default function ReportPage() {
                         <thead className="bg-poly-border/50">
                           <tr>
                             <th className="text-left p-3 text-poly-muted font-medium">Wallet</th>
-                            <th className="text-right p-3 text-poly-muted font-medium">Odds</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade">Fill Price</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
-                            <th className="text-right p-3 text-poly-muted font-medium">Potential Win</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Profit if position wins (based on avg entry)">Potential Win</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
                         </thead>
@@ -710,6 +715,7 @@ export default function ReportPage() {
                                 {w.isWhale && <span className="ml-1 text-purple-400">🐋</span>}
                               </td>
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
+                              <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-green">{w.positionValueFormatted}</td>
                               <td className="p-3 text-right text-cyan-400">{w.potentialWinFormatted}</td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
