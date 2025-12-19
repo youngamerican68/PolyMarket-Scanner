@@ -146,6 +146,40 @@ TRADES_TABLE="alert_events" TRADES_TS_COLUMN="fill_timestamp" ./gap_detect_db.sh
 
 ---
 
+## December 19, 2025 - Credential Rotation & Gap Analysis
+
+### Credential Rotation
+Database credentials were rotated after being visible in debug sessions:
+1. Reset Neon database password via console (Branches → Roles & Databases)
+2. Updated `POSTGRES_URL` in Vercel environment variables
+3. Redeployed to pick up new credentials
+
+### Gap Analysis Findings
+Investigated apparent "stale data" alerts from gap detection scripts.
+
+**Root Cause:** Scripts were checking wrong table (`trades.created_at`) instead of dashboard source (`alert_events.fill_timestamp`).
+
+**Key Metrics (verified healthy):**
+| Metric | Value | Status |
+|--------|-------|--------|
+| Insert freshness (`created_at` lag) | ~22 min | ✓ Normal |
+| Event freshness (`fill_timestamp` lag) | ~22 min | ✓ Normal |
+| Max ingestion delay (6h) | 11 min | ✓ Healthy |
+| Rows per hour | ~24 | Expected for filtered data |
+
+**Important Distinction:**
+- `fill_timestamp` = when trade occurred on Polymarket
+- `created_at` = when row was inserted into our DB
+
+Empty 5-minute buckets are **expected** - they represent quiet market periods with no qualifying trades ($5K+ at <25% odds), not ingestion failures.
+
+**For true ingestion liveness monitoring**, use `created_at` column:
+```bash
+TRADES_TABLE="alert_events" TRADES_TS_COLUMN="created_at" ./gap_detect_db.sh
+```
+
+---
+
 ## Future Considerations
 
 - Increase cron to 15-minute intervals if trade volume grows
