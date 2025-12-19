@@ -629,7 +629,7 @@ export async function GET(req: NextRequest) {
             FROM deduped GROUP BY condition_id, outcome
           )
           SELECT * FROM aggregated WHERE qualifies = TRUE
-          ORDER BY distinct_wallets DESC, total_position_value::numeric DESC, condition_id ASC, outcome ASC
+          ORDER BY total_position_value::numeric DESC, distinct_wallets DESC, condition_id ASC, outcome ASC
           LIMIT ${maxGroups}
         `;
         break;
@@ -660,7 +660,7 @@ export async function GET(req: NextRequest) {
             FROM deduped GROUP BY condition_id, outcome
           )
           SELECT * FROM aggregated WHERE qualifies = TRUE
-          ORDER BY distinct_wallets DESC, total_position_value::numeric DESC, condition_id ASC, outcome ASC
+          ORDER BY total_position_value::numeric DESC, distinct_wallets DESC, condition_id ASC, outcome ASC
           LIMIT ${maxGroups}
         `;
         break;
@@ -691,7 +691,7 @@ export async function GET(req: NextRequest) {
             FROM deduped GROUP BY condition_id, outcome
           )
           SELECT * FROM aggregated WHERE qualifies = TRUE
-          ORDER BY distinct_wallets DESC, total_position_value::numeric DESC, condition_id ASC, outcome ASC
+          ORDER BY total_position_value::numeric DESC, distinct_wallets DESC, condition_id ASC, outcome ASC
           LIMIT ${maxGroups}
         `;
         break;
@@ -721,7 +721,7 @@ export async function GET(req: NextRequest) {
             FROM deduped GROUP BY condition_id, outcome
           )
           SELECT * FROM aggregated WHERE qualifies = TRUE
-          ORDER BY distinct_wallets DESC, total_position_value::numeric DESC, condition_id ASC, outcome ASC
+          ORDER BY total_position_value::numeric DESC, distinct_wallets DESC, condition_id ASC, outcome ASC
           LIMIT ${maxGroups}
         `;
     }
