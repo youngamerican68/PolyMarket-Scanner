@@ -180,6 +180,18 @@ TRADES_TABLE="alert_events" TRADES_TS_COLUMN="created_at" ./gap_detect_db.sh
 
 ---
 
+## Checkpoint & Rollback System
+
+Scripts added for creating snapshots and rolling back to known-good states:
+
+    ./scripts/checkpoint.sh              # Create tagged snapshot
+    ./scripts/rollback.sh <TAG>          # Restore to checkpoint
+    ./scripts/healthcheck.sh             # Verify DB freshness
+
+See `CHECKPOINT.md` for full usage instructions.
+
+---
+
 ## Future Considerations
 
 - Increase cron to 15-minute intervals if trade volume grows
