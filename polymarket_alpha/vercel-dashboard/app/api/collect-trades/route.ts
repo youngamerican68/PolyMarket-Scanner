@@ -1,5 +1,6 @@
 // /app/api/collect-trades/route.ts
 // Phase 1: Ingestion into alert_events table
+// Phase 5: Conviction sizing anomaly detection (hardened)
 // Runs on schedule via Vercel cron
 
 import { NextResponse } from 'next/server';
@@ -8,12 +9,17 @@ import {
   fetchRawTrades,
   fetchPositionsForWallets,
   matchTradeToPosition,
-  Trade,
-  Position,
 } from '@/lib/polymarket';
 import { generateTradeDedupeId } from '@/lib/dedupe';
 import { computeFillValue } from '@/lib/decimal';
 import { normalizeTimestamp } from '@/lib/schemas';
+import {
+  MIN_ABS_NOTIONAL_USD,
+  MIN_TRADES,
+  DEDUPE_WINDOW_MINUTES,
+  evaluateAnomaly,
+  constantTimeCompare,
+} from '@/lib/anomaly-config';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,18 +29,25 @@ export const maxDuration = 120;
 const LONGSHOT_THRESHOLD = 0.25;
 const MIN_POSITION_THRESHOLD = 2500;
 
-// Auth check for cron requests
+// Auth check for cron requests (uses constant-time comparison)
 function isAuthorized(request: Request): boolean {
   const secret = request.headers.get('x-cron-secret');
   const expectedSecret = process.env.CRON_SECRET;
 
-  // If CRON_SECRET is not set, allow requests (dev mode)
+  // If CRON_SECRET is not set, allow requests (dev mode only)
   if (!expectedSecret) {
-    console.warn('[collect-trades] CRON_SECRET not set - allowing unauthenticated request');
-    return true;
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[collect-trades] CRON_SECRET not set - allowing in dev mode');
+      return true;
+    }
+    console.error('[collect-trades] CRON_SECRET not set - denying in production');
+    return false;
   }
 
-  return secret === expectedSecret;
+  if (!secret) return false;
+
+  // Use constant-time comparison to prevent timing attacks
+  return constantTimeCompare(secret, expectedSecret);
 }
 
 interface IngestionSummary {
@@ -48,6 +61,12 @@ interface IngestionSummary {
   skipped_no_position_match: number;
   skipped_validation_failed: number;
   skipped_below_threshold: number;
+  // Phase 5: Conviction anomalies (hardened)
+  anomalies_inserted: number;
+  anomalies_updated: number;  // Dedupe: existing anomaly updated instead of inserted
+  anomalies_no_baseline: number;
+  anomalies_skipped_small_median: number;
+  anomalies_skipped_below_threshold: number;
   errors: string[];
 }
 
@@ -73,6 +92,11 @@ export async function POST(request: Request) {
     skipped_no_position_match: 0,
     skipped_validation_failed: 0,
     skipped_below_threshold: 0,
+    anomalies_inserted: 0,
+    anomalies_updated: 0,
+    anomalies_no_baseline: 0,
+    anomalies_skipped_small_median: 0,
+    anomalies_skipped_below_threshold: 0,
     errors: [],
   };
 
@@ -314,6 +338,141 @@ export async function POST(request: Request) {
           console.log(
             `[collect-trades] Inserted: ${trade.name || walletLower.slice(0, 8)} - ${trade.title?.slice(0, 30) || 'Unknown'} @ ${(trade.price * 100).toFixed(1)}% = $${fillValueUsd}`
           );
+
+          // Phase 5 (Hardened): Check for conviction sizing anomaly
+          const fillValueNum = parseFloat(fillValueUsd);
+          if (fillValueNum >= MIN_ABS_NOTIONAL_USD) {
+            try {
+              // Look up baseline for this wallet
+              const baselineResult = await sql<{
+                trade_count: number;
+                median_notional: number;
+                mad: number;
+              }>`
+                SELECT trade_count, median_notional, mad
+                FROM wallet_trade_size_baselines
+                WHERE wallet = ${walletLower}
+              `;
+
+              const baseline = baselineResult.rows[0];
+
+              if (baseline) {
+                // Use the hardened evaluation logic
+                const evaluation = evaluateAnomaly(
+                  fillValueNum,
+                  baseline.median_notional,
+                  baseline.mad,
+                  baseline.trade_count
+                );
+
+                if (evaluation.qualifies) {
+                  // Check for existing anomaly within dedupe window (same wallet + market)
+                  // Use COALESCE(last_seen_at, created_at) so continuing split orders stay merged
+                  const dedupeWindowCutoff = new Date(Date.now() - DEDUPE_WINDOW_MINUTES * 60 * 1000).toISOString();
+                  const existingResult = await sql<{
+                    id: string;
+                    trade_notional: number;
+                    ratio_to_median: number;
+                    severity: number;
+                  }>`
+                    SELECT id, trade_notional, ratio_to_median, severity
+                    FROM conviction_anomalies
+                    WHERE wallet = ${walletLower}
+                      AND condition_id = ${trade.conditionId}
+                      AND COALESCE(last_seen_at, created_at) >= ${dedupeWindowCutoff}::timestamptz
+                    ORDER BY COALESCE(last_seen_at, created_at) DESC
+                    LIMIT 1
+                  `;
+
+                  const existing = existingResult.rows[0];
+
+                  if (existing) {
+                    // Dedupe: Update existing anomaly with max values
+                    const newNotional = Math.max(existing.trade_notional, fillValueNum);
+                    const newRatio = Math.max(existing.ratio_to_median, evaluation.ratio);
+                    const newSeverity = Math.max(existing.severity, evaluation.severity);
+
+                    await sql`
+                      UPDATE conviction_anomalies
+                      SET trade_notional = ${newNotional},
+                          ratio_to_median = ${newRatio},
+                          severity = ${newSeverity},
+                          last_seen_at = NOW()
+                      WHERE id = ${existing.id}::uuid
+                    `;
+                    summary.anomalies_updated++;
+                    console.log(
+                      `[collect-trades] ANOMALY (updated): ${trade.name || walletLower.slice(0, 8)} - merged into existing, notional now $${newNotional.toFixed(0)}`
+                    );
+                  } else {
+                    // Insert new anomaly
+                    const anomalyId = crypto.randomUUID();
+                    await sql`
+                      INSERT INTO conviction_anomalies (
+                        id,
+                        alert_event_id,
+                        trade_dedupe_id,
+                        wallet,
+                        fill_timestamp,
+                        trade_notional,
+                        baseline_median,
+                        baseline_mad,
+                        baseline_trade_count,
+                        ratio_to_median,
+                        robust_z,
+                        severity,
+                        condition_id,
+                        outcome,
+                        title,
+                        slug,
+                        side,
+                        fill_price,
+                        is_whale,
+                        trader_name
+                      ) VALUES (
+                        ${anomalyId},
+                        ${id},
+                        ${dedupeId},
+                        ${walletLower},
+                        ${fillTimestamp},
+                        ${fillValueNum},
+                        ${baseline.median_notional},
+                        ${baseline.mad},
+                        ${baseline.trade_count},
+                        ${evaluation.ratio},
+                        ${evaluation.robustZ},
+                        ${evaluation.severity},
+                        ${trade.conditionId},
+                        ${trade.outcome},
+                        ${trade.title || null},
+                        ${trade.slug || null},
+                        ${trade.side},
+                        ${trade.price},
+                        ${isWhale},
+                        ${trade.name || null}
+                      )
+                      ON CONFLICT (trade_dedupe_id) DO NOTHING
+                    `;
+                    summary.anomalies_inserted++;
+                    console.log(
+                      `[collect-trades] ANOMALY: ${trade.name || walletLower.slice(0, 8)} - $${fillValueNum.toFixed(0)} is ${evaluation.ratio.toFixed(1)}x median (severity: ${evaluation.severity.toFixed(1)})`
+                    );
+                  }
+                } else if (evaluation.reason === 'small_median_below_abs_threshold') {
+                  summary.anomalies_skipped_small_median++;
+                } else if (evaluation.reason === 'below_ratio_threshold' || evaluation.reason === 'below_robust_z_threshold') {
+                  summary.anomalies_skipped_below_threshold++;
+                } else if (evaluation.reason === 'insufficient_trades') {
+                  summary.anomalies_no_baseline++;
+                }
+              } else {
+                summary.anomalies_no_baseline++;
+              }
+            } catch (anomalyErr) {
+              // Non-fatal - log and continue (don't log secrets)
+              console.warn('[collect-trades] Anomaly check failed:', String(anomalyErr).slice(0, 100));
+            }
+          }
         }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);

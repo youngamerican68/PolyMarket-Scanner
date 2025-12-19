@@ -88,6 +88,50 @@ interface ReportMeta {
   totalPages: number
 }
 
+// Phase 5 (Hardened): Conviction Anomaly types
+interface ConvictionAnomaly {
+  id: string
+  created_at: string
+  wallet: string
+  trader_name: string | null
+  fill_timestamp: string
+  trade_notional: number
+  baseline_median: number
+  baseline_mad: number
+  baseline_trade_count: number
+  ratio_to_median: number
+  robust_z: number | null
+  severity: number
+  last_seen_at: string | null
+  condition_id: string
+  outcome: string
+  title: string | null
+  slug: string | null
+  side: string
+  fill_price: number
+  is_whale: boolean
+}
+
+interface ConvictionAnomalyResponse {
+  anomalies: ConvictionAnomaly[]
+  meta: {
+    count: number
+    window: string
+    windowHours: number
+    cutoff: string
+    limit: number
+    sortBy: string
+    stats: {
+      total: number
+      whaleCount: number
+      avgRatio: number
+      maxRatio: number
+      avgSeverity: number
+      maxSeverity: number
+    }
+  }
+}
+
 interface ReportData {
   serverNow: string
   meta: ReportMeta
@@ -165,6 +209,10 @@ export default function ReportPage() {
   const [error, setError] = useState<string | null>(null)
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
 
+  // Phase 5: Conviction anomalies state
+  const [anomalies, setAnomalies] = useState<ConvictionAnomalyResponse | null>(null)
+  const [anomaliesExpanded, setAnomaliesExpanded] = useState(false)
+
   // Filters
   const [windowHours, setWindowHours] = useState<WindowHours>(24)
   const [whalesOnly, setWhalesOnly] = useState(false)
@@ -179,6 +227,27 @@ export default function ReportPage() {
 
   // Convergence expanded state
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+
+  // Phase 5: Fetch conviction anomalies
+  const fetchAnomalies = useCallback(async () => {
+    try {
+      const params = new URLSearchParams({
+        window: `${windowHours}h`,
+        limit: '50',
+        _t: Date.now().toString(),
+      })
+      const res = await fetch(`/api/anomalies/conviction?${params}`, {
+        cache: 'no-store',
+      })
+      if (res.ok) {
+        const data: ConvictionAnomalyResponse = await res.json()
+        setAnomalies(data)
+      }
+    } catch (err) {
+      // Non-fatal, just log
+      console.warn('[report] Failed to fetch anomalies:', err)
+    }
+  }, [windowHours])
 
   const fetchReport = useCallback(async (page = currentPage) => {
     try {
@@ -205,12 +274,15 @@ export default function ReportPage() {
       setCurrentPage(page)
       setLastUpdate(new Date())
       setError(null)
+
+      // Also fetch anomalies
+      fetchAnomalies()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setLoading(false)
     }
-  }, [windowHours, whalesOnly, category, currentPage])
+  }, [windowHours, whalesOnly, category, currentPage, fetchAnomalies])
 
   useEffect(() => {
     fetchReport(1) // Reset to page 1 when filters change
@@ -407,7 +479,7 @@ export default function ReportPage() {
       </header>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
         <div className="bg-poly-card rounded-lg p-4 border border-poly-border">
           <p className="text-poly-muted text-sm">Total Alerts</p>
           <p className="text-2xl font-bold">{meta.totalAlerts.toLocaleString()}</p>
@@ -432,6 +504,14 @@ export default function ReportPage() {
           <p className="text-poly-muted text-sm">Convergence Groups</p>
           <p className="text-2xl font-bold text-amber-400">{convergence.totalGroups}</p>
         </div>
+        <button
+          onClick={() => setAnomaliesExpanded(!anomaliesExpanded)}
+          className={`bg-poly-card rounded-lg p-4 border text-left transition-colors ${anomaliesExpanded ? 'border-red-500 bg-red-500/10' : 'border-poly-border hover:border-red-500/50'}`}
+          title={anomaliesExpanded ? 'Click to collapse anomalies section' : 'Click to expand anomalies section'}
+        >
+          <p className="text-poly-muted text-sm">Conviction Anomalies {anomaliesExpanded && '✓'}</p>
+          <p className="text-2xl font-bold text-red-400">{anomalies?.meta.stats.total || 0} 🎯</p>
+        </button>
       </div>
 
       {/* Convergence Section */}
@@ -534,6 +614,87 @@ export default function ReportPage() {
                 </div>
               )
             })}
+          </div>
+        </section>
+      )}
+
+      {/* Conviction Anomalies Section */}
+      {anomaliesExpanded && anomalies && anomalies.anomalies.length > 0 && (
+        <section className="space-y-4">
+          <h2 className="text-xl font-bold flex items-center">
+            <span className="w-3 h-3 bg-red-500 rounded-full mr-3"></span>
+            Conviction Anomalies
+            <span className="text-sm font-normal text-poly-muted ml-2">
+              ({anomalies.meta.stats.total} unusually large trades)
+            </span>
+          </h2>
+          <p className="text-xs text-poly-muted">
+            Sorted by severity (ln(1+notional) × ln(1+ratio)) • Max severity: {anomalies.meta.stats.maxSeverity?.toFixed(1) || 'N/A'} • Max ratio: {anomalies.meta.stats.maxRatio}x
+          </p>
+
+          <div className="bg-poly-card rounded-lg border border-red-500/30 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-poly-border">
+                  <tr>
+                    <th className="text-left p-3 text-poly-muted font-medium">Trader</th>
+                    <th className="text-left p-3 text-poly-muted font-medium">Market</th>
+                    <th className="text-right p-3 text-poly-muted font-medium">Trade Size</th>
+                    <th className="text-right p-3 text-poly-muted font-medium">Median</th>
+                    <th className="text-right p-3 text-poly-muted font-medium" title="How many times larger than median">Ratio</th>
+                    <th className="text-right p-3 text-poly-muted font-medium" title="Severity score: ln(1+notional) × ln(1+ratio)">Severity</th>
+                    <th className="text-right p-3 text-poly-muted font-medium">Time</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {anomalies.anomalies.slice(0, 20).map((anomaly) => (
+                    <tr key={anomaly.id} className="border-t border-poly-border hover:bg-poly-border/30">
+                      <td className="p-3">
+                        <a
+                          href={`https://polymarket.com/profile/${anomaly.wallet}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-poly-blue hover:underline"
+                        >
+                          {anomaly.trader_name || `${anomaly.wallet.slice(0, 8)}...`}
+                        </a>
+                        {anomaly.is_whale && <span className="ml-1 text-purple-400">🐋</span>}
+                        {anomaly.last_seen_at && <span className="ml-1 text-xs text-orange-400" title="Multiple trades merged">⚡</span>}
+                      </td>
+                      <td className="p-3 max-w-xs truncate">
+                        <a
+                          href={`https://polymarket.com/market/${anomaly.slug}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-poly-blue hover:underline"
+                        >
+                          {(anomaly.title || 'Unknown Market').slice(0, 35)}
+                        </a>
+                        <span className="text-poly-muted ml-2">({anomaly.outcome})</span>
+                      </td>
+                      <td className="p-3 text-right text-red-400 font-bold">{formatMoney(anomaly.trade_notional)}</td>
+                      <td className="p-3 text-right text-poly-muted">{formatMoney(anomaly.baseline_median)}</td>
+                      <td className="p-3 text-right">
+                        <span className={`font-bold ${anomaly.ratio_to_median >= 5 ? 'text-red-400' : anomaly.ratio_to_median >= 3 ? 'text-orange-400' : 'text-yellow-400'}`}>
+                          {anomaly.ratio_to_median.toFixed(1)}x
+                        </span>
+                      </td>
+                      <td className="p-3 text-right">
+                        <span className={`font-mono ${anomaly.severity >= 50 ? 'text-red-400' : anomaly.severity >= 30 ? 'text-orange-400' : 'text-yellow-400'}`}>
+                          {(anomaly.severity || 0).toFixed(1)}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(anomaly.fill_timestamp)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {anomalies.anomalies.length > 20 && (
+              <div className="px-3 py-2 border-t border-poly-border text-xs text-poly-muted">
+                Showing 20 of {anomalies.anomalies.length} anomalies (sorted by severity)
+              </div>
+            )}
           </div>
         </section>
       )}

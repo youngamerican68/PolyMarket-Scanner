@@ -12,6 +12,24 @@ const ADMIN_PASS = process.env.ADMIN_BASIC_PASS
 // Cron secret for job endpoints (Bearer token)
 const CRON_SECRET = process.env.CRON_SECRET
 
+// Constant-time string comparison to prevent timing attacks
+function constantTimeCompare(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    // Still do comparison to maintain timing consistency
+    let result = 0
+    for (let i = 0; i < a.length; i++) {
+      result |= a.charCodeAt(i) ^ (b.charCodeAt(i % b.length) || 0)
+    }
+    return false
+  }
+
+  let result = 0
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i)
+  }
+  return result === 0
+}
+
 // Check if this is an admin/jobs path requiring Basic Auth
 function isAdminPath(pathname: string): boolean {
   return (
@@ -22,7 +40,7 @@ function isAdminPath(pathname: string): boolean {
   )
 }
 
-// Verify Basic Auth header
+// Verify Basic Auth header (uses constant-time comparison)
 function verifyBasicAuth(request: NextRequest): boolean {
   if (!ADMIN_USER || !ADMIN_PASS) {
     // If credentials not configured, warn in dev and deny in production
@@ -42,13 +60,17 @@ function verifyBasicAuth(request: NextRequest): boolean {
   try {
     const credentials = atob(base64Credentials)
     const [user, pass] = credentials.split(':')
-    return user === ADMIN_USER && pass === ADMIN_PASS
+    // Use constant-time comparison for both user and password
+    const userMatch = constantTimeCompare(user || '', ADMIN_USER)
+    const passMatch = constantTimeCompare(pass || '', ADMIN_PASS)
+    return userMatch && passMatch
   } catch {
     return false
   }
 }
 
 // Verify cron auth - Bearer token, x-cron-secret header, or query param (for jobs only)
+// Uses constant-time comparison to prevent timing attacks
 function verifyCronAuth(request: NextRequest, allowQueryParam: boolean = false): boolean {
   if (!CRON_SECRET) {
     // In production without CRON_SECRET, deny cron auth
@@ -62,14 +84,14 @@ function verifyCronAuth(request: NextRequest, allowQueryParam: boolean = false):
   const authHeader = request.headers.get('authorization')
   if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7)
-    if (token === CRON_SECRET) {
+    if (constantTimeCompare(token, CRON_SECRET)) {
       return true
     }
   }
 
   // Check x-cron-secret header (alternative)
   const cronSecretHeader = request.headers.get('x-cron-secret')
-  if (cronSecretHeader === CRON_SECRET) {
+  if (cronSecretHeader && constantTimeCompare(cronSecretHeader, CRON_SECRET)) {
     return true
   }
 
@@ -77,7 +99,7 @@ function verifyCronAuth(request: NextRequest, allowQueryParam: boolean = false):
   if (allowQueryParam) {
     const url = new URL(request.url)
     const cronSecretParam = url.searchParams.get('cronSecret')
-    if (cronSecretParam === CRON_SECRET) {
+    if (cronSecretParam && constantTimeCompare(cronSecretParam, CRON_SECRET)) {
       return true
     }
   }

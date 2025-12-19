@@ -1,0 +1,86 @@
+# .github/workflows/ops-heartbeat.yml
+# Heartbeat monitoring for job health
+# Runs every 10 minutes and alerts on failure via GitHub Actions email notifications
+#
+# Required GitHub Secrets:
+# - OPS_SECRET: Bearer token for heartbeat endpoint authentication
+# - DOMAIN: Production domain (e.g., your-app.vercel.app)
+
+name: Ops Heartbeat
+
+on:
+  schedule:
+    # Run every 10 minutes
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+    # Allow manual triggering for testing
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Check heartbeat endpoint
+        id: heartbeat
+        env:
+          DOMAIN: ${{ secrets.DOMAIN }}
+          OPS_SECRET: ${{ secrets.OPS_SECRET }}
+        run: |
+          # Validate required secrets are set (without printing values)
+          if [ -z "$DOMAIN" ]; then
+            echo "::error::DOMAIN secret is not set"
+            exit 1
+          fi
+          if [ -z "$OPS_SECRET" ]; then
+            echo "::error::OPS_SECRET secret is not set"
+            exit 1
+          fi
+
+          # Call heartbeat endpoint
+          echo "Checking heartbeat at https://$DOMAIN/api/ops/health/heartbeat"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer $OPS_SECRET" \
+            "https://$DOMAIN/api/ops/health/heartbeat")
+
+          # Extract HTTP status code (last line)
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          # Extract JSON body (all but last line)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP Status: $HTTP_CODE"
+
+          # Check HTTP status
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::Heartbeat endpoint returned HTTP $HTTP_CODE"
+            echo "Response: $BODY"
+            exit 1
+          fi
+
+          # Parse JSON response and check ok field
+          OK=$(echo "$BODY" | jq -r '.ok')
+          GENERATED_AT=$(echo "$BODY" | jq -r '.generatedAt')
+
+          echo "Generated at: $GENERATED_AT"
+          echo "Status: ok=$OK"
+
+          # Print check details
+          echo ""
+          echo "Job Health Checks:"
+          echo "$BODY" | jq -r '.checks[] | "  - \(.jobName): \(.message)"'
+
+          # Fail if any job is stale
+          if [ "$OK" != "true" ]; then
+            echo ""
+            echo "::error::One or more jobs are stale!"
+
+            # List stale jobs
+            STALE_JOBS=$(echo "$BODY" | jq -r '.checks[] | select(.stale == true) | .jobName')
+            echo "Stale jobs: $STALE_JOBS"
+
+            exit 1
+          fi
+
+          echo ""
+          echo "All jobs healthy!"

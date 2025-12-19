@@ -1,5 +1,114 @@
 # Polymarket Tracker - Development Progress
 
+## Session: December 18, 2025 (Phase 5: Conviction Anomalies)
+
+### Phase 5: Conviction Sizing Anomaly Detection (Completed)
+
+**Goal:** Detect when a wallet makes an unusually large trade relative to their historical trade sizes - a signal of high conviction.
+
+**How It Works:**
+1. **Baselines:** For each active wallet, compute median trade notional and MAD (Median Absolute Deviation) over last 90 days
+2. **Detection:** When a new trade is ingested, check if it meets anomaly criteria
+3. **Criteria:**
+   - Trade notional ≥ $500
+   - Trade notional ≥ 2.5x wallet's median
+   - Robust Z-score ≥ 2.5 (if MAD > 0)
+
+**New Tables:**
+```sql
+-- Cached baseline stats per wallet
+CREATE TABLE wallet_trade_size_baselines (
+  wallet TEXT PRIMARY KEY,
+  trade_count INTEGER NOT NULL,
+  median_notional NUMERIC(18, 6) NOT NULL,
+  mad NUMERIC(18, 6) NOT NULL,
+  lookback_start TIMESTAMPTZ NOT NULL,
+  lookback_end TIMESTAMPTZ NOT NULL,
+  computed_at TIMESTAMPTZ NOT NULL
+);
+
+-- Detected anomaly events
+CREATE TABLE conviction_anomalies (
+  id UUID PRIMARY KEY,
+  alert_event_id UUID REFERENCES alert_events(id),
+  trade_dedupe_id TEXT NOT NULL UNIQUE,
+  wallet TEXT NOT NULL,
+  fill_timestamp TIMESTAMPTZ NOT NULL,
+  trade_notional NUMERIC(18, 6) NOT NULL,
+  baseline_median NUMERIC(18, 6) NOT NULL,
+  baseline_mad NUMERIC(18, 6) NOT NULL,
+  baseline_trade_count INTEGER NOT NULL,
+  ratio_to_median NUMERIC(10, 4) NOT NULL,
+  robust_z NUMERIC(10, 4) NULL,
+  condition_id TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  title TEXT NULL,
+  slug TEXT NULL,
+  side TEXT NOT NULL,
+  fill_price NUMERIC NOT NULL,
+  is_whale BOOLEAN NOT NULL,
+  trader_name TEXT NULL
+);
+```
+
+**New Endpoints:**
+- `POST /api/jobs/refresh-baselines` - Recompute baselines for wallets active in last 7 days
+- `GET /api/anomalies/conviction` - Fetch recent anomalies with filtering
+
+**API Parameters (conviction endpoint):**
+| Param | Default | Description |
+|-------|---------|-------------|
+| `window` | `24h` | Time window (e.g., "24h", "7d") |
+| `limit` | `100` | Max results (capped at 500) |
+| `wallet` | - | Filter to specific wallet |
+| `whales` | `false` | If `true`, only whale anomalies |
+| `minRatio` | - | Filter by minimum ratio |
+
+**UI Integration:**
+- Summary card showing total anomalies (clickable to expand section)
+- Expandable section with anomaly table:
+  - Trader, Market, Trade Size, Median, Ratio, Fill Odds, Time
+  - Color-coded ratio (yellow 2.5x+, orange 3x+, red 5x+)
+  - Whale indicator (🐋)
+
+**Files Created/Modified:**
+- `app/api/admin/migrate/route.ts` - Added Phase 5 table migrations
+- `app/api/jobs/refresh-baselines/route.ts` - New baseline refresh job
+- `app/api/anomalies/conviction/route.ts` - New anomaly API endpoint
+- `app/api/collect-trades/route.ts` - Added anomaly detection on ingestion
+- `app/report/page.tsx` - Added Conviction Anomalies section
+
+**Baseline Refresh:**
+- Only computes baselines for wallets with ≥30 trades in lookback period
+- Only refreshes wallets active in last 7 days (to save compute)
+- Uses advisory lock to prevent concurrent runs
+- Can be triggered manually or via cron
+
+**Initial Setup:**
+1. Run migration: `POST /api/admin/migrate` (creates tables)
+2. Run baseline refresh: `POST /api/jobs/refresh-baselines` (populates baselines)
+3. Anomalies will be detected automatically on new trade ingestion
+
+**GitHub Actions: Baseline Refresh (Daily)**
+
+Workflow: `.github/workflows/refresh-baselines.yml`
+
+**GitHub Secret Required:**
+| Secret | Value |
+|--------|-------|
+| `REFRESH_BASELINES_URL` | `https://poly-market-scanner.vercel.app/api/jobs/refresh-baselines` |
+| `CRON_SECRET` | Same value as Vercel env var |
+
+**Schedule:** Daily at 2 AM UTC
+
+**How it works:**
+- Runs once per day to recompute baselines for active wallets
+- Uses Bearer token auth with CRON_SECRET
+- 409 (job already running) treated as success
+- Manual trigger available via "Run workflow" button
+
+---
+
 ## Session: December 18, 2025 (Hardening + Deployment)
 
 ### Deployment Status: LIVE ✅
@@ -438,21 +547,21 @@ const historyLookupResult = await sql`
 
 ---
 
+## Completed Phases Summary
+
+| Phase | Feature | Status |
+|-------|---------|--------|
+| 1 | Trade Ingestion + Alerts | ✅ Completed |
+| 2 | Convergence Detection | ✅ Completed |
+| 3 | Price Cache | ✅ Completed |
+| 4 | Job Tracking + Admin | ✅ Completed |
+| 5 | Conviction Sizing Anomalies | ✅ Completed |
+
 ## Remaining Phases (Planned)
 
-### Phase 3: Price Cache
-- Cache market prices in DB with 10-min refresh
-- Removes 50-market fetch limit
-- Shows "price unavailable" instead of false $0
-
-### Phase 4: Job Tracking + Admin Page
-- Track cron job runs in DB
-- Add /admin dashboard for monitoring
-- Catch failures and see job history
-
-### Phase 5: Accumulator for $2.5K Threshold
+### Phase 6: Position Accumulator
 - Track positions across days
-- Catch wallets buying $1K/day that cross threshold
+- Catch wallets buying $1K/day that cross $2.5K threshold
 - Prevents loss from 48h trade pruning
 
 ---

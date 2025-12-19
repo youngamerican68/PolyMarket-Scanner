@@ -4,6 +4,10 @@
     {
       "path": "/api/jobs/refresh-prices",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/jobs/refresh-baselines",
+      "schedule": "0 */6 * * *"
     }
   ]
 }
