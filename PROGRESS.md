@@ -96,6 +96,33 @@ Dashboard URL: `https://poly-market-scanner.vercel.app`
 
 ---
 
+## December 19, 2024 - Auth Hotfix & Heartbeat Alignment
+
+### Problem
+- Data flow stopped due to auth header mismatch between GitHub Actions and API endpoints
+- Route handlers checked spoofable `x-middleware-auth` header (security issue)
+- Inconsistent auth: some endpoints expected `x-cron-secret`, others `Authorization: Bearer`
+- Heartbeat reported false "stale" alarms (threshold was 6h but baselines run daily)
+
+### Fix Applied
+1. **Created `lib/cronAuth.ts`** - Shared auth helper using `crypto.timingSafeEqual`
+2. **Standardized auth** - All cron routes now accept `Authorization: Bearer <CRON_SECRET>` (preferred) or `x-cron-secret` (legacy)
+3. **Removed spoofable headers** - No more `x-middleware-auth` trust pattern
+4. **Fixed heartbeat threshold** - Changed from 360 min (6h) to 1440 min (daily)
+5. **Added missing secret** - `REFRESH_BASELINES_URL` was missing from GitHub Actions
+
+### Verification
+- All three GitHub Actions workflows passing:
+  - `Collect Trades` - every 5 minutes
+  - `Refresh Prices` - every 10 minutes
+  - `Refresh Baselines` - daily at 2 AM UTC
+- Heartbeat endpoint: `GET /api/ops/health/heartbeat` (requires `OPS_SECRET`)
+
+### Commit
+`99a2c94` - fix: standardize cron auth; remove x-middleware-auth; align heartbeat schedule
+
+---
+
 ## Future Considerations
 
 - Increase cron to 15-minute intervals if trade volume grows
