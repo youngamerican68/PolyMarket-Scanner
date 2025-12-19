@@ -20,9 +20,9 @@ const PRICE_STALE_THRESHOLD_MS = 30 * 60 * 1000;
 type WindowHours = 6 | 24 | 72;
 
 const CONVERGENCE_THRESHOLDS: Record<WindowHours, { minWallets: number; minTotalValue: number }> = {
-  6: { minWallets: 2, minTotalValue: 0 },
-  24: { minWallets: 3, minTotalValue: 10000 },
-  72: { minWallets: 3, minTotalValue: 10000 },
+  6: { minWallets: 2, minTotalValue: 10000 },
+  24: { minWallets: 2, minTotalValue: 10000 },
+  72: { minWallets: 2, minTotalValue: 10000 },
 };
 
 const VALID_CONVERGENCE_WINDOWS: readonly WindowHours[] = [6, 24, 72] as const;
@@ -518,11 +518,8 @@ export async function GET(req: NextRequest) {
             FROM deduped GROUP BY condition_id, outcome
           )
           SELECT COUNT(*)::int AS count FROM aggregated
-          WHERE CASE WHEN ${convergenceWindowHours} = 6
-            THEN distinct_wallets >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
-            ELSE (distinct_wallets >= ${thresholds.minWallets}
-              OR total_val >= ${thresholds.minTotalValue})
-          END
+          WHERE (distinct_wallets >= ${thresholds.minWallets}
+            OR total_val >= ${thresholds.minTotalValue})
         `;
         break;
       case 'whalesOnly':
@@ -545,11 +542,8 @@ export async function GET(req: NextRequest) {
             FROM deduped GROUP BY condition_id, outcome
           )
           SELECT COUNT(*)::int AS count FROM aggregated
-          WHERE CASE WHEN ${convergenceWindowHours} = 6
-            THEN distinct_wallets >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
-            ELSE (distinct_wallets >= ${thresholds.minWallets}
-              OR total_val >= ${thresholds.minTotalValue})
-          END
+          WHERE (distinct_wallets >= ${thresholds.minWallets}
+            OR total_val >= ${thresholds.minTotalValue})
         `;
         break;
       case 'categoryOnly':
@@ -572,11 +566,8 @@ export async function GET(req: NextRequest) {
             FROM deduped GROUP BY condition_id, outcome
           )
           SELECT COUNT(*)::int AS count FROM aggregated
-          WHERE CASE WHEN ${convergenceWindowHours} = 6
-            THEN distinct_wallets >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
-            ELSE (distinct_wallets >= ${thresholds.minWallets}
-              OR total_val >= ${thresholds.minTotalValue})
-          END
+          WHERE (distinct_wallets >= ${thresholds.minWallets}
+            OR total_val >= ${thresholds.minTotalValue})
         `;
         break;
       default:
@@ -598,11 +589,8 @@ export async function GET(req: NextRequest) {
             FROM deduped GROUP BY condition_id, outcome
           )
           SELECT COUNT(*)::int AS count FROM aggregated
-          WHERE CASE WHEN ${convergenceWindowHours} = 6
-            THEN distinct_wallets >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
-            ELSE (distinct_wallets >= ${thresholds.minWallets}
-              OR total_val >= ${thresholds.minTotalValue})
-          END
+          WHERE (distinct_wallets >= ${thresholds.minWallets}
+            OR total_val >= ${thresholds.minTotalValue})
         `;
     }
 
@@ -636,11 +624,8 @@ export async function GET(req: NextRequest) {
               COALESCE(SUM(position_current_value::numeric), 0)::text as total_position_value,
               MIN(fill_price)::text as min_fill_price,
               MAX(fill_price)::text as max_fill_price,
-              CASE WHEN ${convergenceWindowHours} = 6
-                THEN COUNT(DISTINCT wallet) >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
-                ELSE (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                  OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue})
-              END AS qualifies
+              (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
+                OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
             FROM deduped GROUP BY condition_id, outcome
           )
           SELECT * FROM aggregated WHERE qualifies = TRUE
@@ -670,11 +655,8 @@ export async function GET(req: NextRequest) {
               COALESCE(SUM(position_current_value::numeric), 0)::text as total_position_value,
               MIN(fill_price)::text as min_fill_price,
               MAX(fill_price)::text as max_fill_price,
-              CASE WHEN ${convergenceWindowHours} = 6
-                THEN COUNT(DISTINCT wallet) >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
-                ELSE (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                  OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue})
-              END AS qualifies
+              (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
+                OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
             FROM deduped GROUP BY condition_id, outcome
           )
           SELECT * FROM aggregated WHERE qualifies = TRUE
@@ -704,11 +686,8 @@ export async function GET(req: NextRequest) {
               COALESCE(SUM(position_current_value::numeric), 0)::text as total_position_value,
               MIN(fill_price)::text as min_fill_price,
               MAX(fill_price)::text as max_fill_price,
-              CASE WHEN ${convergenceWindowHours} = 6
-                THEN COUNT(DISTINCT wallet) >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
-                ELSE (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                  OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue})
-              END AS qualifies
+              (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
+                OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
             FROM deduped GROUP BY condition_id, outcome
           )
           SELECT * FROM aggregated WHERE qualifies = TRUE
@@ -737,11 +716,8 @@ export async function GET(req: NextRequest) {
               COALESCE(SUM(position_current_value::numeric), 0)::text as total_position_value,
               MIN(fill_price)::text as min_fill_price,
               MAX(fill_price)::text as max_fill_price,
-              CASE WHEN ${convergenceWindowHours} = 6
-                THEN COUNT(DISTINCT wallet) >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
-                ELSE (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                  OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue})
-              END AS qualifies
+              (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
+                OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
             FROM deduped GROUP BY condition_id, outcome
           )
           SELECT * FROM aggregated WHERE qualifies = TRUE
@@ -811,11 +787,8 @@ export async function GET(req: NextRequest) {
               SELECT condition_id, outcome,
                 COUNT(DISTINCT wallet)::int as distinct_wallets,
                 COALESCE(SUM(position_current_value::numeric), 0) as total_val,
-                CASE WHEN ${convergenceWindowHours} = 6
-                  THEN COUNT(DISTINCT wallet) >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
-                  ELSE (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                    OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue})
-                END AS qualifies
+                (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
+                  OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
               FROM deduped GROUP BY condition_id, outcome
             ),
             group_keys AS (
@@ -856,11 +829,8 @@ export async function GET(req: NextRequest) {
               SELECT condition_id, outcome,
                 COUNT(DISTINCT wallet)::int as distinct_wallets,
                 COALESCE(SUM(position_current_value::numeric), 0) as total_val,
-                CASE WHEN ${convergenceWindowHours} = 6
-                  THEN COUNT(DISTINCT wallet) >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
-                  ELSE (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                    OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue})
-                END AS qualifies
+                (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
+                  OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
               FROM deduped GROUP BY condition_id, outcome
             ),
             group_keys AS (
@@ -901,11 +871,8 @@ export async function GET(req: NextRequest) {
               SELECT condition_id, outcome,
                 COUNT(DISTINCT wallet)::int as distinct_wallets,
                 COALESCE(SUM(position_current_value::numeric), 0) as total_val,
-                CASE WHEN ${convergenceWindowHours} = 6
-                  THEN COUNT(DISTINCT wallet) >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
-                  ELSE (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                    OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue})
-                END AS qualifies
+                (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
+                  OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
               FROM deduped GROUP BY condition_id, outcome
             ),
             group_keys AS (
@@ -945,11 +912,8 @@ export async function GET(req: NextRequest) {
               SELECT condition_id, outcome,
                 COUNT(DISTINCT wallet)::int as distinct_wallets,
                 COALESCE(SUM(position_current_value::numeric), 0) as total_val,
-                CASE WHEN ${convergenceWindowHours} = 6
-                  THEN COUNT(DISTINCT wallet) >= ${CONVERGENCE_THRESHOLDS[6].minWallets}
-                  ELSE (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                    OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue})
-                END AS qualifies
+                (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
+                  OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
               FROM deduped GROUP BY condition_id, outcome
             ),
             group_keys AS (
