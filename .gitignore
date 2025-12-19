@@ -3,3 +3,6 @@
 # Local env files (contain secrets)
 .env.local
 .env*.local
+
+# Checkpoint artifacts (local-only)
+.checkpoints/
