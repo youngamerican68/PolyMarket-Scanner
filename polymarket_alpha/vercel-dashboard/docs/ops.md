@@ -52,15 +52,15 @@ Minimal heartbeat monitoring to catch silent job failures. This supports future 
 
 ### Setup
 
-#### 1. Vercel Environment Variables
+#### 1. Vercel Environment Variables (Production)
 
-Add to Production environment:
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OPS_SECRET` | **Yes** | Bearer token for heartbeat auth. Generate with: `openssl rand -base64 32` |
+| `CRON_SECRET` | **Yes** | Bearer token for cron job auth |
+| `ENABLE_ADMIN_MIGRATIONS` | **No** | Set to `"true"` **only** when intentionally running migrations. Should be **unset** or `"false"` in Production by default. |
 
-```
-OPS_SECRET=<generate-a-strong-random-string>
-```
-
-Generate with: `openssl rand -base64 32`
+**Important:** `ENABLE_ADMIN_MIGRATIONS` must be exactly `"true"` (strict equality check). Any other value, including being unset, disables migrations.
 
 #### 2. GitHub Repository Secrets
 
@@ -69,7 +69,7 @@ Add these secrets in your GitHub repo (Settings > Secrets and variables > Action
 | Secret | Description |
 |--------|-------------|
 | `DOMAIN` | Production domain (e.g., `your-app.vercel.app`) |
-| `OPS_SECRET` | Same value as Vercel OPS_SECRET |
+| `OPS_SECRET` | Same value as Vercel `OPS_SECRET` |
 
 #### 3. Enable GitHub Email Notifications
 
@@ -83,12 +83,58 @@ Ensure your GitHub notification settings include "Actions" workflow failures:
 # Run unit tests
 npx tsx tests/heartbeat.test.ts
 
-# Test endpoint locally (set OPS_SECRET env var first)
-curl -H "Authorization: Bearer $OPS_SECRET" \
-  http://localhost:3000/api/ops/health/heartbeat
-
 # Manually trigger GitHub Action
 # Go to Actions tab > "Ops Heartbeat" > "Run workflow"
+```
+
+### Verification
+
+Copy/paste commands to verify the heartbeat endpoint:
+
+```bash
+# Set your domain and secret (replace with actual values)
+export DOMAIN="your-app.vercel.app"
+export OPS_SECRET="your-secret-here"
+
+# 1. Verify 401 without token
+curl -s -w "\nHTTP %{http_code}\n" \
+  "https://$DOMAIN/api/ops/health/heartbeat"
+# Expected: {"error":"Unauthorized"} HTTP 401
+
+# 2. Verify 401 with wrong token
+curl -s -w "\nHTTP %{http_code}\n" \
+  -H "Authorization: Bearer wrong-token" \
+  "https://$DOMAIN/api/ops/health/heartbeat"
+# Expected: {"error":"Unauthorized"} HTTP 401
+
+# 3. Verify 200 with correct token
+curl -s -w "\nHTTP %{http_code}\n" \
+  -H "Authorization: Bearer $OPS_SECRET" \
+  "https://$DOMAIN/api/ops/health/heartbeat"
+# Expected: {"ok":true,"generatedAt":"...","checks":[...]} HTTP 200
+
+# 4. Check cache headers (should include no-store)
+curl -s -I -H "Authorization: Bearer $OPS_SECRET" \
+  "https://$DOMAIN/api/ops/health/heartbeat" | grep -i cache
+# Expected: Cache-Control: no-store, no-cache, must-revalidate
+```
+
+**Example ok=false response** (when a job is stale):
+```json
+{
+  "ok": false,
+  "generatedAt": "2024-01-15T12:00:00.000Z",
+  "checks": [
+    {
+      "jobName": "refresh-baselines",
+      "scheduleMinutes": 360,
+      "lastSuccessAt": null,
+      "lastErrorAt": null,
+      "stale": true,
+      "message": "STALE: no successful run recorded"
+    }
+  ]
+}
 ```
 
 ### Troubleshooting

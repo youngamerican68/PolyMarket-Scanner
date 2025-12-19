@@ -58,9 +58,23 @@ jobs:
             exit 1
           fi
 
+          # Validate JSON response (fail fast on invalid JSON)
+          if ! echo "$BODY" | jq empty 2>/dev/null; then
+            echo "::error::Invalid JSON response from heartbeat endpoint"
+            echo "Response: $BODY"
+            exit 1
+          fi
+
           # Parse JSON response and check ok field
-          OK=$(echo "$BODY" | jq -r '.ok')
-          GENERATED_AT=$(echo "$BODY" | jq -r '.generatedAt')
+          OK=$(echo "$BODY" | jq -r '.ok // empty')
+          GENERATED_AT=$(echo "$BODY" | jq -r '.generatedAt // empty')
+
+          # Validate required fields exist
+          if [ -z "$OK" ]; then
+            echo "::error::Response missing 'ok' field"
+            echo "Response: $BODY"
+            exit 1
+          fi
 
           echo "Generated at: $GENERATED_AT"
           echo "Status: ok=$OK"

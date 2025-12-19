@@ -200,7 +200,9 @@ export async function POST(request: Request) {
 
     await sql`CREATE INDEX IF NOT EXISTS idx_job_runs_job_name_started ON job_runs (job_name, started_at DESC)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_job_runs_status ON job_runs (status) WHERE status = 'running'`;
-    console.log('[migrate] Created job_runs indexes');
+    // Heartbeat monitoring: index for efficient last success/error lookups per job
+    await sql`CREATE INDEX IF NOT EXISTS idx_job_runs_heartbeat ON job_runs (job_name, status, finished_at DESC)`;
+    console.log('[migrate] Created job_runs indexes (including heartbeat)');
 
     // =========================================================================
     // Phase 5: Conviction Sizing Anomaly Detection
@@ -328,6 +330,7 @@ export async function POST(request: Request) {
         'idx_outcome_price_cache_fetched_at',
         'idx_job_runs_job_name_started',
         'idx_job_runs_status',
+        'idx_job_runs_heartbeat',
         'idx_baselines_computed_at',
         'idx_conviction_anomalies_fill_timestamp',
         'idx_conviction_anomalies_wallet',
