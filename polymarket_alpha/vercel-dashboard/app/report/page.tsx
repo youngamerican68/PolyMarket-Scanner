@@ -140,6 +140,10 @@ interface ReportData {
     totalGroups: number
     groups: ConvergenceGroup[]
   }
+  largeSingleBets: {
+    totalGroups: number
+    groups: ConvergenceGroup[]
+  }
 }
 
 type WindowHours = 6 | 24 | 72
@@ -388,7 +392,7 @@ export default function ReportPage() {
 
   if (!report) return null
 
-  const { meta, alertsPage, convergence } = report
+  const { meta, alertsPage, convergence, largeSingleBets } = report
   const sortedAlerts = getSortedAlerts(alertsPage)
   const whaleAlerts = sortedAlerts.filter(a => a.isWhale)
   const regularAlerts = sortedAlerts.filter(a => !a.isWhale)
@@ -501,8 +505,12 @@ export default function ReportPage() {
           <p className="text-2xl font-bold">{meta.uniqueWallets}</p>
         </div>
         <div className="bg-poly-card rounded-lg p-4 border border-poly-border border-amber-500/50">
-          <p className="text-poly-muted text-sm">Convergence Groups</p>
+          <p className="text-poly-muted text-sm">Convergence (2+ wallets)</p>
           <p className="text-2xl font-bold text-amber-400">{convergence.totalGroups}</p>
+        </div>
+        <div className="bg-poly-card rounded-lg p-4 border border-poly-border border-cyan-500/50">
+          <p className="text-poly-muted text-sm">Large Single Bets</p>
+          <p className="text-2xl font-bold text-cyan-400">{largeSingleBets.totalGroups}</p>
         </div>
         <button
           onClick={() => setAnomaliesExpanded(!anomaliesExpanded)}
@@ -525,9 +533,7 @@ export default function ReportPage() {
             </span>
           </h2>
           <p className="text-xs text-poly-muted">
-            {windowHours === 6
-              ? 'Qualification: 2+ distinct wallets'
-              : 'Qualification: 3+ distinct wallets OR $10K+ combined position value'}
+            Qualification: 2+ distinct wallets betting on the same outcome
           </p>
 
           <div className="space-y-3">
@@ -562,6 +568,108 @@ export default function ReportPage() {
                       <div className="text-right">
                         <span className="text-poly-muted">Wallets: </span>
                         <span className="font-bold text-amber-400">{group.distinctWallets}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-poly-muted">Odds: </span>
+                        <span className="font-bold text-yellow-400">{group.oddsRangeFormatted}</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-poly-muted">Total Value: </span>
+                        <span className="font-bold text-poly-green">{group.totalPositionValueFormatted}</span>
+                      </div>
+                      <span className="text-poly-muted">{isExpanded ? '▼' : '▶'}</span>
+                    </div>
+                  </button>
+
+                  {isExpanded && group.wallets.length > 0 && (
+                    <div className="border-t border-poly-border">
+                      <table className="w-full text-sm">
+                        <thead className="bg-poly-border/50">
+                          <tr>
+                            <th className="text-left p-3 text-poly-muted font-medium">Wallet</th>
+                            <th className="text-right p-3 text-poly-muted font-medium">Odds</th>
+                            <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
+                            <th className="text-right p-3 text-poly-muted font-medium">Potential Win</th>
+                            <th className="text-right p-3 text-poly-muted font-medium">Time</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {group.wallets.map((w, idx) => (
+                            <tr key={idx} className="border-t border-poly-border/50">
+                              <td className="p-3">
+                                <a
+                                  href={`https://polymarket.com/profile/${w.wallet}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-poly-blue hover:underline"
+                                >
+                                  {w.whaleLabel || w.traderName || `${w.wallet.slice(0, 8)}...`}
+                                </a>
+                                {w.isWhale && <span className="ml-1 text-purple-400">🐋</span>}
+                              </td>
+                              <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
+                              <td className="p-3 text-right text-poly-green">{w.positionValueFormatted}</td>
+                              <td className="p-3 text-right text-cyan-400">{w.potentialWinFormatted}</td>
+                              <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </section>
+      )}
+
+      {/* Large Single Bets Section */}
+      {largeSingleBets.groups.length > 0 && (
+        <section className="space-y-4">
+          <h2 className="text-xl font-bold flex items-center">
+            <span className="w-3 h-3 bg-cyan-500 rounded-full mr-3"></span>
+            Large Single Bets
+            <span className="text-sm font-normal text-poly-muted ml-2">
+              ({largeSingleBets.totalGroups} market{largeSingleBets.totalGroups !== 1 ? 's' : ''} with $10K+ single wallet positions)
+            </span>
+          </h2>
+          <p className="text-xs text-poly-muted">
+            Single wallet positions exceeding $10K on longshot outcomes
+          </p>
+
+          <div className="space-y-3">
+            {largeSingleBets.groups.map((group) => {
+              const groupKey = `single-${group.conditionId}-${group.outcome}`
+              const isExpanded = expandedGroups.has(groupKey)
+
+              return (
+                <div
+                  key={groupKey}
+                  className="bg-poly-card rounded-lg border border-cyan-500/30 overflow-hidden"
+                >
+                  <button
+                    onClick={() => toggleGroupExpanded(groupKey)}
+                    className="w-full p-4 flex items-center justify-between hover:bg-poly-border/30 transition-colors"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="text-left">
+                        <a
+                          href={`https://polymarket.com/event/${group.eventSlug}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-poly-blue hover:underline font-medium"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          {group.title || 'Unknown Market'}
+                        </a>
+                        <span className="text-cyan-400 ml-2 font-medium">→ {group.outcome}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-6 text-sm">
+                      <div className="text-right">
+                        <span className="text-poly-muted">Wallets: </span>
+                        <span className="font-bold text-cyan-400">{group.distinctWallets}</span>
                       </div>
                       <div className="text-right">
                         <span className="text-poly-muted">Odds: </span>

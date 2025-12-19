@@ -1003,7 +1003,11 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    const qualifiedConvergence = Array.from(groupMap.values());
+    const allQualifiedGroups = Array.from(groupMap.values());
+
+    // Split into true convergence (2+ wallets) vs large single bets
+    const trueConvergence = allQualifiedGroups.filter(g => g.distinctWallets >= 2);
+    const largeSingleBets = allQualifiedGroups.filter(g => g.distinctWallets === 1);
 
     // ========================================================================
     // Response
@@ -1030,9 +1034,12 @@ export async function GET(req: NextRequest) {
       convergence: {
         windowHours: convergenceWindowHours,
         thresholds,
-        totalGroups: totalQualifiedGroups,
-        qualifiedGroups: qualifiedConvergence.length,
-        groups: qualifiedConvergence,
+        totalGroups: trueConvergence.length,
+        groups: trueConvergence,
+      },
+      largeSingleBets: {
+        totalGroups: largeSingleBets.length,
+        groups: largeSingleBets,
       },
     }, {
       headers: {
