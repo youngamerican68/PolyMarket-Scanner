@@ -15,6 +15,12 @@ import { sql } from '@vercel/postgres';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+// Response headers to prevent caching (admin endpoints + caches are dangerous)
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate',
+  'Pragma': 'no-cache',
+};
+
 // Audit log helper (no secrets)
 function auditLog(event: string, details?: Record<string, unknown>) {
   const timestamp = new Date().toISOString();
@@ -34,7 +40,7 @@ export async function POST(request: Request) {
     auditLog('blocked', { requestId, reason: 'migrations_disabled', clientIp });
     return NextResponse.json(
       { error: 'Admin migrations disabled. Set ENABLE_ADMIN_MIGRATIONS=true' },
-      { status: 403 }
+      { status: 403, headers: NO_CACHE_HEADERS }
     );
   }
 
@@ -46,7 +52,7 @@ export async function POST(request: Request) {
     auditLog('blocked', { requestId, reason: 'no_middleware_auth', clientIp });
     return NextResponse.json(
       { error: 'Unauthorized - use Basic Auth' },
-      { status: 401 }
+      { status: 401, headers: NO_CACHE_HEADERS }
     );
   }
 
@@ -349,13 +355,13 @@ export async function POST(request: Request) {
         'conviction_anomalies.severity',
         'conviction_anomalies.last_seen_at',
       ],
-    });
+    }, { headers: NO_CACHE_HEADERS });
   } catch (err) {
     console.error('[migrate] Migration failed:', err);
     auditLog('failed', { requestId, clientIp, error: String(err).slice(0, 200) });
     return NextResponse.json(
       { error: 'Migration failed', details: String(err) },
-      { status: 500 }
+      { status: 500, headers: NO_CACHE_HEADERS }
     );
   }
 }
@@ -364,6 +370,6 @@ export async function POST(request: Request) {
 export async function GET() {
   return NextResponse.json(
     { error: 'Method not allowed. Use POST.' },
-    { status: 405 }
+    { status: 405, headers: NO_CACHE_HEADERS }
   );
 }
