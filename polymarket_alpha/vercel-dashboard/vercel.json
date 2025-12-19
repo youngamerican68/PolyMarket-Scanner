@@ -7,7 +7,7 @@
     },
     {
       "path": "/api/jobs/refresh-baselines",
-      "schedule": "0 */6 * * *"
+      "schedule": "0 12 * * *"
     }
   ]
 }
