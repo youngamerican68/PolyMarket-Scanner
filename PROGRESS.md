@@ -123,6 +123,29 @@ Dashboard URL: `https://poly-market-scanner.vercel.app`
 
 ---
 
+## Local Gap Detection Runbook
+
+To check database freshness locally (useful for debugging data flow issues):
+
+```bash
+# 1. Pull production env vars
+cd polymarket_alpha/vercel-dashboard
+vercel env pull .env.local --environment=production
+
+# 2. Export DATABASE_URL (Vercel uses POSTGRES_URL)
+export DATABASE_URL=$(grep '^POSTGRES_URL=' .env.local | cut -d= -f2- | tr -d '"')
+
+# 3. Run gap detection (from repo root)
+cd ../..
+TRADES_TABLE="alert_events" TRADES_TS_COLUMN="fill_timestamp" ./gap_detect_db.sh
+```
+
+**Key tables:**
+- `alert_events.fill_timestamp` - Dashboard reads from this (use for monitoring)
+- `trades.created_at` - Raw trade ingestion (legacy, may be stale)
+
+---
+
 ## Future Considerations
 
 - Increase cron to 15-minute intervals if trade volume grows
