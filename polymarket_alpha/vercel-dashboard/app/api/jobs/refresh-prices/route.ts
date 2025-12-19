@@ -5,6 +5,7 @@
 
 import { NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
+import { isCronAuthed, cronUnauthorized } from '@/lib/cronAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -21,55 +22,9 @@ const NO_CACHE_HEADERS = {
   'Pragma': 'no-cache',
 };
 
-// Auth check - Bearer token (for cron), x-cron-secret header, query param, or Basic Auth (via middleware)
-function isAuthorized(request: Request): boolean {
-  const url = new URL(request.url);
-  const authHeader = request.headers.get('authorization');
-
-  // Check for Bearer token (CRON_SECRET)
-  if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.slice(7);
-    const expectedSecret = process.env.CRON_SECRET;
-    if (expectedSecret && token === expectedSecret) {
-      console.log('[refresh-prices] Auth: Bearer token');
-      return true;
-    }
-  }
-
-  // Check for x-cron-secret header (alternative)
-  const cronSecretHeader = request.headers.get('x-cron-secret');
-  const expectedSecret = process.env.CRON_SECRET;
-  if (expectedSecret && cronSecretHeader === expectedSecret) {
-    console.log('[refresh-prices] Auth: x-cron-secret header');
-    return true;
-  }
-
-  // Check for query param fallback (for /api/jobs/* only)
-  const cronSecretParam = url.searchParams.get('cronSecret');
-  if (expectedSecret && cronSecretParam === expectedSecret) {
-    console.log('[refresh-prices] Auth: query param');
-    return true;
-  }
-
-  // If CRON_SECRET is not set, allow only in dev mode
-  if (!expectedSecret) {
-    if (process.env.NODE_ENV === 'development') {
-      console.warn('[refresh-prices] CRON_SECRET not set - allowing in dev mode');
-      return true;
-    }
-    console.error('[refresh-prices] CRON_SECRET not set - denying in production');
-    return false;
-  }
-
-  // Check if middleware passed the request (Basic Auth)
-  const middlewareAuth = request.headers.get('x-middleware-auth');
-  if (middlewareAuth === 'passed') {
-    console.log('[refresh-prices] Auth: middleware Basic Auth');
-    return true;
-  }
-
-  return false;
-}
+// Auth check delegated to shared helper (lib/cronAuth.ts)
+// Validates: Authorization: Bearer <CRON_SECRET> or x-cron-secret header (legacy)
+// Uses constant-time comparison to prevent timing attacks
 
 interface JobMetrics {
   requested: number;
@@ -183,12 +138,9 @@ async function releaseLock(): Promise<void> {
 }
 
 export async function POST(request: Request) {
-  // Auth check
-  if (!isAuthorized(request)) {
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 401, headers: NO_CACHE_HEADERS }
-    );
+  // Auth check (defense-in-depth; middleware also validates)
+  if (!isCronAuthed(request)) {
+    return cronUnauthorized();
   }
 
   // Try to acquire advisory lock to prevent overlapping runs

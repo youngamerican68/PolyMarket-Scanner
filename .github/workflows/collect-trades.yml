@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: collect-trades
-  cancel-in-progress: false
+  cancel-in-progress: false  # Data collection should complete, not be interrupted
 
 jobs:
   collect:
@@ -22,8 +22,29 @@ jobs:
           COLLECT_TRADES_URL: ${{ secrets.COLLECT_TRADES_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          curl -f --show-error --silent \
+          # Make request and capture both status code and body
+          HTTP_RESPONSE=$(curl --silent --write-out "HTTPSTATUS:%{http_code}" \
             --max-time 30 \
             --retry 3 --retry-all-errors --retry-delay 2 \
             -X POST "$COLLECT_TRADES_URL" \
-            -H "x-cron-secret: $CRON_SECRET"
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json")
+
+          # Extract body and status code
+          HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed -e 's/HTTPSTATUS\:.*//g')
+          HTTP_STATUS=$(echo "$HTTP_RESPONSE" | tr -d '\n' | sed -e 's/.*HTTPSTATUS://')
+
+          echo "Status code: $HTTP_STATUS"
+          echo "Response: $HTTP_BODY"
+
+          # Handle different status codes
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
+            echo "Success!"
+            exit 0
+          elif [ "$HTTP_STATUS" -eq 409 ]; then
+            echo "Job already running (409 Conflict) - this is OK, advisory lock prevented overlap"
+            exit 0
+          else
+            echo "Request failed with status $HTTP_STATUS"
+            exit 1
+          fi

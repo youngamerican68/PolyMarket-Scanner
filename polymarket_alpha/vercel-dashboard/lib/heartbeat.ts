@@ -15,8 +15,9 @@ export interface JobConfig {
 
 // Jobs to monitor - add new jobs here as they're implemented
 // Only include jobs that exist in the codebase
+// Note: Heartbeat is informational only - it never gates job execution
 export const MONITORED_JOBS: JobConfig[] = [
-  { jobName: 'refresh-baselines', scheduleMinutes: 360 }, // 6 hours
+  { jobName: 'refresh-baselines', scheduleMinutes: 1440 }, // daily (stale after 48h)
   // 'generate-digest' will be added here once implemented (1440 = daily)
 ];
 

@@ -18,8 +18,8 @@ import {
   MIN_TRADES,
   DEDUPE_WINDOW_MINUTES,
   evaluateAnomaly,
-  constantTimeCompare,
 } from '@/lib/anomaly-config';
+import { isCronAuthed, cronUnauthorized } from '@/lib/cronAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -29,26 +29,8 @@ export const maxDuration = 120;
 const LONGSHOT_THRESHOLD = 0.25;
 const MIN_POSITION_THRESHOLD = 2500;
 
-// Auth check for cron requests (uses constant-time comparison)
-function isAuthorized(request: Request): boolean {
-  const secret = request.headers.get('x-cron-secret');
-  const expectedSecret = process.env.CRON_SECRET;
-
-  // If CRON_SECRET is not set, allow requests (dev mode only)
-  if (!expectedSecret) {
-    if (process.env.NODE_ENV === 'development') {
-      console.warn('[collect-trades] CRON_SECRET not set - allowing in dev mode');
-      return true;
-    }
-    console.error('[collect-trades] CRON_SECRET not set - denying in production');
-    return false;
-  }
-
-  if (!secret) return false;
-
-  // Use constant-time comparison to prevent timing attacks
-  return constantTimeCompare(secret, expectedSecret);
-}
+// Auth check delegated to shared helper (lib/cronAuth.ts)
+// Validates: Authorization: Bearer <CRON_SECRET> or x-cron-secret header (legacy)
 
 interface IngestionSummary {
   trades_fetched: number;
@@ -70,14 +52,11 @@ interface IngestionSummary {
   errors: string[];
 }
 
-// POST-only, requires x-cron-secret header
+// POST-only, requires Authorization: Bearer <CRON_SECRET> or x-cron-secret header
 export async function POST(request: Request) {
-  // Auth check
-  if (!isAuthorized(request)) {
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 401 }
-    );
+  // Auth check (defense-in-depth; middleware also validates)
+  if (!isCronAuthed(request)) {
+    return cronUnauthorized();
   }
 
   const startTime = Date.now();

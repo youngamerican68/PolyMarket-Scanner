@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: refresh-prices
-  cancel-in-progress: false
+  cancel-in-progress: false  # Price updates should complete, not be interrupted
 
 jobs:
   refresh:

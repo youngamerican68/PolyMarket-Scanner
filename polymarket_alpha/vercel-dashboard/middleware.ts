@@ -129,10 +129,7 @@ export function middleware(request: NextRequest) {
     if (pathname.startsWith('/api/jobs/')) {
       // Allow query param for jobs endpoints only
       if (verifyCronAuth(request, true) || verifyBasicAuth(request)) {
-        // Add header to indicate auth passed (for route handler to check)
-        const response = NextResponse.next()
-        response.headers.set('x-middleware-auth', 'passed')
-        return response
+        return NextResponse.next()
       }
       return unauthorizedResponse()
     }
@@ -142,13 +139,11 @@ export function middleware(request: NextRequest) {
       return unauthorizedResponse()
     }
 
-    const response = NextResponse.next()
-    response.headers.set('x-middleware-auth', 'passed')
-    return response
+    return NextResponse.next()
   }
 
   // =========================================================================
-  // Handle cron job endpoint (existing behavior for collect-trades)
+  // Handle cron job endpoint (collect-trades) - enforce auth at edge
   // =========================================================================
   if (pathname === '/api/collect-trades') {
     // Verify it's from Vercel cron (has the special header) or has cron auth
@@ -160,6 +155,11 @@ export function middleware(request: NextRequest) {
     if (verifyCronAuth(request, false)) {
       return NextResponse.next()
     }
+    // Reject unauthorized requests
+    return new NextResponse(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    })
   }
 
   // =========================================================================
@@ -269,5 +269,6 @@ export const config = {
     '/api/suspicious',
     '/api/admin/:path*',
     '/api/jobs/:path*',
+    '/api/collect-trades',
   ],
 }

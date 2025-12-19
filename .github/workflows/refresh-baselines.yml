@@ -11,7 +11,7 @@ permissions:
 
 concurrency:
   group: refresh-baselines
-  cancel-in-progress: false
+  cancel-in-progress: false  # Baseline computation should complete, not be interrupted
 
 jobs:
   refresh:

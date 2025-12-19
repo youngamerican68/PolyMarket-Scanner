@@ -9,8 +9,8 @@ import {
   BASELINE_LOOKBACK_DAYS,
   MIN_TRADES,
   ACTIVE_DAYS,
-  constantTimeCompare,
 } from '@/lib/anomaly-config';
+import { isCronAuthed, cronUnauthorized } from '@/lib/cronAuth';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -25,50 +25,9 @@ const NO_CACHE_HEADERS = {
   'Pragma': 'no-cache',
 };
 
-// Auth check using constant-time comparison
-function isAuthorized(request: Request): boolean {
-  const url = new URL(request.url);
-  const authHeader = request.headers.get('authorization');
-  const expectedSecret = process.env.CRON_SECRET;
-
-  // Check for Bearer token (CRON_SECRET)
-  if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.slice(7);
-    if (expectedSecret && constantTimeCompare(token, expectedSecret)) {
-      return true;
-    }
-  }
-
-  // Check for x-cron-secret header (alternative)
-  const cronSecretHeader = request.headers.get('x-cron-secret');
-  if (expectedSecret && cronSecretHeader && constantTimeCompare(cronSecretHeader, expectedSecret)) {
-    return true;
-  }
-
-  // Check for query param fallback (for /api/jobs/* only)
-  const cronSecretParam = url.searchParams.get('cronSecret');
-  if (expectedSecret && cronSecretParam && constantTimeCompare(cronSecretParam, expectedSecret)) {
-    return true;
-  }
-
-  // If CRON_SECRET is not set, allow only in dev mode
-  if (!expectedSecret) {
-    if (process.env.NODE_ENV === 'development') {
-      console.warn('[refresh-baselines] CRON_SECRET not set - allowing in dev mode');
-      return true;
-    }
-    console.error('[refresh-baselines] CRON_SECRET not set - denying in production');
-    return false;
-  }
-
-  // Check if middleware passed the request (Basic Auth)
-  const middlewareAuth = request.headers.get('x-middleware-auth');
-  if (middlewareAuth === 'passed') {
-    return true;
-  }
-
-  return false;
-}
+// Auth check delegated to shared helper (lib/cronAuth.ts)
+// Validates: Authorization: Bearer <CRON_SECRET> or x-cron-secret header (legacy)
+// Uses constant-time comparison to prevent timing attacks
 
 interface JobMetrics {
   walletsFound: number;
@@ -164,12 +123,9 @@ async function handleDryRun() {
 }
 
 export async function POST(request: Request) {
-  // Auth check
-  if (!isAuthorized(request)) {
-    return NextResponse.json(
-      { error: 'Unauthorized' },
-      { status: 401, headers: NO_CACHE_HEADERS }
-    );
+  // Auth check (defense-in-depth; middleware also validates)
+  if (!isCronAuthed(request)) {
+    return cronUnauthorized();
   }
 
   // Check for dry-run mode (stats only, no mutations)
