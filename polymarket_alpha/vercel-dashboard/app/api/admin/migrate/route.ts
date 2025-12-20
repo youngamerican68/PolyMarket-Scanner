@@ -53,7 +53,7 @@ export async function POST(request: Request) {
 
   // 4. Run idempotent migrations
   try {
-    console.log('[migrate] Starting migrations (Phases 1-6)...');
+    console.log('[migrate] Starting migrations (Phases 1-7)...');
 
     // Create alert_events table
     await sql`
@@ -318,6 +318,37 @@ export async function POST(request: Request) {
     await sql`CREATE INDEX IF NOT EXISTS idx_market_status_resolved ON market_status (market_resolved, updated_at DESC)`;
     console.log('[migrate] Created market_status indexes');
 
+    // =========================================================================
+    // Phase 7: Longshot Position Archive (raw snapshots only)
+    // =========================================================================
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS trade_history_longshot_positions (
+        id BIGSERIAL PRIMARY KEY,
+        dedupe_key TEXT UNIQUE NOT NULL,
+        wallet TEXT NOT NULL,
+        condition_id TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        fill_price NUMERIC(10, 6) NOT NULL,
+        pos_avg_entry NUMERIC(10, 6),
+        position_value_usd NUMERIC(18, 2) NOT NULL,
+        potential_win_usd NUMERIC(18, 2),
+        observed_at TIMESTAMPTZ NOT NULL,
+        source TEXT NOT NULL DEFAULT 'large_single_bet',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+    console.log('[migrate] Created trade_history_longshot_positions table');
+
+    // Indexes for leaderboard queries
+    await sql`CREATE INDEX IF NOT EXISTS idx_longshot_positions_wallet_observed
+      ON trade_history_longshot_positions (wallet, observed_at DESC)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_longshot_positions_condition
+      ON trade_history_longshot_positions (condition_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_longshot_positions_observed
+      ON trade_history_longshot_positions (observed_at DESC)`;
+    console.log('[migrate] Created trade_history_longshot_positions indexes');
+
     // Post-migration: run ANALYZE on touched tables for query planner
     try {
       await sql`ANALYZE outcome_price_cache`;
@@ -325,6 +356,7 @@ export async function POST(request: Request) {
       await sql`ANALYZE wallet_trade_size_baselines`;
       await sql`ANALYZE conviction_anomalies`;
       await sql`ANALYZE market_status`;
+      await sql`ANALYZE trade_history_longshot_positions`;
       console.log('[migrate] ANALYZE completed on all tables');
     } catch (err) {
       console.warn('[migrate] ANALYZE failed (non-critical):', String(err).slice(0, 100));
@@ -335,8 +367,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: 'Phases 1-6 migration complete (includes market resolution tracking)',
-      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status'],
+      message: 'Phases 1-7 migration complete (includes longshot position archive)',
+      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status', 'trade_history_longshot_positions'],
       indexes: [
         'idx_alert_events_fill_timestamp',
         'idx_alert_events_wallet_timestamp',
@@ -359,6 +391,9 @@ export async function POST(request: Request) {
         'idx_conviction_anomalies_severity',
         'idx_conviction_anomalies_dedupe',
         'idx_market_status_resolved',
+        'idx_longshot_positions_wallet_observed',
+        'idx_longshot_positions_condition',
+        'idx_longshot_positions_observed',
       ],
       constraints: [
         'outcome_price_cache PRIMARY KEY (condition_id, outcome)',

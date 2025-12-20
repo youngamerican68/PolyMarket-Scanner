@@ -6,12 +6,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import Decimal from 'decimal.js-light';
+import { archiveLongshotPositionsBatch, LongshotSnapshot } from '@/lib/longshots/archiveLongshotPosition';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 // Price staleness threshold in milliseconds (30 minutes)
 const PRICE_STALE_THRESHOLD_MS = 30 * 60 * 1000;
+
+// Phase 7: Longshot archive feature flag (default: off)
+const LONGSHOT_ARCHIVE_ENABLED = process.env.ENABLE_LONGSHOT_ARCHIVE === 'true';
 
 // ============================================================================
 // Constants - Convergence qualification thresholds (keep in one place)
@@ -51,6 +55,13 @@ function parseFloatParam(value: string | null, defaultValue: number, min: number
   const parsed = parseFloat(value);
   if (!Number.isFinite(parsed)) return defaultValue;
   return clamp(parsed, min, max);
+}
+
+// Floor date to hour granularity (for stable dedupe keys when no stable timestamp available)
+function floorToHour(date: Date): Date {
+  const d = new Date(date);
+  d.setMinutes(0, 0, 0);
+  return d;
 }
 
 // ============================================================================
@@ -108,6 +119,7 @@ type ConvergenceAggRow = {
   total_position_value: string;
   min_fill_price: string | null;
   max_fill_price: string | null;
+  latest_fill_timestamp: string | null; // Phase 7: for archive dedupe key
   qualifies: boolean;
 };
 
@@ -684,6 +696,7 @@ export async function GET(req: NextRequest) {
               COALESCE(SUM(position_current_value::numeric), 0)::text as total_position_value,
               MIN(fill_price)::text as min_fill_price,
               MAX(fill_price)::text as max_fill_price,
+              MAX(fill_timestamp)::text as latest_fill_timestamp,
               (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
                 OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
             FROM deduped GROUP BY condition_id, outcome
@@ -721,6 +734,7 @@ export async function GET(req: NextRequest) {
               COALESCE(SUM(position_current_value::numeric), 0)::text as total_position_value,
               MIN(fill_price)::text as min_fill_price,
               MAX(fill_price)::text as max_fill_price,
+              MAX(fill_timestamp)::text as latest_fill_timestamp,
               (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
                 OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
             FROM deduped GROUP BY condition_id, outcome
@@ -758,6 +772,7 @@ export async function GET(req: NextRequest) {
               COALESCE(SUM(position_current_value::numeric), 0)::text as total_position_value,
               MIN(fill_price)::text as min_fill_price,
               MAX(fill_price)::text as max_fill_price,
+              MAX(fill_timestamp)::text as latest_fill_timestamp,
               (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
                 OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
             FROM deduped GROUP BY condition_id, outcome
@@ -794,6 +809,7 @@ export async function GET(req: NextRequest) {
               COALESCE(SUM(position_current_value::numeric), 0)::text as total_position_value,
               MIN(fill_price)::text as min_fill_price,
               MAX(fill_price)::text as max_fill_price,
+              MAX(fill_timestamp)::text as latest_fill_timestamp,
               (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
                 OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
             FROM deduped GROUP BY condition_id, outcome
@@ -806,6 +822,8 @@ export async function GET(req: NextRequest) {
 
     // Build group lookup
     const groupMap = new Map<string, ConvergenceGroup>();
+    // Phase 7: Track latest fill timestamps separately (not in response)
+    const groupTimestampMap = new Map<string, string | null>();
 
     for (const row of convergenceAggResult.rows) {
       const totalRaw = row.total_position_value || '0';
@@ -822,6 +840,8 @@ export async function GET(req: NextRequest) {
       }
 
       const groupKey = `${row.condition_id}:${row.outcome}`;
+      // Phase 7: Store timestamp for archival (not in response)
+      groupTimestampMap.set(groupKey, row.latest_fill_timestamp);
       groupMap.set(groupKey, {
         conditionId: row.condition_id,
         outcome: row.outcome,
@@ -1117,6 +1137,48 @@ export async function GET(req: NextRequest) {
     // Split into true convergence (2+ wallets) vs large single bets
     const trueConvergence = allQualifiedGroups.filter(g => g.distinctWallets >= 2);
     const largeSingleBets = allQualifiedGroups.filter(g => g.distinctWallets === 1);
+
+    // ========================================================================
+    // Phase 7: Archive large single bet positions (fire-and-forget, non-blocking)
+    // ========================================================================
+    if (LONGSHOT_ARCHIVE_ENABLED && largeSingleBets.length > 0) {
+      const snapshots: LongshotSnapshot[] = [];
+
+      for (const bet of largeSingleBets) {
+        // Large single bet has exactly 1 wallet
+        const wallet = bet.wallets[0];
+        if (!wallet) continue;
+
+        // F: Skip if fillPrice is missing (don't default to 0)
+        const fillPrice = wallet.fillPrice;
+        if (fillPrice === null || fillPrice === undefined) continue;
+
+        const groupKey = `${bet.conditionId}:${bet.outcome}`;
+        const latestFillTimestamp = groupTimestampMap.get(groupKey);
+
+        // Use stable timestamp from underlying data, or floor to hour
+        const observedAt = latestFillTimestamp
+          ? new Date(latestFillTimestamp)
+          : floorToHour(new Date());
+
+        snapshots.push({
+          wallet: wallet.wallet,
+          conditionId: bet.conditionId,
+          outcome: bet.outcome,
+          fillPrice, // canonical fill price from wallet detail
+          posAvgEntry: wallet.positionAvgPrice,
+          positionValueUsd: bet.totalPositionValue,
+          potentialWinUsd: wallet.potentialWin, // Uses IS NULL check, not falsy
+          observedAt,
+        });
+      }
+
+      // Fire-and-forget: don't await, don't block response
+      // Use void prefix to avoid floating promise lint warnings
+      if (snapshots.length > 0) {
+        void archiveLongshotPositionsBatch(snapshots).catch(() => {});
+      }
+    }
 
     // ========================================================================
     // Response
