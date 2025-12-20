@@ -752,6 +752,7 @@ export default function ReportPage() {
                           {group.title || 'Unknown Market'}
                         </a>
                         <span className="text-cyan-400 ml-2 font-medium">→ {group.outcome}</span>
+                        <ConvergenceBadge group={group} />
                       </div>
                     </div>
                     <div className="flex items-center gap-6 text-sm">
