@@ -237,12 +237,14 @@ function ResolvedBadge({ alert }: { alert: AlertRow }) {
 
   return (
     <span
-      className={`ml-2 px-1.5 py-0.5 text-xs rounded font-medium ${
-        traderWon ? 'bg-green-700 text-green-100' : 'bg-red-700 text-red-100'
+      className={`ml-2 px-2 py-0.5 text-xs rounded font-bold ${
+        traderWon
+          ? 'bg-green-500 text-white'
+          : 'bg-red-500 text-white'
       }`}
       title={`Winner: ${alert.winningOutcome}`}
     >
-      {traderWon ? 'WON' : 'LOST'}
+      {traderWon ? '✓ WON' : '✗ LOST'}
     </span>
   )
 }
