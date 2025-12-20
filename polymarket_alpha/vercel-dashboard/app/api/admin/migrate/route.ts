@@ -45,16 +45,8 @@ export async function POST(request: Request) {
   }
 
   // 2. Auth is handled by middleware (Basic Auth for /api/admin/*)
-  // Verify middleware passed the request through
-  const middlewareAuth = request.headers.get('x-middleware-auth');
-  if (middlewareAuth !== 'passed') {
-    // In case middleware didn't run (shouldn't happen), deny access
-    auditLog('blocked', { requestId, reason: 'no_middleware_auth', clientIp });
-    return NextResponse.json(
-      { error: 'Unauthorized - use Basic Auth' },
-      { status: 401, headers: NO_CACHE_HEADERS }
-    );
-  }
+  // Middleware matcher includes /api/admin/* so if we get here, auth passed
+  // No need to check for x-middleware-auth header (removed as spoofable)
 
   // 3. Audit log: migration started
   auditLog('started', { requestId, clientIp });
