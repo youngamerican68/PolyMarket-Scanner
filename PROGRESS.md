@@ -192,6 +192,52 @@ See `CHECKPOINT.md` for full usage instructions.
 
 ---
 
+## Price Staleness
+
+GitHub Actions cron schedules are best-effort and may be delayed during high-load periods.
+When prices are stale (>30 minutes since last refresh):
+- Dashboard still shows all in-scope trades
+- Stale prices display with yellow "⚠ Xm ago" indicator showing age
+- Missing prices show "No price yet" but row still appears
+
+This does NOT indicate missing trades - only that the price refresh job hasn't run recently.
+The `refresh-prices` job queries distinct outcomes from the last 72 hours of `alert_events`,
+so all trades will eventually get prices when the job runs.
+
+---
+
+## Market Resolution Detection (Phase 6)
+
+Markets that have settled/resolved are now hidden by default to reduce noise.
+
+### How It Works
+- The `refresh-prices` job also checks market resolution status via CLOB API
+- Resolution status is stored in the `market_status` table with first-seen timestamps
+- Dashboard hides resolved markets by default; use "Show Resolved" checkbox to include them
+- Resolved rows appear with 50% opacity and a `RESOLVED` badge
+
+### Database Table: `market_status`
+| Column | Type | Description |
+|--------|------|-------------|
+| condition_id | TEXT PK | Market identifier |
+| market_closed | BOOLEAN | Market closed for trading |
+| market_resolved | BOOLEAN | Market has a winning outcome |
+| winning_outcome | TEXT | The winning outcome (e.g., "Yes", "No") |
+| market_closed_first_seen_at | TIMESTAMPTZ | When we first detected closure |
+| market_resolved_first_seen_at | TIMESTAMPTZ | When we first detected resolution |
+| updated_at | TIMESTAMPTZ | Last status check |
+
+### UI Changes
+- New "Show Resolved" checkbox in filters section (default: unchecked)
+- Resolved rows display with `opacity-50` styling
+- `RESOLVED` badge shows next to market title, with winning outcome in tooltip
+
+### API Parameter
+- `includeResolved=true` to include resolved markets in report response
+- Default behavior excludes resolved markets
+
+---
+
 ## Future Considerations
 
 - Increase cron to 15-minute intervals if trade volume grows

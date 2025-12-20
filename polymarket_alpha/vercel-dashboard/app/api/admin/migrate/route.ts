@@ -61,7 +61,7 @@ export async function POST(request: Request) {
 
   // 4. Run idempotent migrations
   try {
-    console.log('[migrate] Starting migrations (Phases 1-5)...');
+    console.log('[migrate] Starting migrations (Phases 1-6)...');
 
     // Create alert_events table
     await sql`
@@ -305,12 +305,34 @@ export async function POST(request: Request) {
 
     console.log('[migrate] Created conviction_anomalies indexes (including severity + dedupe)');
 
+    // =========================================================================
+    // Phase 6: Market Resolution Status Tracking
+    // =========================================================================
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS market_status (
+        condition_id TEXT PRIMARY KEY,
+        market_closed BOOLEAN NOT NULL DEFAULT FALSE,
+        market_closed_first_seen_at TIMESTAMPTZ,
+        market_resolved BOOLEAN NOT NULL DEFAULT FALSE,
+        market_resolved_first_seen_at TIMESTAMPTZ,
+        winning_outcome TEXT,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+    console.log('[migrate] Created market_status table');
+
+    // Index for filtering resolved markets in report queries
+    await sql`CREATE INDEX IF NOT EXISTS idx_market_status_resolved ON market_status (market_resolved, updated_at DESC)`;
+    console.log('[migrate] Created market_status indexes');
+
     // Post-migration: run ANALYZE on touched tables for query planner
     try {
       await sql`ANALYZE outcome_price_cache`;
       await sql`ANALYZE job_runs`;
       await sql`ANALYZE wallet_trade_size_baselines`;
       await sql`ANALYZE conviction_anomalies`;
+      await sql`ANALYZE market_status`;
       console.log('[migrate] ANALYZE completed on all tables');
     } catch (err) {
       console.warn('[migrate] ANALYZE failed (non-critical):', String(err).slice(0, 100));
@@ -321,8 +343,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: 'Phases 1-5 migration complete (includes conviction anomalies)',
-      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies'],
+      message: 'Phases 1-6 migration complete (includes market resolution tracking)',
+      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status'],
       indexes: [
         'idx_alert_events_fill_timestamp',
         'idx_alert_events_wallet_timestamp',
@@ -344,12 +366,14 @@ export async function POST(request: Request) {
         'idx_conviction_anomalies_alert_event',
         'idx_conviction_anomalies_severity',
         'idx_conviction_anomalies_dedupe',
+        'idx_market_status_resolved',
       ],
       constraints: [
         'outcome_price_cache PRIMARY KEY (condition_id, outcome)',
         'outcome_price_cache CHECK (price >= 0 AND price <= 1)',
         'wallet_trade_size_baselines PRIMARY KEY (wallet)',
         'conviction_anomalies REFERENCES alert_events(id)',
+        'market_status PRIMARY KEY (condition_id)',
       ],
       columnsAdded: [
         'conviction_anomalies.severity',

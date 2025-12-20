@@ -41,6 +41,10 @@ interface AlertRow {
   currentPriceFormatted: string
   priceStatus: PriceStatus
   priceFetchedAt: string | null
+  // Phase 6: Market resolution fields
+  marketResolved: boolean
+  marketClosed: boolean
+  winningOutcome: string | null
 }
 
 interface ConvergenceWallet {
@@ -185,11 +189,24 @@ function formatOdds(price: number | null): string {
 type SortField = 'fillPrice' | 'fillValue' | 'positionValue' | 'time' | 'currentPrice'
 type SortDirection = 'asc' | 'desc'
 
-// Price status indicator component
-function PriceStatusBadge({ status }: { status: PriceStatus }) {
+// Price status indicator component with age display
+function PriceStatusBadge({ status, fetchedAt }: { status: PriceStatus; fetchedAt?: string | null }) {
   if (status === 'fresh') return null
+  if (status === 'stale' && fetchedAt) {
+    const ageMinutes = Math.max(0, Math.floor((Date.now() - new Date(fetchedAt).getTime()) / 60000))
+    const ageDisplay = ageMinutes > 1440 ? '>24h' : `${ageMinutes}m`
+    return (
+      <span
+        className="ml-1 text-xs text-yellow-500"
+        title={`Last updated ${ageMinutes} min ago`}
+        suppressHydrationWarning
+      >
+        ⚠ {ageDisplay} ago
+      </span>
+    )
+  }
   if (status === 'stale') {
-    return <span className="ml-1 text-xs text-yellow-500" title="Price may be outdated">⚠ stale</span>
+    return <span className="ml-1 text-xs text-yellow-500">⚠ stale</span>
   }
   return null
 }
@@ -197,15 +214,25 @@ function PriceStatusBadge({ status }: { status: PriceStatus }) {
 // Price display component with status handling
 function PriceDisplay({ alert }: { alert: AlertRow }) {
   if (alert.priceStatus === 'missing' || alert.currentPrice === null) {
-    return <span className="text-poly-muted text-xs">Price unavailable</span>
+    return <span className="text-poly-muted text-xs italic">No price yet</span>
   }
   return (
     <>
       <span className={alert.priceStatus === 'stale' ? 'text-yellow-400' : 'text-cyan-400'}>
         {alert.currentPriceFormatted}
       </span>
-      <PriceStatusBadge status={alert.priceStatus} />
+      <PriceStatusBadge status={alert.priceStatus} fetchedAt={alert.priceFetchedAt} />
     </>
+  )
+}
+
+// Phase 6: Resolved market badge
+function ResolvedBadge({ alert }: { alert: AlertRow }) {
+  if (!alert.marketResolved) return null
+  return (
+    <span className="ml-2 px-1.5 py-0.5 text-xs bg-gray-600 text-gray-300 rounded" title={alert.winningOutcome ? `Winner: ${alert.winningOutcome}` : 'Market resolved'}>
+      RESOLVED
+    </span>
   )
 }
 
@@ -223,6 +250,7 @@ export default function ReportPage() {
   const [windowHours, setWindowHours] = useState<WindowHours>(24)
   const [whalesOnly, setWhalesOnly] = useState(false)
   const [category, setCategory] = useState<string>('')
+  const [includeResolved, setIncludeResolved] = useState(false)
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1)
@@ -267,6 +295,7 @@ export default function ReportPage() {
       })
       if (whalesOnly) params.set('whalesOnly', 'true')
       if (category.trim()) params.set('category', category.trim())
+      if (includeResolved) params.set('includeResolved', 'true')
 
       const res = await fetch(`/api/report?${params}`, {
         cache: 'no-store',
@@ -288,14 +317,14 @@ export default function ReportPage() {
     } finally {
       setLoading(false)
     }
-  }, [windowHours, whalesOnly, category, currentPage, fetchAnomalies])
+  }, [windowHours, whalesOnly, category, includeResolved, currentPage, fetchAnomalies])
 
   useEffect(() => {
     fetchReport(1) // Reset to page 1 when filters change
     const interval = setInterval(() => fetchReport(currentPage), 10 * 60 * 1000)
     return () => clearInterval(interval)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windowHours, whalesOnly, category])
+  }, [windowHours, whalesOnly, category, includeResolved])
 
   const goToPage = (page: number) => {
     if (report && page >= 1 && page <= report.meta.totalPages) {
@@ -457,6 +486,18 @@ export default function ReportPage() {
                 className="mr-2"
               />
               Whales Only
+            </label>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-poly-muted text-sm">
+              <input
+                type="checkbox"
+                checked={includeResolved}
+                onChange={(e) => setIncludeResolved(e.target.checked)}
+                className="mr-2"
+              />
+              Show Resolved
             </label>
           </div>
 
@@ -838,7 +879,7 @@ export default function ReportPage() {
                 </thead>
                 <tbody>
                   {whaleAlerts.slice(0, 20).map((alert) => (
-                    <tr key={alert.id} className="border-t border-poly-border hover:bg-poly-border/30">
+                    <tr key={alert.id} className={`border-t border-poly-border hover:bg-poly-border/30 ${alert.marketResolved ? 'opacity-50' : ''}`}>
                       <td className="p-3">
                         <div className="flex items-center gap-2">
                           <span className="text-purple-400">🐋</span>
@@ -865,6 +906,7 @@ export default function ReportPage() {
                           {(alert.title || 'Unknown Market').slice(0, 40)}
                         </a>
                         <span className="text-poly-muted ml-2">({alert.outcome})</span>
+                        <ResolvedBadge alert={alert} />
                       </td>
                       <td className="p-3 text-right text-poly-yellow">{alert.fillPriceFormatted}</td>
                       <td className="p-3 text-right"><PriceDisplay alert={alert} /></td>
@@ -948,7 +990,7 @@ export default function ReportPage() {
                     )
                   }
                   return displayAlerts.slice(0, 50).map((alert) => (
-                    <tr key={alert.id} className="border-t border-poly-border hover:bg-poly-border/30">
+                    <tr key={alert.id} className={`border-t border-poly-border hover:bg-poly-border/30 ${alert.marketResolved ? 'opacity-50' : ''}`}>
                       <td className="p-3 max-w-xs truncate">
                         <a
                           href={`https://polymarket.com/event/${alert.eventSlug}`}
@@ -959,6 +1001,7 @@ export default function ReportPage() {
                           {(alert.title || 'Unknown Market').slice(0, 40)}
                         </a>
                         <span className="text-poly-muted ml-2">({alert.outcome})</span>
+                        <ResolvedBadge alert={alert} />
                       </td>
                       <td className="p-3">
                         <a
@@ -1033,8 +1076,13 @@ export default function ReportPage() {
         <p className="mt-1">Position values are snapshots from ingestion time • Current prices refresh every 10 min</p>
         <p className="mt-1 text-xs">
           Price status: <span className="text-cyan-400">fresh</span> (&le;30min) &bull;
-          <span className="text-yellow-400 ml-2">stale</span> (&gt;30min) &bull;
-          <span className="text-poly-muted ml-2">unavailable</span> (no cache)
+          <span className="text-yellow-400 ml-2">⚠ Xm ago</span> (stale &gt;30min) &bull;
+          <span className="text-poly-muted ml-2 italic">No price yet</span> (pending)
+        </p>
+        <p className="mt-1 text-xs">
+          Resolved markets hidden by default &bull;
+          <span className="ml-1 px-1.5 py-0.5 bg-gray-600 text-gray-300 rounded text-xs">RESOLVED</span>
+          <span className="ml-1">= market has settled</span>
         </p>
       </footer>
     </div>

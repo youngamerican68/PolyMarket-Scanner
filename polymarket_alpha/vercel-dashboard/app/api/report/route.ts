@@ -86,6 +86,10 @@ type AlertRow = {
   // Cached price fields (from LEFT JOIN)
   cached_price: string | null;
   price_fetched_at: string | null;
+  // Phase 6: Market resolution fields (from LEFT JOIN market_status)
+  market_resolved: boolean | null;
+  market_closed: boolean | null;
+  winning_outcome: string | null;
 };
 
 type SummaryRow = {
@@ -158,6 +162,10 @@ interface FormattedAlert {
   currentPriceFormatted: string;
   priceStatus: PriceStatus;
   priceFetchedAt: string | null;
+  // Phase 6: Market resolution fields
+  marketResolved: boolean;
+  marketClosed: boolean;
+  winningOutcome: string | null;
 }
 
 interface WalletDetail {
@@ -273,6 +281,7 @@ export async function GET(req: NextRequest) {
     const convergenceWindowHours: WindowHours = convergenceWindowParsed;
 
     const whalesOnly = searchParams.get('whalesOnly') === 'true';
+    const includeResolved = searchParams.get('includeResolved') === 'true';
     const category = (searchParams.get('category') ?? '').trim() || null;
     const minPosition = parseFloatParam(searchParams.get('minPosition'), 2500, 0, 1e12);
     const maxOdds = parseFloatParam(searchParams.get('maxOdds'), 0.25, 0, 1);
@@ -291,7 +300,7 @@ export async function GET(req: NextRequest) {
     const filterMode = getFilterMode(whalesOnly, category);
 
     console.log(`[report] Alert window: ${alertWindowHours}h, Convergence: ${convergenceWindowHours}h`);
-    console.log(`[report] Filters: whalesOnly=${whalesOnly}, category=${category}, minPosition=${minPosition}, maxOdds=${maxOdds}`);
+    console.log(`[report] Filters: whalesOnly=${whalesOnly}, category=${category}, minPosition=${minPosition}, maxOdds=${maxOdds}, includeResolved=${includeResolved}`);
 
     // ========================================================================
     // Query 1: Paginated alerts for the table UI
@@ -307,15 +316,18 @@ export async function GET(req: NextRequest) {
             ae.fill_price, ae.fill_size, ae.fill_value_usd,
             ae.position_current_value, ae.position_avg_price, ae.position_size,
             ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
-            opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at
+            opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
+            ms.market_resolved, ms.market_closed, ms.winning_outcome
           FROM alert_events ae
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
+          LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
           WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
             AND ae.fill_price <= ${maxOdds}
             AND ae.position_current_value IS NOT NULL
             AND ae.position_current_value >= ${minPosition}
             AND ae.is_whale = TRUE
             AND ae.whale_category = ${category}
+            AND (${includeResolved}::boolean = TRUE OR COALESCE(ms.market_resolved, FALSE) = FALSE)
           ORDER BY ae.fill_timestamp DESC, ae.id DESC
           LIMIT ${pageSize} OFFSET ${offset}
         `;
@@ -327,14 +339,17 @@ export async function GET(req: NextRequest) {
             ae.fill_price, ae.fill_size, ae.fill_value_usd,
             ae.position_current_value, ae.position_avg_price, ae.position_size,
             ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
-            opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at
+            opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
+            ms.market_resolved, ms.market_closed, ms.winning_outcome
           FROM alert_events ae
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
+          LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
           WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
             AND ae.fill_price <= ${maxOdds}
             AND ae.position_current_value IS NOT NULL
             AND ae.position_current_value >= ${minPosition}
             AND ae.is_whale = TRUE
+            AND (${includeResolved}::boolean = TRUE OR COALESCE(ms.market_resolved, FALSE) = FALSE)
           ORDER BY ae.fill_timestamp DESC, ae.id DESC
           LIMIT ${pageSize} OFFSET ${offset}
         `;
@@ -346,14 +361,17 @@ export async function GET(req: NextRequest) {
             ae.fill_price, ae.fill_size, ae.fill_value_usd,
             ae.position_current_value, ae.position_avg_price, ae.position_size,
             ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
-            opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at
+            opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
+            ms.market_resolved, ms.market_closed, ms.winning_outcome
           FROM alert_events ae
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
+          LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
           WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
             AND ae.fill_price <= ${maxOdds}
             AND ae.position_current_value IS NOT NULL
             AND ae.position_current_value >= ${minPosition}
             AND ae.whale_category = ${category}
+            AND (${includeResolved}::boolean = TRUE OR COALESCE(ms.market_resolved, FALSE) = FALSE)
           ORDER BY ae.fill_timestamp DESC, ae.id DESC
           LIMIT ${pageSize} OFFSET ${offset}
         `;
@@ -365,13 +383,16 @@ export async function GET(req: NextRequest) {
             ae.fill_price, ae.fill_size, ae.fill_value_usd,
             ae.position_current_value, ae.position_avg_price, ae.position_size,
             ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
-            opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at
+            opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
+            ms.market_resolved, ms.market_closed, ms.winning_outcome
           FROM alert_events ae
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
+          LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
           WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
             AND ae.fill_price <= ${maxOdds}
             AND ae.position_current_value IS NOT NULL
             AND ae.position_current_value >= ${minPosition}
+            AND (${includeResolved}::boolean = TRUE OR COALESCE(ms.market_resolved, FALSE) = FALSE)
           ORDER BY ae.fill_timestamp DESC, ae.id DESC
           LIMIT ${pageSize} OFFSET ${offset}
         `;
@@ -424,6 +445,10 @@ export async function GET(req: NextRequest) {
         currentPriceFormatted: cachedPrice !== null ? formatOdds(cachedPrice) : 'Price unavailable',
         priceStatus,
         priceFetchedAt: row.price_fetched_at,
+        // Phase 6: Market resolution fields
+        marketResolved: row.market_resolved ?? false,
+        marketClosed: row.market_closed ?? false,
+        winningOutcome: row.winning_outcome ?? null,
       };
     });
 
