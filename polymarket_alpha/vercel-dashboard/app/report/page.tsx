@@ -922,7 +922,7 @@ export default function ReportPage() {
                 </thead>
                 <tbody>
                   {whaleAlerts.slice(0, 20).map((alert) => (
-                    <tr key={alert.id} className={`border-t border-poly-border hover:bg-poly-border/30 ${alert.marketResolved ? 'opacity-50' : ''}`}>
+                    <tr key={alert.id} className="border-t border-poly-border hover:bg-poly-border/30">
                       <td className="p-3">
                         <div className="flex items-center gap-2">
                           <span className="text-purple-400">🐋</span>
@@ -939,17 +939,21 @@ export default function ReportPage() {
                           )}
                         </div>
                       </td>
-                      <td className="p-3 max-w-xs truncate">
-                        <a
-                          href={`https://polymarket.com/event/${alert.eventSlug}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-poly-blue hover:underline"
-                        >
-                          {(alert.title || 'Unknown Market').slice(0, 40)}
-                        </a>
-                        <span className="text-poly-muted ml-2">({alert.outcome})</span>
-                        <ResolvedBadge alert={alert} />
+                      <td className="p-3">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate max-w-xs">
+                            <a
+                              href={`https://polymarket.com/event/${alert.eventSlug}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-poly-blue hover:underline"
+                            >
+                              {(alert.title || 'Unknown Market').slice(0, 40)}
+                            </a>
+                            <span className="text-poly-muted ml-2">({alert.outcome})</span>
+                          </span>
+                          <ResolvedBadge alert={alert} />
+                        </div>
                       </td>
                       <td className="p-3 text-right text-poly-yellow">{alert.fillPriceFormatted}</td>
                       <td className="p-3 text-right"><PriceDisplay alert={alert} /></td>
@@ -1033,18 +1037,22 @@ export default function ReportPage() {
                     )
                   }
                   return displayAlerts.slice(0, 50).map((alert) => (
-                    <tr key={alert.id} className={`border-t border-poly-border hover:bg-poly-border/30 ${alert.marketResolved ? 'opacity-50' : ''}`}>
-                      <td className="p-3 max-w-xs truncate">
-                        <a
-                          href={`https://polymarket.com/event/${alert.eventSlug}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-poly-blue hover:underline"
-                        >
-                          {(alert.title || 'Unknown Market').slice(0, 40)}
-                        </a>
-                        <span className="text-poly-muted ml-2">({alert.outcome})</span>
-                        <ResolvedBadge alert={alert} />
+                    <tr key={alert.id} className="border-t border-poly-border hover:bg-poly-border/30">
+                      <td className="p-3">
+                        <div className="flex items-center gap-2">
+                          <span className="truncate max-w-xs">
+                            <a
+                              href={`https://polymarket.com/event/${alert.eventSlug}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-poly-blue hover:underline"
+                            >
+                              {(alert.title || 'Unknown Market').slice(0, 40)}
+                            </a>
+                            <span className="text-poly-muted ml-2">({alert.outcome})</span>
+                          </span>
+                          <ResolvedBadge alert={alert} />
+                        </div>
                       </td>
                       <td className="p-3">
                         <a
