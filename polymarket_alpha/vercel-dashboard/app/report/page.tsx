@@ -229,15 +229,34 @@ function PriceDisplay({ alert }: { alert: AlertRow }) {
   )
 }
 
-// Phase 6: Resolved market badge with winning outcome
+// Phase 6: Resolved market badge with win/loss indicator
 function ResolvedBadge({ alert }: { alert: AlertRow }) {
   if (!alert.marketResolved) return null
-  const label = alert.winningOutcome
-    ? `RESOLVED (${alert.winningOutcome})`
-    : 'RESOLVED'
+
+  // Determine if this trader's bet won or lost
+  const traderWon = alert.winningOutcome && alert.outcome === alert.winningOutcome
+  const traderLost = alert.winningOutcome && alert.outcome !== alert.winningOutcome
+
+  if (traderWon) {
+    return (
+      <span className="ml-2 px-1.5 py-0.5 text-xs bg-green-700 text-green-100 rounded font-medium" title={`Winner: ${alert.winningOutcome}`}>
+        WON
+      </span>
+    )
+  }
+
+  if (traderLost) {
+    return (
+      <span className="ml-2 px-1.5 py-0.5 text-xs bg-red-700 text-red-100 rounded font-medium" title={`Winner: ${alert.winningOutcome}`}>
+        LOST
+      </span>
+    )
+  }
+
+  // Fallback if winning outcome not known yet
   return (
-    <span className="ml-2 px-1.5 py-0.5 text-xs bg-gray-600 text-gray-300 rounded" title={alert.winningOutcome ? `Winner: ${alert.winningOutcome}` : 'Market resolved'}>
-      {label}
+    <span className="ml-2 px-1.5 py-0.5 text-xs bg-gray-600 text-gray-300 rounded" title="Market resolved">
+      RESOLVED
     </span>
   )
 }
