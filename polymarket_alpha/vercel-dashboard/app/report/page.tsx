@@ -503,7 +503,7 @@ export default function ReportPage() {
                 onChange={(e) => setIncludeResolved(e.target.checked)}
                 className="mr-2"
               />
-              Show Resolved
+              Resolved Only
             </label>
           </div>
 

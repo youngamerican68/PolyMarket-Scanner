@@ -327,7 +327,7 @@ export async function GET(req: NextRequest) {
             AND ae.position_current_value >= ${minPosition}
             AND ae.is_whale = TRUE
             AND ae.whale_category = ${category}
-            AND (${includeResolved}::boolean = TRUE OR COALESCE(ms.market_resolved, FALSE) = FALSE)
+            AND COALESCE(ms.market_resolved, FALSE) = ${includeResolved}::boolean
           ORDER BY ae.fill_timestamp DESC, ae.id DESC
           LIMIT ${pageSize} OFFSET ${offset}
         `;
@@ -349,7 +349,7 @@ export async function GET(req: NextRequest) {
             AND ae.position_current_value IS NOT NULL
             AND ae.position_current_value >= ${minPosition}
             AND ae.is_whale = TRUE
-            AND (${includeResolved}::boolean = TRUE OR COALESCE(ms.market_resolved, FALSE) = FALSE)
+            AND COALESCE(ms.market_resolved, FALSE) = ${includeResolved}::boolean
           ORDER BY ae.fill_timestamp DESC, ae.id DESC
           LIMIT ${pageSize} OFFSET ${offset}
         `;
@@ -371,7 +371,7 @@ export async function GET(req: NextRequest) {
             AND ae.position_current_value IS NOT NULL
             AND ae.position_current_value >= ${minPosition}
             AND ae.whale_category = ${category}
-            AND (${includeResolved}::boolean = TRUE OR COALESCE(ms.market_resolved, FALSE) = FALSE)
+            AND COALESCE(ms.market_resolved, FALSE) = ${includeResolved}::boolean
           ORDER BY ae.fill_timestamp DESC, ae.id DESC
           LIMIT ${pageSize} OFFSET ${offset}
         `;
@@ -392,7 +392,7 @@ export async function GET(req: NextRequest) {
             AND ae.fill_price <= ${maxOdds}
             AND ae.position_current_value IS NOT NULL
             AND ae.position_current_value >= ${minPosition}
-            AND (${includeResolved}::boolean = TRUE OR COALESCE(ms.market_resolved, FALSE) = FALSE)
+            AND COALESCE(ms.market_resolved, FALSE) = ${includeResolved}::boolean
           ORDER BY ae.fill_timestamp DESC, ae.id DESC
           LIMIT ${pageSize} OFFSET ${offset}
         `;
@@ -536,9 +536,12 @@ export async function GET(req: NextRequest) {
               AND position_current_value >= ${minPosition}
               AND is_whale = TRUE
               AND whale_category = ${category}
-              AND (${includeResolved}::boolean = TRUE OR condition_id NOT IN (
-                SELECT condition_id FROM market_status WHERE market_resolved = TRUE
-              ))
+              AND (
+                CASE WHEN ${includeResolved}::boolean = TRUE
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                END
+              )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
           ),
           aggregated AS (
@@ -563,9 +566,12 @@ export async function GET(req: NextRequest) {
               AND position_current_value IS NOT NULL
               AND position_current_value >= ${minPosition}
               AND is_whale = TRUE
-              AND (${includeResolved}::boolean = TRUE OR condition_id NOT IN (
-                SELECT condition_id FROM market_status WHERE market_resolved = TRUE
-              ))
+              AND (
+                CASE WHEN ${includeResolved}::boolean = TRUE
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                END
+              )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
           ),
           aggregated AS (
@@ -590,9 +596,12 @@ export async function GET(req: NextRequest) {
               AND position_current_value IS NOT NULL
               AND position_current_value >= ${minPosition}
               AND whale_category = ${category}
-              AND (${includeResolved}::boolean = TRUE OR condition_id NOT IN (
-                SELECT condition_id FROM market_status WHERE market_resolved = TRUE
-              ))
+              AND (
+                CASE WHEN ${includeResolved}::boolean = TRUE
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                END
+              )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
           ),
           aggregated AS (
@@ -616,9 +625,12 @@ export async function GET(req: NextRequest) {
               AND fill_price <= ${maxOdds}
               AND position_current_value IS NOT NULL
               AND position_current_value >= ${minPosition}
-              AND (${includeResolved}::boolean = TRUE OR condition_id NOT IN (
-                SELECT condition_id FROM market_status WHERE market_resolved = TRUE
-              ))
+              AND (
+                CASE WHEN ${includeResolved}::boolean = TRUE
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                END
+              )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
           ),
           aggregated AS (
@@ -654,9 +666,12 @@ export async function GET(req: NextRequest) {
               AND position_current_value >= ${minPosition}
               AND is_whale = TRUE
               AND whale_category = ${category}
-              AND (${includeResolved}::boolean = TRUE OR condition_id NOT IN (
-                SELECT condition_id FROM market_status WHERE market_resolved = TRUE
-              ))
+              AND (
+                CASE WHEN ${includeResolved}::boolean = TRUE
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                END
+              )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
           ),
           aggregated AS (
@@ -688,9 +703,12 @@ export async function GET(req: NextRequest) {
               AND position_current_value IS NOT NULL
               AND position_current_value >= ${minPosition}
               AND is_whale = TRUE
-              AND (${includeResolved}::boolean = TRUE OR condition_id NOT IN (
-                SELECT condition_id FROM market_status WHERE market_resolved = TRUE
-              ))
+              AND (
+                CASE WHEN ${includeResolved}::boolean = TRUE
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                END
+              )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
           ),
           aggregated AS (
@@ -722,9 +740,12 @@ export async function GET(req: NextRequest) {
               AND position_current_value IS NOT NULL
               AND position_current_value >= ${minPosition}
               AND whale_category = ${category}
-              AND (${includeResolved}::boolean = TRUE OR condition_id NOT IN (
-                SELECT condition_id FROM market_status WHERE market_resolved = TRUE
-              ))
+              AND (
+                CASE WHEN ${includeResolved}::boolean = TRUE
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                END
+              )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
           ),
           aggregated AS (
@@ -755,9 +776,12 @@ export async function GET(req: NextRequest) {
               AND fill_price <= ${maxOdds}
               AND position_current_value IS NOT NULL
               AND position_current_value >= ${minPosition}
-              AND (${includeResolved}::boolean = TRUE OR condition_id NOT IN (
-                SELECT condition_id FROM market_status WHERE market_resolved = TRUE
-              ))
+              AND (
+                CASE WHEN ${includeResolved}::boolean = TRUE
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                END
+              )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
           ),
           aggregated AS (
@@ -832,9 +856,12 @@ export async function GET(req: NextRequest) {
                 AND position_current_value >= ${minPosition}
                 AND is_whale = TRUE
                 AND whale_category = ${category}
-                AND (${includeResolved}::boolean = TRUE OR condition_id NOT IN (
-                  SELECT condition_id FROM market_status WHERE market_resolved = TRUE
-                ))
+                AND (
+                  CASE WHEN ${includeResolved}::boolean = TRUE
+                    THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                    ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                  END
+                )
               ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
             ),
             aggregated AS (
@@ -877,9 +904,12 @@ export async function GET(req: NextRequest) {
                 AND position_current_value IS NOT NULL
                 AND position_current_value >= ${minPosition}
                 AND is_whale = TRUE
-                AND (${includeResolved}::boolean = TRUE OR condition_id NOT IN (
-                  SELECT condition_id FROM market_status WHERE market_resolved = TRUE
-                ))
+                AND (
+                  CASE WHEN ${includeResolved}::boolean = TRUE
+                    THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                    ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                  END
+                )
               ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
             ),
             aggregated AS (
@@ -922,9 +952,12 @@ export async function GET(req: NextRequest) {
                 AND position_current_value IS NOT NULL
                 AND position_current_value >= ${minPosition}
                 AND whale_category = ${category}
-                AND (${includeResolved}::boolean = TRUE OR condition_id NOT IN (
-                  SELECT condition_id FROM market_status WHERE market_resolved = TRUE
-                ))
+                AND (
+                  CASE WHEN ${includeResolved}::boolean = TRUE
+                    THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                    ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                  END
+                )
               ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
             ),
             aggregated AS (
@@ -966,9 +999,12 @@ export async function GET(req: NextRequest) {
                 AND fill_price <= ${maxOdds}
                 AND position_current_value IS NOT NULL
                 AND position_current_value >= ${minPosition}
-                AND (${includeResolved}::boolean = TRUE OR condition_id NOT IN (
-                  SELECT condition_id FROM market_status WHERE market_resolved = TRUE
-                ))
+                AND (
+                  CASE WHEN ${includeResolved}::boolean = TRUE
+                    THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                    ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                  END
+                )
               ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
             ),
             aggregated AS (
