@@ -212,26 +212,32 @@ function PriceStatusBadge({ status, fetchedAt }: { status: PriceStatus; fetchedA
 }
 
 // Price display component with status handling
+// Suppresses stale warning for resolved markets (stale price is irrelevant once settled)
 function PriceDisplay({ alert }: { alert: AlertRow }) {
   if (alert.priceStatus === 'missing' || alert.currentPrice === null) {
     return <span className="text-poly-muted text-xs italic">No price yet</span>
   }
+  // Don't show stale warning for resolved markets - price staleness is irrelevant
+  const showStaleWarning = alert.priceStatus === 'stale' && !alert.marketResolved
   return (
     <>
-      <span className={alert.priceStatus === 'stale' ? 'text-yellow-400' : 'text-cyan-400'}>
+      <span className={showStaleWarning ? 'text-yellow-400' : 'text-cyan-400'}>
         {alert.currentPriceFormatted}
       </span>
-      <PriceStatusBadge status={alert.priceStatus} fetchedAt={alert.priceFetchedAt} />
+      {showStaleWarning && <PriceStatusBadge status={alert.priceStatus} fetchedAt={alert.priceFetchedAt} />}
     </>
   )
 }
 
-// Phase 6: Resolved market badge
+// Phase 6: Resolved market badge with winning outcome
 function ResolvedBadge({ alert }: { alert: AlertRow }) {
   if (!alert.marketResolved) return null
+  const label = alert.winningOutcome
+    ? `RESOLVED (${alert.winningOutcome})`
+    : 'RESOLVED'
   return (
     <span className="ml-2 px-1.5 py-0.5 text-xs bg-gray-600 text-gray-300 rounded" title={alert.winningOutcome ? `Winner: ${alert.winningOutcome}` : 'Market resolved'}>
-      RESOLVED
+      {label}
     </span>
   )
 }

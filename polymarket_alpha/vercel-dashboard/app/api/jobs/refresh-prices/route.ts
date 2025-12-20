@@ -166,6 +166,23 @@ async function updateMarketResolutionStatus(
   const BATCH_SIZE = 10; // Concurrency limit
   const BATCH_DELAY_MS = 200; // Delay between batches
 
+  // Check if market_status table exists (graceful degradation before migration runs)
+  try {
+    const tableCheck = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_name = 'market_status'
+      ) as exists
+    `;
+    if (!tableCheck.rows[0]?.exists) {
+      console.log('[refresh-prices] market_status table not found - skipping resolution check (run migration first)');
+      return;
+    }
+  } catch (err) {
+    console.warn('[refresh-prices] Could not check for market_status table:', err);
+    return;
+  }
+
   for (let i = 0; i < conditionIds.length; i += BATCH_SIZE) {
     const batch = conditionIds.slice(i, i + BATCH_SIZE);
 
