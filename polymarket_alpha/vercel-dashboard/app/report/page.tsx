@@ -514,13 +514,15 @@ export default function ReportPage() {
 
           <div className="flex items-center gap-2">
             <label className="text-poly-muted text-sm">Category:</label>
-            <input
-              type="text"
+            <select
               value={category}
               onChange={(e) => setCategory(e.target.value)}
-              placeholder="e.g., Crypto"
-              className="bg-poly-border border border-poly-border rounded px-3 py-1.5 text-sm w-32"
-            />
+              className="bg-poly-border border border-poly-border rounded px-3 py-1.5 text-sm"
+            >
+              <option value="">All</option>
+              <option value="crypto">crypto</option>
+              <option value="sports">sports</option>
+            </select>
           </div>
 
           <div className="text-xs text-poly-muted ml-auto">

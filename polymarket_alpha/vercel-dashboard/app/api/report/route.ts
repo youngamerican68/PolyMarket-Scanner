@@ -282,7 +282,7 @@ export async function GET(req: NextRequest) {
 
     const whalesOnly = searchParams.get('whalesOnly') === 'true';
     const includeResolved = searchParams.get('includeResolved') === 'true';
-    const category = (searchParams.get('category') ?? '').trim() || null;
+    const category = (searchParams.get('category') ?? '').trim().toLowerCase() || null;
     const minPosition = parseFloatParam(searchParams.get('minPosition'), 2500, 0, 1e12);
     const maxOdds = parseFloatParam(searchParams.get('maxOdds'), 0.25, 0, 1);
     const page = parseIntParam(searchParams.get('page'), 1, 1, 1_000_000);
