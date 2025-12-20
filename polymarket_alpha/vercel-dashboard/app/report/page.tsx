@@ -247,7 +247,7 @@ function ResolvedBadge({ alert }: { alert: AlertRow }) {
   }
 
   return (
-    <span className="ml-2 text-xs">
+    <span className="ml-2 text-xs whitespace-nowrap">
       <span className="px-2 py-0.5 rounded font-bold bg-red-500 text-white">✗ LOST</span>
       <span className="ml-1 text-gray-400">→ {alert.winningOutcome} won</span>
     </span>
@@ -269,7 +269,7 @@ function ConvergenceBadge({ group }: { group: ConvergenceGroup }) {
   }
 
   return (
-    <span className="ml-2 text-xs">
+    <span className="ml-2 text-xs whitespace-nowrap">
       <span className="px-2 py-0.5 rounded font-bold bg-red-500 text-white">✗ LOST</span>
       <span className="ml-1 text-gray-400">→ {group.winningOutcome} won</span>
     </span>
