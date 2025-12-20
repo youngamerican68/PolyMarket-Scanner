@@ -77,6 +77,9 @@ interface ConvergenceGroup {
   oddsRangeFormatted: string
   qualifies: boolean
   wallets: ConvergenceWallet[]
+  // Phase 6: Market resolution fields
+  marketResolved: boolean
+  winningOutcome: string | null
 }
 
 interface ReportMeta {
@@ -247,6 +250,28 @@ function ResolvedBadge({ alert }: { alert: AlertRow }) {
     <span className="ml-2 text-xs">
       <span className="px-2 py-0.5 rounded font-bold bg-red-500 text-white">✗ LOST</span>
       <span className="ml-1 text-gray-400">→ {alert.winningOutcome} won</span>
+    </span>
+  )
+}
+
+// Convergence group badge (shows if the group's outcome won or lost)
+function ConvergenceBadge({ group }: { group: ConvergenceGroup }) {
+  if (!group.marketResolved || !group.winningOutcome) return null
+
+  const groupWon = group.outcome === group.winningOutcome
+
+  if (groupWon) {
+    return (
+      <span className="ml-2 px-2 py-0.5 text-xs rounded font-bold bg-green-500 text-white">
+        ✓ WON
+      </span>
+    )
+  }
+
+  return (
+    <span className="ml-2 text-xs">
+      <span className="px-2 py-0.5 rounded font-bold bg-red-500 text-white">✗ LOST</span>
+      <span className="ml-1 text-gray-400">→ {group.winningOutcome} won</span>
     </span>
   )
 }
@@ -622,6 +647,7 @@ export default function ReportPage() {
                           {group.title || 'Unknown Market'}
                         </a>
                         <span className="text-amber-400 ml-2 font-medium">→ {group.outcome}</span>
+                        <ConvergenceBadge group={group} />
                       </div>
                     </div>
                     <div className="flex items-center gap-6 text-sm">

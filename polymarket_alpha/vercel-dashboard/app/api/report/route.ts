@@ -200,6 +200,9 @@ interface ConvergenceGroup {
   oddsRangeFormatted: string;
   qualifies: boolean;
   wallets: WalletDetail[];
+  // Phase 6: Market resolution fields
+  marketResolved: boolean;
+  winningOutcome: string | null;
 }
 
 // ============================================================================
@@ -834,7 +837,48 @@ export async function GET(req: NextRequest) {
         oddsRangeFormatted,
         qualifies: row.qualifies,
         wallets: [],
+        // Will be enriched below
+        marketResolved: false,
+        winningOutcome: null,
       });
+    }
+
+    // Enrich convergence groups with market resolution status
+    if (groupMap.size > 0) {
+      try {
+        // Get all unique condition IDs from groups
+        const conditionIdSet = new Set<string>();
+        const groups = Array.from(groupMap.values());
+        for (let i = 0; i < groups.length; i++) {
+          conditionIdSet.add(groups[i].conditionId);
+        }
+
+        // Query resolution status for all condition IDs at once
+        // Use a subquery approach since arrays aren't directly supported
+        const resolutionResult = await sql<{ condition_id: string; market_resolved: boolean; winning_outcome: string | null }>`
+          SELECT ms.condition_id, ms.market_resolved, ms.winning_outcome
+          FROM market_status ms
+          WHERE ms.condition_id IN (
+            SELECT DISTINCT ae.condition_id
+            FROM alert_events ae
+            WHERE ae.condition_id IS NOT NULL
+          )
+          AND ms.market_resolved = TRUE
+        `;
+
+        const resolutionMap = new Map(resolutionResult.rows.map(r => [r.condition_id, r]));
+        const groupsToEnrich = Array.from(groupMap.values());
+        for (let i = 0; i < groupsToEnrich.length; i++) {
+          const group = groupsToEnrich[i];
+          const status = resolutionMap.get(group.conditionId);
+          if (status) {
+            group.marketResolved = status.market_resolved ?? false;
+            group.winningOutcome = status.winning_outcome ?? null;
+          }
+        }
+      } catch (err) {
+        console.warn('[report] Failed to enrich convergence with resolution status:', err);
+      }
     }
 
     // Query wallet details only if we have groups
