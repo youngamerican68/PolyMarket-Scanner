@@ -209,6 +209,14 @@ async function updateMarketResolutionStatus(
         const marketResolved = !!winnerToken && !!winningOutcome;
         const marketClosed = marketData.closed || marketResolved; // resolved implies closed
 
+        // Debug: Log when we find a closed market without detectable winner
+        if (marketData.closed && !marketResolved) {
+          const tokenInfo = marketData.tokens?.map((t: { outcome?: string; winner?: boolean }) =>
+            `${t.outcome || 'no-outcome'}:winner=${t.winner}`
+          ).join(', ');
+          console.log(`[refresh-prices] Closed but no winner detected: ${conditionId} - tokens: [${tokenInfo}]`);
+        }
+
         if (marketResolved) metrics.marketsResolved++;
         if (marketClosed && !marketResolved) metrics.marketsClosed++;
 
