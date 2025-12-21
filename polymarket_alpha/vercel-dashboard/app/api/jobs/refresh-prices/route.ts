@@ -202,19 +202,33 @@ async function updateMarketResolutionStatus(
       }
 
       try {
-        // Parse resolution status
-        const winnerToken = marketData.tokens?.find(t => t.winner === true);
-        // Only mark as resolved if we have a valid winning outcome (not just winner=true)
-        const winningOutcome = winnerToken?.outcome?.trim() || null;
+        // Parse resolution status with robust winner detection
+        // Handle various truthy variants: true, "true", 1, "1"
+        const isWinner = (t: Record<string, unknown>): boolean =>
+          t.winner === true || t.winner === 'true' || t.winner === 1 || t.winner === '1';
+
+        const winnerToken = marketData.tokens?.find(isWinner);
+
+        // Extract outcome from multiple possible fields (API schema varies)
+        const extractOutcome = (t: Record<string, unknown> | undefined): string | null => {
+          if (!t) return null;
+          const raw = t.outcome ?? t.label ?? t.name ?? t.symbol;
+          return typeof raw === 'string' ? raw.trim() : null;
+        };
+
+        const winningOutcome = extractOutcome(winnerToken);
         const marketResolved = !!winnerToken && !!winningOutcome;
         const marketClosed = marketData.closed || marketResolved; // resolved implies closed
 
         // Debug: Log when we find a closed market without detectable winner
         if (marketData.closed && !marketResolved) {
-          const tokenInfo = marketData.tokens?.map((t: { outcome?: string; winner?: boolean }) =>
-            `${t.outcome || 'no-outcome'}:winner=${t.winner}`
+          const winnerCount = marketData.tokens?.filter(isWinner).length ?? 0;
+          const firstToken = marketData.tokens?.[0];
+          const tokenKeys = firstToken ? Object.keys(firstToken).join(',') : 'no-tokens';
+          const tokenInfo = marketData.tokens?.slice(0, 3).map((t: Record<string, unknown>) =>
+            `${extractOutcome(t) || 'no-outcome'}:winner=${t.winner}`
           ).join(', ');
-          console.log(`[refresh-prices] Closed but no winner detected: ${conditionId} - tokens: [${tokenInfo}]`);
+          console.log(`[refresh-prices] Closed but no winner: ${conditionId} | winnerCount=${winnerCount} | keys=[${tokenKeys}] | tokens=[${tokenInfo}]`);
         }
 
         if (marketResolved) metrics.marketsResolved++;
