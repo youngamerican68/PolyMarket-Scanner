@@ -316,6 +316,8 @@ export async function POST(request: Request) {
 
     // Index for filtering resolved markets in report queries
     await sql`CREATE INDEX IF NOT EXISTS idx_market_status_resolved ON market_status (market_resolved, updated_at DESC)`;
+    // Partial index for EXISTS lookups by condition_id (only resolved markets with known winners)
+    await sql`CREATE INDEX IF NOT EXISTS idx_market_status_resolved_winner ON market_status (condition_id) WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != ''`;
     console.log('[migrate] Created market_status indexes');
 
     // =========================================================================
