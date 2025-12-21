@@ -204,9 +204,10 @@ async function updateMarketResolutionStatus(
       try {
         // Parse resolution status
         const winnerToken = marketData.tokens?.find(t => t.winner === true);
-        const marketResolved = !!winnerToken;
+        // Only mark as resolved if we have a valid winning outcome (not just winner=true)
+        const winningOutcome = winnerToken?.outcome?.trim() || null;
+        const marketResolved = !!winnerToken && !!winningOutcome;
         const marketClosed = marketData.closed || marketResolved; // resolved implies closed
-        const winningOutcome = winnerToken?.outcome || null;
 
         if (marketResolved) metrics.marketsResolved++;
         if (marketClosed && !marketResolved) metrics.marketsClosed++;
