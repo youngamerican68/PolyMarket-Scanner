@@ -105,6 +105,10 @@ type AlertRow = {
   // Phase 8: Final P&L from market_final_pnl (when resolved)
   final_pnl: string | null;
   final_position_found: boolean | null;
+  // Phase 9: Estimate metadata
+  final_pnl_is_estimated: boolean | null;
+  final_pnl_estimate_source: string | null;
+  final_pnl_estimate_as_of: string | null;
 };
 
 type SummaryRow = {
@@ -144,6 +148,10 @@ type WalletDetailRow = {
   // Phase 8: Final P&L
   final_pnl: string | null;
   final_position_found: boolean | null;
+  // Phase 9: Estimate metadata
+  final_pnl_is_estimated: boolean | null;
+  final_pnl_estimate_source: string | null;
+  final_pnl_estimate_as_of: string | null;
 };
 
 type TotalGroupsRow = {
@@ -189,6 +197,10 @@ interface FormattedAlert {
   // Phase 8: Final P&L from market_final_pnl (when resolved)
   finalPnl: number | null;
   finalPositionFound: boolean | null;
+  // Phase 9: Estimate metadata
+  finalPnlIsEstimated: boolean | null;
+  finalPnlEstimateSource: string | null;
+  finalPnlEstimateAsOf: string | null;
 }
 
 interface WalletDetail {
@@ -209,6 +221,10 @@ interface WalletDetail {
   // Phase 8: Final P&L
   finalPnl: number | null;
   finalPositionFound: boolean | null;
+  // Phase 9: Estimate metadata
+  finalPnlIsEstimated: boolean | null;
+  finalPnlEstimateSource: string | null;
+  finalPnlEstimateAsOf: string | null;
 }
 
 interface ConvergenceGroup {
@@ -349,7 +365,10 @@ export async function GET(req: NextRequest) {
             opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
             ms.market_resolved, ms.market_closed, ms.winning_outcome, ms.finalized_at as market_finalized_at,
             mfp.final_pnl::text as final_pnl,
-            mfp.position_found as final_position_found
+            mfp.position_found as final_position_found,
+            mfp.is_estimated as final_pnl_is_estimated,
+            mfp.estimate_source as final_pnl_estimate_source,
+            mfp.estimate_as_of::text as final_pnl_estimate_as_of
           FROM alert_events ae
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
           LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
@@ -380,7 +399,10 @@ export async function GET(req: NextRequest) {
             opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
             ms.market_resolved, ms.market_closed, ms.winning_outcome, ms.finalized_at as market_finalized_at,
             mfp.final_pnl::text as final_pnl,
-            mfp.position_found as final_position_found
+            mfp.position_found as final_position_found,
+            mfp.is_estimated as final_pnl_is_estimated,
+            mfp.estimate_source as final_pnl_estimate_source,
+            mfp.estimate_as_of::text as final_pnl_estimate_as_of
           FROM alert_events ae
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
           LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
@@ -410,7 +432,10 @@ export async function GET(req: NextRequest) {
             opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
             ms.market_resolved, ms.market_closed, ms.winning_outcome, ms.finalized_at as market_finalized_at,
             mfp.final_pnl::text as final_pnl,
-            mfp.position_found as final_position_found
+            mfp.position_found as final_position_found,
+            mfp.is_estimated as final_pnl_is_estimated,
+            mfp.estimate_source as final_pnl_estimate_source,
+            mfp.estimate_as_of::text as final_pnl_estimate_as_of
           FROM alert_events ae
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
           LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
@@ -440,7 +465,10 @@ export async function GET(req: NextRequest) {
             opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
             ms.market_resolved, ms.market_closed, ms.winning_outcome, ms.finalized_at as market_finalized_at,
             mfp.final_pnl::text as final_pnl,
-            mfp.position_found as final_position_found
+            mfp.position_found as final_position_found,
+            mfp.is_estimated as final_pnl_is_estimated,
+            mfp.estimate_source as final_pnl_estimate_source,
+            mfp.estimate_as_of::text as final_pnl_estimate_as_of
           FROM alert_events ae
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
           LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
@@ -515,6 +543,10 @@ export async function GET(req: NextRequest) {
         // Phase 8: Final P&L from market_final_pnl (when resolved)
         finalPnl: row.final_pnl !== null ? parseFloat(row.final_pnl) : null,
         finalPositionFound: row.final_position_found ?? null,
+        // Phase 9: Estimate metadata
+        finalPnlIsEstimated: row.final_pnl_is_estimated ?? null,
+        finalPnlEstimateSource: row.final_pnl_estimate_source ?? null,
+        finalPnlEstimateAsOf: row.final_pnl_estimate_as_of ?? null,
       };
     });
 
@@ -1014,6 +1046,9 @@ export async function GET(req: NextRequest) {
                 d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
                 mfp.final_pnl, mfp.position_found as final_position_found,
+                mfp.is_estimated as final_pnl_is_estimated,
+                mfp.estimate_source as final_pnl_estimate_source,
+                mfp.estimate_as_of::text as final_pnl_estimate_as_of,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
@@ -1064,6 +1099,9 @@ export async function GET(req: NextRequest) {
                 d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
                 mfp.final_pnl, mfp.position_found as final_position_found,
+                mfp.is_estimated as final_pnl_is_estimated,
+                mfp.estimate_source as final_pnl_estimate_source,
+                mfp.estimate_as_of::text as final_pnl_estimate_as_of,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
@@ -1114,6 +1152,9 @@ export async function GET(req: NextRequest) {
                 d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
                 mfp.final_pnl, mfp.position_found as final_position_found,
+                mfp.is_estimated as final_pnl_is_estimated,
+                mfp.estimate_source as final_pnl_estimate_source,
+                mfp.estimate_as_of::text as final_pnl_estimate_as_of,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
@@ -1163,6 +1204,9 @@ export async function GET(req: NextRequest) {
                 d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
                 mfp.final_pnl, mfp.position_found as final_position_found,
+                mfp.is_estimated as final_pnl_is_estimated,
+                mfp.estimate_source as final_pnl_estimate_source,
+                mfp.estimate_as_of::text as final_pnl_estimate_as_of,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
@@ -1205,6 +1249,10 @@ export async function GET(req: NextRequest) {
             // Phase 8: Final P&L
             finalPnl: row.final_pnl !== null ? parseFloat(row.final_pnl) : null,
             finalPositionFound: row.final_position_found ?? null,
+            // Phase 9: Estimate metadata
+            finalPnlIsEstimated: row.final_pnl_is_estimated ?? null,
+            finalPnlEstimateSource: row.final_pnl_estimate_source ?? null,
+            finalPnlEstimateAsOf: row.final_pnl_estimate_as_of ?? null,
           });
         }
       }

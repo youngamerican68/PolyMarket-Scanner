@@ -8,6 +8,7 @@ import { NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import { isCronAuthed, cronUnauthorized } from '@/lib/cronAuth';
 import { finalizeResolvedPnL } from '@/lib/finalize-resolved-pnl';
+import { fetchPositionsWithRetry } from '@/lib/polymarket';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -45,6 +46,10 @@ interface JobMetrics {
   // Phase 8: Final P&L metrics
   pnlMarketsFinalized: number;
   pnlUpserts: number;
+  // Phase 9: Position snapshot metrics
+  snapshotWalletsFetched: number;
+  snapshotPositionsUpserted: number;
+  snapshotErrors: number;
 }
 
 // Phase 6: Market resolution data from CLOB API
@@ -283,6 +288,117 @@ async function updateMarketResolutionStatus(
   }
 }
 
+// Phase 9: Snapshot open positions for tracked wallets (before resolution)
+// This allows us to estimate P&L when positions disappear after resolution
+async function snapshotOpenPositions(
+  metrics: JobMetrics
+): Promise<void> {
+  // Check if snapshot table exists
+  try {
+    const tableCheck = await sql<{ exists: boolean }>`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables
+        WHERE table_name = 'wallet_position_snapshot'
+      ) as exists
+    `;
+    if (!tableCheck.rows[0]?.exists) {
+      console.log('[refresh-prices] wallet_position_snapshot table not found - skipping (run migration first)');
+      return;
+    }
+  } catch (err) {
+    console.warn('[refresh-prices] Could not check for wallet_position_snapshot table:', err);
+    return;
+  }
+
+  // Get distinct wallets from unresolved markets (limit to avoid rate limiting)
+  const walletsResult = await sql<{ wallet: string }>`
+    SELECT DISTINCT wallet
+    FROM alert_events ae
+    WHERE ae.wallet IS NOT NULL
+      AND NOT EXISTS (
+        SELECT 1 FROM market_status ms
+        WHERE ms.condition_id = ae.condition_id
+          AND ms.market_resolved = TRUE
+          AND ms.winning_outcome IS NOT NULL
+          AND TRIM(ms.winning_outcome) != ''
+      )
+    LIMIT 50
+  `;
+
+  const wallets = walletsResult.rows.map(r => r.wallet);
+  if (wallets.length === 0) {
+    console.log('[refresh-prices] No wallets with unresolved positions to snapshot');
+    return;
+  }
+
+  // Get condition_ids we care about (from alert_events) for filtering
+  const conditionsResult = await sql<{ condition_id: string }>`
+    SELECT DISTINCT condition_id FROM alert_events WHERE condition_id IS NOT NULL
+  `;
+  const trackedConditions = new Set(conditionsResult.rows.map(r => r.condition_id));
+
+  console.log(`[refresh-prices] Snapshotting positions for ${wallets.length} wallets`);
+
+  // Process wallets with concurrency limit
+  const BATCH_SIZE = 5;
+  for (let i = 0; i < wallets.length; i += BATCH_SIZE) {
+    const batch = wallets.slice(i, i + BATCH_SIZE);
+
+    await Promise.all(
+      batch.map(async (wallet) => {
+        try {
+          const { positions } = await fetchPositionsWithRetry(wallet, 100);
+          metrics.snapshotWalletsFetched++;
+
+          for (const pos of positions) {
+            // Only snapshot positions for markets we track
+            if (!pos.conditionId || !trackedConditions.has(pos.conditionId)) continue;
+            if (!pos.outcome) continue;
+
+            // Get shares and avgPrice
+            const shares = pos.size;
+            let avgPrice = pos.avgPrice;
+
+            // Skip if no valid position data
+            if (shares === null || shares === undefined || shares <= 0) continue;
+            if (avgPrice === null || avgPrice === undefined) continue;
+
+            // Defensive normalization: avgPrice should be 0-1
+            if (avgPrice > 1) {
+              avgPrice = avgPrice / 100; // Assume 0-100 scale
+            }
+            avgPrice = Math.max(0, Math.min(1, avgPrice)); // Clamp to [0,1]
+
+            // Upsert snapshot
+            try {
+              await sql`
+                INSERT INTO wallet_position_snapshot (wallet, condition_id, outcome, shares, avg_price, updated_at)
+                VALUES (${wallet}, ${pos.conditionId}, ${pos.outcome}, ${shares}, ${avgPrice}, NOW())
+                ON CONFLICT (wallet, condition_id, outcome)
+                DO UPDATE SET shares = EXCLUDED.shares, avg_price = EXCLUDED.avg_price, updated_at = NOW()
+              `;
+              metrics.snapshotPositionsUpserted++;
+            } catch (err) {
+              console.warn(`[refresh-prices] Failed to upsert snapshot for ${wallet}/${pos.conditionId}:`, err);
+              metrics.snapshotErrors++;
+            }
+          }
+        } catch (err) {
+          console.warn(`[refresh-prices] Failed to fetch positions for wallet ${wallet}:`, err);
+          metrics.snapshotErrors++;
+        }
+      })
+    );
+
+    // Rate limit between batches
+    if (i + BATCH_SIZE < wallets.length) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+
+  console.log(`[refresh-prices] Snapshots: ${metrics.snapshotWalletsFetched} wallets, ${metrics.snapshotPositionsUpserted} positions, ${metrics.snapshotErrors} errors`);
+}
+
 // Try to acquire advisory lock, returns true if acquired
 async function tryAcquireLock(): Promise<boolean> {
   try {
@@ -340,6 +456,10 @@ export async function POST(request: Request) {
     // Phase 8: Final P&L metrics
     pnlMarketsFinalized: 0,
     pnlUpserts: 0,
+    // Phase 9: Position snapshot metrics
+    snapshotWalletsFetched: 0,
+    snapshotPositionsUpserted: 0,
+    snapshotErrors: 0,
   };
 
   try {
@@ -454,6 +574,15 @@ export async function POST(request: Request) {
       metrics.oldestFetchedAt = oldestResult.rows[0]?.oldest || null;
     } catch {
       // Non-critical, ignore
+    }
+
+    // Phase 9: Snapshot open positions for tracked wallets
+    // Run BEFORE resolution check/finalization so snapshots are available
+    try {
+      await snapshotOpenPositions(metrics);
+    } catch (err) {
+      // Non-critical - don't fail the whole job if snapshotting fails
+      console.warn('[refresh-prices] Position snapshotting failed (non-fatal):', err);
     }
 
     // Phase 6: Check market resolution status for condition_ids from DB

@@ -387,6 +387,51 @@ export async function POST(request: Request) {
       console.log('[migrate] finalized_at column already exists or failed:', String(err).slice(0, 80));
     }
 
+    // =========================================================================
+    // Phase 9: Position Snapshots + Estimated P&L tracking
+    // =========================================================================
+
+    // Table: wallet_position_snapshot - stores latest open position snapshots
+    // Used to estimate P&L when positions disappear after market resolution
+    await sql`
+      CREATE TABLE IF NOT EXISTS wallet_position_snapshot (
+        wallet TEXT NOT NULL,
+        condition_id TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        shares DOUBLE PRECISION NOT NULL,
+        avg_price DOUBLE PRECISION NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (wallet, condition_id, outcome)
+      )
+    `;
+    console.log('[migrate] Created wallet_position_snapshot table');
+
+    // Index for efficient lookups by condition_id
+    await sql`CREATE INDEX IF NOT EXISTS idx_wallet_position_snapshot_condition ON wallet_position_snapshot (condition_id)`;
+    console.log('[migrate] Created wallet_position_snapshot index');
+
+    // Add estimate tracking columns to market_final_pnl
+    try {
+      await sql`ALTER TABLE market_final_pnl ADD COLUMN is_estimated BOOLEAN NOT NULL DEFAULT FALSE`;
+      console.log('[migrate] Added is_estimated column to market_final_pnl');
+    } catch (err) {
+      console.log('[migrate] is_estimated column already exists or failed:', String(err).slice(0, 80));
+    }
+
+    try {
+      await sql`ALTER TABLE market_final_pnl ADD COLUMN estimate_source TEXT`;
+      console.log('[migrate] Added estimate_source column to market_final_pnl');
+    } catch (err) {
+      console.log('[migrate] estimate_source column already exists or failed:', String(err).slice(0, 80));
+    }
+
+    try {
+      await sql`ALTER TABLE market_final_pnl ADD COLUMN estimate_as_of TIMESTAMPTZ`;
+      console.log('[migrate] Added estimate_as_of column to market_final_pnl');
+    } catch (err) {
+      console.log('[migrate] estimate_as_of column already exists or failed:', String(err).slice(0, 80));
+    }
+
     // Post-migration: run ANALYZE on touched tables for query planner
     try {
       await sql`ANALYZE outcome_price_cache`;
@@ -396,6 +441,7 @@ export async function POST(request: Request) {
       await sql`ANALYZE market_status`;
       await sql`ANALYZE trade_history_longshot_positions`;
       await sql`ANALYZE market_final_pnl`;
+      await sql`ANALYZE wallet_position_snapshot`;
       console.log('[migrate] ANALYZE completed on all tables');
     } catch (err) {
       console.warn('[migrate] ANALYZE failed (non-critical):', String(err).slice(0, 100));
@@ -406,8 +452,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: 'Phases 1-8 migration complete (includes final P&L tracking)',
-      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status', 'trade_history_longshot_positions', 'market_final_pnl'],
+      message: 'Phases 1-9 migration complete (includes position snapshots + estimated P&L)',
+      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status', 'trade_history_longshot_positions', 'market_final_pnl', 'wallet_position_snapshot'],
       indexes: [
         'idx_alert_events_fill_timestamp',
         'idx_alert_events_wallet_timestamp',
@@ -435,6 +481,7 @@ export async function POST(request: Request) {
         'idx_longshot_positions_observed',
         'idx_market_final_pnl_condition',
         'idx_market_final_pnl_wallet',
+        'idx_wallet_position_snapshot_condition',
       ],
       constraints: [
         'outcome_price_cache PRIMARY KEY (condition_id, outcome)',
@@ -443,11 +490,15 @@ export async function POST(request: Request) {
         'conviction_anomalies REFERENCES alert_events(id)',
         'market_status PRIMARY KEY (condition_id)',
         'market_final_pnl PRIMARY KEY (condition_id, wallet, outcome)',
+        'wallet_position_snapshot PRIMARY KEY (wallet, condition_id, outcome)',
       ],
       columnsAdded: [
         'conviction_anomalies.severity',
         'conviction_anomalies.last_seen_at',
         'market_status.finalized_at',
+        'market_final_pnl.is_estimated',
+        'market_final_pnl.estimate_source',
+        'market_final_pnl.estimate_as_of',
       ],
     }, { headers: NO_CACHE_HEADERS });
   } catch (err) {

@@ -198,18 +198,123 @@ export async function finalizeResolvedPnL(opts: FinalizeOptions = {}): Promise<F
         const p = posByWalletOutcome.get(key);
 
         if (!p) {
-          // No final position found (wallet exited or API doesn't return it)
-          // Store sentinel row with position_found = false
+          // No position found in API (likely redeemed after resolution)
+          // Try to get estimate from snapshot or alert data
+
+          // First, try position snapshot
+          const snapshotResult = await sql<{
+            shares: number;
+            avg_price: number;
+            updated_at: string;
+          }>`
+            SELECT shares, avg_price, updated_at
+            FROM wallet_position_snapshot
+            WHERE wallet = ${wallet}
+              AND condition_id = ${conditionId}
+              AND outcome = ${outcome}
+          `;
+
+          if (snapshotResult.rows.length > 0) {
+            // Use snapshot for estimated P&L
+            const snap = snapshotResult.rows[0];
+            const shares = snap.shares;
+            const avgPrice = snap.avg_price;
+            const costBasis = shares * avgPrice;
+            const potentialWin = shares * (1 - avgPrice);
+            const estimatedPnl = outcome === winningOutcome ? potentialWin : -costBasis;
+
+            await sql`
+              INSERT INTO market_final_pnl
+                (condition_id, wallet, outcome, position_found, shares, avg_price, potential_win, cost_basis, final_pnl, winning_outcome, is_estimated, estimate_source, estimate_as_of)
+              VALUES
+                (${conditionId}, ${wallet}, ${outcome}, FALSE, ${shares}, ${avgPrice}, ${potentialWin}, ${costBasis}, ${estimatedPnl}, ${winningOutcome}, TRUE, 'position_snapshot', ${snap.updated_at}::timestamptz)
+              ON CONFLICT (condition_id, wallet, outcome)
+              DO UPDATE SET
+                position_found = EXCLUDED.position_found,
+                shares = EXCLUDED.shares,
+                avg_price = EXCLUDED.avg_price,
+                potential_win = EXCLUDED.potential_win,
+                cost_basis = EXCLUDED.cost_basis,
+                final_pnl = EXCLUDED.final_pnl,
+                winning_outcome = EXCLUDED.winning_outcome,
+                is_estimated = EXCLUDED.is_estimated,
+                estimate_source = EXCLUDED.estimate_source,
+                estimate_as_of = EXCLUDED.estimate_as_of,
+                finalized_at = NOW()
+            `;
+            result.upserts++;
+            continue;
+          }
+
+          // Fallback: try alert_events snapshot
+          const alertResult = await sql<{
+            position_size: string | null;
+            position_avg_price: string | null;
+            fill_timestamp: string;
+          }>`
+            SELECT position_size, position_avg_price, fill_timestamp
+            FROM alert_events
+            WHERE wallet = ${wallet}
+              AND condition_id = ${conditionId}
+              AND outcome = ${outcome}
+              AND position_size IS NOT NULL
+              AND position_avg_price IS NOT NULL
+            ORDER BY fill_timestamp DESC
+            LIMIT 1
+          `;
+
+          if (alertResult.rows.length > 0) {
+            const alert = alertResult.rows[0];
+            const shares = parseFloat(alert.position_size || '0');
+            let avgPrice = parseFloat(alert.position_avg_price || '0');
+
+            // Normalize avgPrice (alert data stores as 0-1 typically)
+            if (avgPrice > 1) avgPrice = avgPrice / 100;
+            avgPrice = Math.max(0, Math.min(1, avgPrice));
+
+            if (shares > 0 && avgPrice > 0) {
+              const costBasis = shares * avgPrice;
+              const potentialWin = shares * (1 - avgPrice);
+              const estimatedPnl = outcome === winningOutcome ? potentialWin : -costBasis;
+
+              await sql`
+                INSERT INTO market_final_pnl
+                  (condition_id, wallet, outcome, position_found, shares, avg_price, potential_win, cost_basis, final_pnl, winning_outcome, is_estimated, estimate_source, estimate_as_of)
+                VALUES
+                  (${conditionId}, ${wallet}, ${outcome}, FALSE, ${shares}, ${avgPrice}, ${potentialWin}, ${costBasis}, ${estimatedPnl}, ${winningOutcome}, TRUE, 'alert_snapshot', ${alert.fill_timestamp}::timestamptz)
+                ON CONFLICT (condition_id, wallet, outcome)
+                DO UPDATE SET
+                  position_found = EXCLUDED.position_found,
+                  shares = EXCLUDED.shares,
+                  avg_price = EXCLUDED.avg_price,
+                  potential_win = EXCLUDED.potential_win,
+                  cost_basis = EXCLUDED.cost_basis,
+                  final_pnl = EXCLUDED.final_pnl,
+                  winning_outcome = EXCLUDED.winning_outcome,
+                  is_estimated = EXCLUDED.is_estimated,
+                  estimate_source = EXCLUDED.estimate_source,
+                  estimate_as_of = EXCLUDED.estimate_as_of,
+                  finalized_at = NOW()
+              `;
+              result.upserts++;
+              continue;
+            }
+          }
+
+          // No snapshot available - store NULL with position_found = false
           await sql`
             INSERT INTO market_final_pnl
-              (condition_id, wallet, outcome, position_found, final_pnl, winning_outcome)
+              (condition_id, wallet, outcome, position_found, final_pnl, winning_outcome, is_estimated)
             VALUES
-              (${conditionId}, ${wallet}, ${outcome}, FALSE, NULL, ${winningOutcome})
+              (${conditionId}, ${wallet}, ${outcome}, FALSE, NULL, ${winningOutcome}, FALSE)
             ON CONFLICT (condition_id, wallet, outcome)
             DO UPDATE SET
               position_found = EXCLUDED.position_found,
               final_pnl = EXCLUDED.final_pnl,
               winning_outcome = EXCLUDED.winning_outcome,
+              is_estimated = EXCLUDED.is_estimated,
+              estimate_source = NULL,
+              estimate_as_of = NULL,
               finalized_at = NOW()
           `;
           result.upserts++;
@@ -233,9 +338,9 @@ export async function finalizeResolvedPnL(opts: FinalizeOptions = {}): Promise<F
 
         await sql`
           INSERT INTO market_final_pnl
-            (condition_id, wallet, outcome, position_found, shares, avg_price, potential_win, cost_basis, final_pnl, winning_outcome)
+            (condition_id, wallet, outcome, position_found, shares, avg_price, potential_win, cost_basis, final_pnl, winning_outcome, is_estimated)
           VALUES
-            (${conditionId}, ${wallet}, ${outcome}, TRUE, ${shares}, ${avgPrice}, ${potentialWin}, ${costBasis}, ${finalPnl}, ${winningOutcome})
+            (${conditionId}, ${wallet}, ${outcome}, TRUE, ${shares}, ${avgPrice}, ${potentialWin}, ${costBasis}, ${finalPnl}, ${winningOutcome}, FALSE)
           ON CONFLICT (condition_id, wallet, outcome)
           DO UPDATE SET
             position_found = EXCLUDED.position_found,
@@ -245,6 +350,9 @@ export async function finalizeResolvedPnL(opts: FinalizeOptions = {}): Promise<F
             cost_basis = EXCLUDED.cost_basis,
             final_pnl = EXCLUDED.final_pnl,
             winning_outcome = EXCLUDED.winning_outcome,
+            is_estimated = EXCLUDED.is_estimated,
+            estimate_source = NULL,
+            estimate_as_of = NULL,
             finalized_at = NOW()
         `;
         result.upserts++;

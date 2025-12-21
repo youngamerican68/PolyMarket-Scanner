@@ -49,6 +49,10 @@ interface AlertRow {
   // Phase 8: Final P&L from market_final_pnl (when resolved)
   finalPnl: number | null
   finalPositionFound: boolean | null
+  // Phase 9: Estimate metadata
+  finalPnlIsEstimated: boolean | null
+  finalPnlEstimateSource: string | null
+  finalPnlEstimateAsOf: string | null
 }
 
 interface ConvergenceWallet {
@@ -68,6 +72,10 @@ interface ConvergenceWallet {
   // Phase 8: Final P&L
   finalPnl: number | null
   finalPositionFound: boolean | null
+  // Phase 9: Estimate metadata
+  finalPnlIsEstimated: boolean | null
+  finalPnlEstimateSource: string | null
+  finalPnlEstimateAsOf: string | null
 }
 
 interface ConvergenceGroup {
@@ -293,28 +301,37 @@ function ActualPnL({ alert }: { alert: AlertRow }) {
     return <span className="text-amber-400">{alert.potentialWinFormatted}</span>
   }
 
-  // RESOLVED MARKET: Strict gating - only use finalized P&L, no fallback
+  // RESOLVED MARKET
 
-  // Case 1: Position explicitly not found (wallet exited pre-resolution)
-  if (alert.finalPositionFound === false) {
-    return <span className="text-gray-500 italic text-sm" title="Wallet exited before resolution">P&L unavailable</span>
-  }
-
-  // Case 2: We have finalized P&L - display it
+  // Case 1: We have finalized P&L - display it
   if (alert.finalPnl !== null && alert.finalPnl !== undefined) {
     const isWin = alert.finalPnl >= 0
     const absValue = Math.abs(alert.finalPnl)
+    const isEstimated = alert.finalPnlIsEstimated === true
+    const prefix = isEstimated ? '~' : ''
     const formatted = absValue >= 1000
-      ? `${isWin ? '+' : '-'}$${(absValue / 1000).toFixed(1)}K`
-      : `${isWin ? '+' : '-'}$${absValue.toFixed(0)}`
-    return <span className={`font-bold ${isWin ? 'text-green-400' : 'text-red-400'}`}>{formatted}</span>
+      ? `${prefix}${isWin ? '+' : '-'}$${(absValue / 1000).toFixed(1)}K`
+      : `${prefix}${isWin ? '+' : '-'}$${absValue.toFixed(0)}`
+
+    // Tooltip for estimated values
+    const tooltip = isEstimated
+      ? 'Estimated from last observed position; actual may differ'
+      : undefined
+
+    return (
+      <span
+        className={`font-bold ${isWin ? 'text-green-400' : 'text-red-400'} ${isEstimated ? 'opacity-80' : ''}`}
+        title={tooltip}
+      >
+        {formatted}
+      </span>
+    )
   }
 
-  // Case 3: No finalized row - distinguish "not run yet" vs "ran but no match"
+  // Case 2: No finalized P&L - distinguish states
   if (alert.marketFinalizedAt) {
-    // Finalization ran but no matching row for this wallet/outcome
-    // (could be outcome label mismatch or wasn't in alert_events at finalize time)
-    return <span className="text-gray-500 italic text-sm" title="Finalization ran but no matching position found">P&L unavailable</span>
+    // Finalization ran but no P&L available (no snapshot data found)
+    return <span className="text-gray-500 italic text-sm" title="No position data available">P&L unavailable</span>
   }
 
   // Finalization hasn't run yet for this market
@@ -330,27 +347,37 @@ function ConvergenceWalletPnL({ wallet, group }: { wallet: ConvergenceWallet; gr
     return <span className="text-cyan-400">{wallet.potentialWinFormatted}</span>
   }
 
-  // RESOLVED MARKET: Strict gating - only use finalized P&L, no fallback
+  // RESOLVED MARKET
 
-  // Case 1: Position explicitly not found (wallet exited pre-resolution)
-  if (wallet.finalPositionFound === false) {
-    return <span className="text-gray-500 italic text-sm" title="Wallet exited before resolution">P&L unavailable</span>
-  }
-
-  // Case 2: We have finalized P&L - display it
+  // Case 1: We have finalized P&L - display it
   if (wallet.finalPnl !== null && wallet.finalPnl !== undefined) {
     const isWin = wallet.finalPnl >= 0
     const absValue = Math.abs(wallet.finalPnl)
+    const isEstimated = wallet.finalPnlIsEstimated === true
+    const prefix = isEstimated ? '~' : ''
     const formatted = absValue >= 1000
-      ? `${isWin ? '+' : '-'}$${(absValue / 1000).toFixed(1)}K`
-      : `${isWin ? '+' : '-'}$${absValue.toFixed(0)}`
-    return <span className={`font-bold ${isWin ? 'text-green-400' : 'text-red-400'}`}>{formatted}</span>
+      ? `${prefix}${isWin ? '+' : '-'}$${(absValue / 1000).toFixed(1)}K`
+      : `${prefix}${isWin ? '+' : '-'}$${absValue.toFixed(0)}`
+
+    // Tooltip for estimated values
+    const tooltip = isEstimated
+      ? 'Estimated from last observed position; actual may differ'
+      : undefined
+
+    return (
+      <span
+        className={`font-bold ${isWin ? 'text-green-400' : 'text-red-400'} ${isEstimated ? 'opacity-80' : ''}`}
+        title={tooltip}
+      >
+        {formatted}
+      </span>
+    )
   }
 
-  // Case 3: No finalized row - distinguish "not run yet" vs "ran but no match"
+  // Case 2: No finalized P&L - distinguish states
   if (group.marketFinalizedAt) {
-    // Finalization ran but no matching row for this wallet/outcome
-    return <span className="text-gray-500 italic text-sm" title="Finalization ran but no matching position found">P&L unavailable</span>
+    // Finalization ran but no P&L available (no snapshot data found)
+    return <span className="text-gray-500 italic text-sm" title="No position data available">P&L unavailable</span>
   }
 
   // Finalization hasn't run yet for this market
