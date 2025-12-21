@@ -291,6 +291,7 @@ export default function ReportPage() {
   const [whalesOnly, setWhalesOnly] = useState(false)
   const [category, setCategory] = useState<string>('')
   const [includeResolved, setIncludeResolved] = useState(false)
+  const [ultraLongshots, setUltraLongshots] = useState(false) // ≤10% odds filter
 
   // Pagination
   const [currentPage, setCurrentPage] = useState(1)
@@ -336,6 +337,7 @@ export default function ReportPage() {
       if (whalesOnly) params.set('whalesOnly', 'true')
       if (category.trim()) params.set('category', category.trim())
       if (includeResolved) params.set('includeResolved', 'true')
+      if (ultraLongshots) params.set('maxOdds', '0.10')
 
       const res = await fetch(`/api/report?${params}`, {
         cache: 'no-store',
@@ -357,7 +359,7 @@ export default function ReportPage() {
     } finally {
       setLoading(false)
     }
-  }, [windowHours, whalesOnly, category, includeResolved, currentPage, fetchAnomalies])
+  }, [windowHours, whalesOnly, category, includeResolved, ultraLongshots, currentPage, fetchAnomalies])
 
   useEffect(() => {
     fetchReport(1) // Reset to page 1 when filters change
@@ -476,7 +478,7 @@ export default function ReportPage() {
           <div>
             <h1 className="text-2xl font-bold">Longshot Alpha Report</h1>
             <p className="text-poly-muted text-sm">
-              Longshot bets (&lt;25% odds) with $2.5K+ position value
+              Longshot bets ({ultraLongshots ? '≤10%' : '<25%'} odds) with $2.5K+ position value
             </p>
           </div>
           <div className="flex items-center gap-3">
@@ -538,6 +540,18 @@ export default function ReportPage() {
                 className="mr-2"
               />
               Resolved Only
+            </label>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="text-poly-muted text-sm">
+              <input
+                type="checkbox"
+                checked={ultraLongshots}
+                onChange={(e) => setUltraLongshots(e.target.checked)}
+                className="mr-2"
+              />
+              ≤10% Only
             </label>
           </div>
 
