@@ -1,5 +1,127 @@
 # Polymarket Tracker - Development Progress
 
+## Session: December 20, 2025 (Phase 7: Longshot Position Archive)
+
+### Phase 7: Longshot Position Archive System (Completed)
+
+**Goal:** Start collecting "Large Single Bets" position snapshots NOW so that in ~30 days we can evaluate "successful longshot traders" based on resolved outcomes.
+
+**Key Principle:** Store raw snapshots only. Compute all metrics at query time by joining `market_status`.
+
+**New Table:**
+```sql
+CREATE TABLE trade_history_longshot_positions (
+  id BIGSERIAL PRIMARY KEY,
+  dedupe_key TEXT UNIQUE NOT NULL,
+  wallet TEXT NOT NULL,
+  condition_id TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  fill_price NUMERIC(10, 6) NOT NULL,
+  pos_avg_entry NUMERIC(10, 6),
+  position_value_usd NUMERIC(18, 2) NOT NULL,
+  potential_win_usd NUMERIC(18, 2),
+  observed_at TIMESTAMPTZ NOT NULL,
+  source TEXT NOT NULL DEFAULT 'large_single_bet',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+**Feature Flag:**
+- `ENABLE_LONGSHOT_ARCHIVE=true` in Vercel env to enable archival (default: off)
+
+**Archive Helper** (`lib/longshots/archiveLongshotPosition.ts`):
+- Best-effort archival - never throws, logs warnings only
+- Dedupe key: SHA256 of normalized `wallet|condition_id|outcome|fill_price(6dp)|position_value_usd(2dp)|observed_at_iso`
+- `ON CONFLICT (dedupe_key) DO NOTHING` for idempotency
+
+**Integration with Large Single Bets:**
+- Fire-and-forget archival after filtering Large Single Bets
+- Uses `void archiveLongshotPositionsBatch(...).catch(() => {})` pattern
+- Skips snapshots with null fillPrice (never defaults to 0)
+- Uses stable timestamp from underlying fill data
+
+**New Endpoint:** `GET /api/leaderboards/longshots`
+
+| Param | Default | Description |
+|-------|---------|-------------|
+| `sinceDays` | 30 | Lookback window |
+| `minResolved` | 5 | Min resolved positions to qualify |
+| `threshold` | 0.25 | Longshot threshold (fill_price <=) |
+| `sort` | `accuracy` | Sort by: `accuracy` or `profit` |
+
+**Golden Metric Set (Computed at Query Time):**
+| Metric | Definition |
+|--------|------------|
+| `longshot` | `fill_price <= threshold` |
+| `win` | `market_resolved = true AND outcome = winning_outcome` |
+| `edge_per_usd` | `win::int - fill_price` |
+| `profit_preferred` | `win ? +potential_win_usd : -position_value_usd` (rows with potential_win_usd) |
+| `profit_fallback` | `risk_usd * edge_per_usd` (rows without potential_win_usd) |
+| `accuracy` | `wins_count / resolved_count` |
+
+**Response includes:**
+- `metadata`: threshold, min_resolved, since_days, tracking_start_date, mode="per-snapshot", disclaimers, global_resolved_count
+- `leaderboard`: wallet stats with separate preferred/fallback profit tracking
+- `profit_method`: "preferred" | "fallback" | "mixed" per wallet
+
+**Sorting:**
+- `sort=accuracy`: ORDER BY accuracy_unweighted DESC, resolved_count DESC
+- `sort=profit`: ORDER BY profit_preferred_usd DESC NULLS LAST, profit_fallback_usd DESC NULLS LAST, resolved_count DESC
+
+**Files Created/Modified:**
+- `app/api/admin/migrate/route.ts` - Added Phase 7 table + indexes
+- `app/api/report/route.ts` - Added feature flag + fire-and-forget archival
+- `lib/longshots/archiveLongshotPosition.ts` - New archive helper
+- `app/api/leaderboards/longshots/route.ts` - New leaderboard endpoint
+
+**Deployment Steps:**
+1. Deploy code (flag off by default)
+2. Run migration: `POST /api/admin/migrate`
+3. Enable: Set `ENABLE_LONGSHOT_ARCHIVE=true` in Vercel env
+4. Wait ~30 days for market resolutions
+5. Query: `GET /api/leaderboards/longshots?sinceDays=30&minResolved=5`
+
+---
+
+## Session: December 19, 2025 (Phase 6: Market Resolution Detection)
+
+### Phase 6: Market Resolution Detection (Completed)
+
+**Goal:** Track market resolution status to show win/loss badges on positions and enable accurate P&L tracking.
+
+**New Table:**
+```sql
+CREATE TABLE market_status (
+  condition_id TEXT PRIMARY KEY,
+  market_closed BOOLEAN NOT NULL DEFAULT FALSE,
+  market_closed_first_seen_at TIMESTAMPTZ,
+  market_resolved BOOLEAN NOT NULL DEFAULT FALSE,
+  market_resolved_first_seen_at TIMESTAMPTZ,
+  winning_outcome TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+**How It Works:**
+1. `refresh-prices` job now also checks market resolution via CLOB API `/markets/{conditionId}`
+2. Looks for `tokens[].winner = true` to detect resolved markets
+3. Stores `winning_outcome` for determining win/loss
+4. Preserves first-seen timestamps for audit trail
+
+**UI Enhancements:**
+- Win/Loss badges on Convergence groups and Large Single Bets
+- Green "WON" badge when `outcome === winning_outcome`
+- Red "LOST" badge when resolved but didn't win
+- `includeResolved` filter toggle (default: hide resolved)
+
+**Files Modified:**
+- `app/api/admin/migrate/route.ts` - Added market_status table
+- `app/api/jobs/refresh-prices/route.ts` - Added resolution checking
+- `app/api/report/route.ts` - Added market_status JOIN + filtering
+- `app/report/page.tsx` - Added resolution badges
+
+---
+
 ## Session: December 18, 2025 (Phase 5: Conviction Anomalies)
 
 ### Phase 5: Conviction Sizing Anomaly Detection (Completed)
@@ -556,10 +678,12 @@ const historyLookupResult = await sql`
 | 3 | Price Cache | ✅ Completed |
 | 4 | Job Tracking + Admin | ✅ Completed |
 | 5 | Conviction Sizing Anomalies | ✅ Completed |
+| 6 | Market Resolution Detection | ✅ Completed |
+| 7 | Longshot Position Archive | ✅ Completed |
 
 ## Remaining Phases (Planned)
 
-### Phase 6: Position Accumulator
+### Phase 8: Position Accumulator
 - Track positions across days
 - Catch wallets buying $1K/day that cross $2.5K threshold
 - Prevents loss from 48h trade pruning
