@@ -894,7 +894,7 @@ export async function GET(req: NextRequest) {
         }
 
         // Query resolution status for all condition IDs at once
-        // Use a subquery approach since arrays aren't directly supported
+        // Only fetch markets with valid winning_outcome (non-null, non-empty)
         const resolutionResult = await sql<{ condition_id: string; market_resolved: boolean; winning_outcome: string | null }>`
           SELECT ms.condition_id, ms.market_resolved, ms.winning_outcome
           FROM market_status ms
@@ -904,17 +904,31 @@ export async function GET(req: NextRequest) {
             WHERE ae.condition_id IS NOT NULL
           )
           AND ms.market_resolved = TRUE
+          AND ms.winning_outcome IS NOT NULL
+          AND TRIM(ms.winning_outcome) != ''
         `;
 
         const resolutionMap = new Map(resolutionResult.rows.map(r => [r.condition_id, r]));
         const groupsToEnrich = Array.from(groupMap.values());
+        let enrichedCount = 0;
+        let notFoundCount = 0;
         for (let i = 0; i < groupsToEnrich.length; i++) {
           const group = groupsToEnrich[i];
           const status = resolutionMap.get(group.conditionId);
           if (status) {
             group.marketResolved = status.market_resolved ?? false;
             group.winningOutcome = status.winning_outcome ?? null;
+            enrichedCount++;
+          } else {
+            notFoundCount++;
+            // Debug: log condition_ids that passed filter but weren't enriched
+            if (includeResolved) {
+              console.warn(`[report] Convergence group passed resolved filter but no resolution data: ${group.conditionId} (${group.outcome})`);
+            }
           }
+        }
+        if (includeResolved && notFoundCount > 0) {
+          console.warn(`[report] Enrichment stats: ${enrichedCount} enriched, ${notFoundCount} not found in resolution map`);
         }
       } catch (err) {
         console.warn('[report] Failed to enrich convergence with resolution status:', err);
