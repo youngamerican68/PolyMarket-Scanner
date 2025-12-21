@@ -366,7 +366,7 @@ export default function ReportPage() {
     const interval = setInterval(() => fetchReport(currentPage), 10 * 60 * 1000)
     return () => clearInterval(interval)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windowHours, whalesOnly, category, includeResolved])
+  }, [windowHours, whalesOnly, category, includeResolved, ultraLongshots])
 
   const goToPage = (page: number) => {
     if (report && page >= 1 && page <= report.meta.totalPages) {
