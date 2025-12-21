@@ -195,12 +195,12 @@ export async function GET(request: Request) {
         limit,
         sortBy,
         stats: {
-          total: stats.total_count,
-          whaleCount: stats.whale_count,
-          avgRatio: Number(stats.avg_ratio.toFixed(2)),
-          maxRatio: Number(stats.max_ratio.toFixed(2)),
-          avgSeverity: Number(stats.avg_severity.toFixed(2)),
-          maxSeverity: Number(stats.max_severity.toFixed(2)),
+          total: stats.total_count ?? 0,
+          whaleCount: stats.whale_count ?? 0,
+          avgRatio: stats.avg_ratio != null ? Number(Number(stats.avg_ratio).toFixed(2)) : 0,
+          maxRatio: stats.max_ratio != null ? Number(Number(stats.max_ratio).toFixed(2)) : 0,
+          avgSeverity: stats.avg_severity != null ? Number(Number(stats.avg_severity).toFixed(2)) : 0,
+          maxSeverity: stats.max_severity != null ? Number(Number(stats.max_severity).toFixed(2)) : 0,
         },
       },
     }, { headers: NO_CACHE_HEADERS });
