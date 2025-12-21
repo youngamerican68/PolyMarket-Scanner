@@ -45,6 +45,10 @@ interface AlertRow {
   marketResolved: boolean
   marketClosed: boolean
   winningOutcome: string | null
+  marketFinalizedAt: string | null // When P&L finalization ran for this market
+  // Phase 8: Final P&L from market_final_pnl (when resolved)
+  finalPnl: number | null
+  finalPositionFound: boolean | null
 }
 
 interface ConvergenceWallet {
@@ -61,6 +65,9 @@ interface ConvergenceWallet {
   potentialWinFormatted: string
   latestTimestamp: string
   isWhale: boolean
+  // Phase 8: Final P&L
+  finalPnl: number | null
+  finalPositionFound: boolean | null
 }
 
 interface ConvergenceGroup {
@@ -80,6 +87,7 @@ interface ConvergenceGroup {
   // Phase 6: Market resolution fields
   marketResolved: boolean
   winningOutcome: string | null
+  marketFinalizedAt: string | null
 }
 
 interface ReportMeta {
@@ -279,48 +287,74 @@ function ConvergenceBadge({ group }: { group: ConvergenceGroup }) {
 // Actual P&L display for resolved trades, Potential Win for unresolved
 function ActualPnL({ alert }: { alert: AlertRow }) {
   const isResolved = alert.marketResolved && alert.winningOutcome
-  const traderWon = isResolved && alert.outcome === alert.winningOutcome
 
   if (!isResolved) {
-    // Unresolved: show potential win as before
+    // Unresolved: show potential win (snapshot-based is fine for open markets)
     return <span className="text-amber-400">{alert.potentialWinFormatted}</span>
   }
 
-  if (traderWon) {
-    // WON: show actual profit in green
-    return <span className="text-green-400 font-bold">+{alert.potentialWinFormatted}</span>
+  // RESOLVED MARKET: Strict gating - only use finalized P&L, no fallback
+
+  // Case 1: Position explicitly not found (wallet exited pre-resolution)
+  if (alert.finalPositionFound === false) {
+    return <span className="text-gray-500 italic text-sm" title="Wallet exited before resolution">P&L unavailable</span>
   }
 
-  // LOST: calculate and show actual loss in red
-  // Loss = cost basis = positionSize × avgPrice
-  const cost = (alert.positionSize ?? 0) * (alert.positionAvgPrice ?? 0)
-  const lossFormatted = cost >= 1000 ? `-$${(cost / 1000).toFixed(1)}K` : `-$${cost.toFixed(0)}`
-  return <span className="text-red-400 font-bold">{lossFormatted}</span>
+  // Case 2: We have finalized P&L - display it
+  if (alert.finalPnl !== null && alert.finalPnl !== undefined) {
+    const isWin = alert.finalPnl >= 0
+    const absValue = Math.abs(alert.finalPnl)
+    const formatted = absValue >= 1000
+      ? `${isWin ? '+' : '-'}$${(absValue / 1000).toFixed(1)}K`
+      : `${isWin ? '+' : '-'}$${absValue.toFixed(0)}`
+    return <span className={`font-bold ${isWin ? 'text-green-400' : 'text-red-400'}`}>{formatted}</span>
+  }
+
+  // Case 3: No finalized row - distinguish "not run yet" vs "ran but no match"
+  if (alert.marketFinalizedAt) {
+    // Finalization ran but no matching row for this wallet/outcome
+    // (could be outcome label mismatch or wasn't in alert_events at finalize time)
+    return <span className="text-gray-500 italic text-sm" title="Finalization ran but no matching position found">P&L unavailable</span>
+  }
+
+  // Finalization hasn't run yet for this market
+  return <span className="text-gray-500 italic text-sm" title="Awaiting finalization">Pending...</span>
 }
 
 // P&L for convergence wallet rows (uses group-level resolution status)
 function ConvergenceWalletPnL({ wallet, group }: { wallet: ConvergenceWallet; group: ConvergenceGroup }) {
   const isResolved = group.marketResolved && group.winningOutcome
-  const groupWon = isResolved && group.outcome === group.winningOutcome
 
   if (!isResolved) {
-    // Unresolved: show potential win as before
+    // Unresolved: show potential win (snapshot-based is fine for open markets)
     return <span className="text-cyan-400">{wallet.potentialWinFormatted}</span>
   }
 
-  if (groupWon) {
-    // WON: show actual profit in green
-    return <span className="text-green-400 font-bold">+{wallet.potentialWinFormatted}</span>
+  // RESOLVED MARKET: Strict gating - only use finalized P&L, no fallback
+
+  // Case 1: Position explicitly not found (wallet exited pre-resolution)
+  if (wallet.finalPositionFound === false) {
+    return <span className="text-gray-500 italic text-sm" title="Wallet exited before resolution">P&L unavailable</span>
   }
 
-  // LOST: calculate cost basis from potentialWin and avgPrice
-  // potentialWin = positionSize × (1 - avgPrice)
-  // cost = positionSize × avgPrice = potentialWin × avgPrice / (1 - avgPrice)
-  const avgPrice = wallet.positionAvgPrice ?? 0
-  const potentialWin = wallet.potentialWin ?? 0
-  const cost = avgPrice < 1 ? (potentialWin * avgPrice) / (1 - avgPrice) : 0
-  const lossFormatted = cost >= 1000 ? `-$${(cost / 1000).toFixed(1)}K` : `-$${cost.toFixed(0)}`
-  return <span className="text-red-400 font-bold">{lossFormatted}</span>
+  // Case 2: We have finalized P&L - display it
+  if (wallet.finalPnl !== null && wallet.finalPnl !== undefined) {
+    const isWin = wallet.finalPnl >= 0
+    const absValue = Math.abs(wallet.finalPnl)
+    const formatted = absValue >= 1000
+      ? `${isWin ? '+' : '-'}$${(absValue / 1000).toFixed(1)}K`
+      : `${isWin ? '+' : '-'}$${absValue.toFixed(0)}`
+    return <span className={`font-bold ${isWin ? 'text-green-400' : 'text-red-400'}`}>{formatted}</span>
+  }
+
+  // Case 3: No finalized row - distinguish "not run yet" vs "ran but no match"
+  if (group.marketFinalizedAt) {
+    // Finalization ran but no matching row for this wallet/outcome
+    return <span className="text-gray-500 italic text-sm" title="Finalization ran but no matching position found">P&L unavailable</span>
+  }
+
+  // Finalization hasn't run yet for this market
+  return <span className="text-gray-500 italic text-sm" title="Awaiting finalization">Pending...</span>
 }
 
 export default function ReportPage() {

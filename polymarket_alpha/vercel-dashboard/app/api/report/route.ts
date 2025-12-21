@@ -101,6 +101,10 @@ type AlertRow = {
   market_resolved: boolean | null;
   market_closed: boolean | null;
   winning_outcome: string | null;
+  market_finalized_at: string | null; // When P&L finalization ran for this market
+  // Phase 8: Final P&L from market_final_pnl (when resolved)
+  final_pnl: string | null;
+  final_position_found: boolean | null;
 };
 
 type SummaryRow = {
@@ -137,6 +141,9 @@ type WalletDetailRow = {
   is_whale: boolean;
   whale_label: string | null;
   rn: number;
+  // Phase 8: Final P&L
+  final_pnl: string | null;
+  final_position_found: boolean | null;
 };
 
 type TotalGroupsRow = {
@@ -178,6 +185,10 @@ interface FormattedAlert {
   marketResolved: boolean;
   marketClosed: boolean;
   winningOutcome: string | null;
+  marketFinalizedAt: string | null; // When P&L finalization ran for this market
+  // Phase 8: Final P&L from market_final_pnl (when resolved)
+  finalPnl: number | null;
+  finalPositionFound: boolean | null;
 }
 
 interface WalletDetail {
@@ -195,6 +206,9 @@ interface WalletDetail {
   latestTimestamp: string;
   isWhale: boolean;
   whaleLabel: string | null;
+  // Phase 8: Final P&L
+  finalPnl: number | null;
+  finalPositionFound: boolean | null;
 }
 
 interface ConvergenceGroup {
@@ -215,6 +229,7 @@ interface ConvergenceGroup {
   // Phase 6: Market resolution fields
   marketResolved: boolean;
   winningOutcome: string | null;
+  marketFinalizedAt: string | null;
 }
 
 // ============================================================================
@@ -332,10 +347,13 @@ export async function GET(req: NextRequest) {
             ae.position_current_value, ae.position_avg_price, ae.position_size,
             ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
             opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
-            ms.market_resolved, ms.market_closed, ms.winning_outcome
+            ms.market_resolved, ms.market_closed, ms.winning_outcome, ms.finalized_at as market_finalized_at,
+            mfp.final_pnl::text as final_pnl,
+            mfp.position_found as final_position_found
           FROM alert_events ae
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
           LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
+          LEFT JOIN market_final_pnl mfp ON ae.condition_id = mfp.condition_id AND ae.wallet = mfp.wallet AND ae.outcome = mfp.outcome
           WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
             AND ae.fill_price <= ${maxOdds}
             AND ae.position_current_value IS NOT NULL
@@ -360,10 +378,13 @@ export async function GET(req: NextRequest) {
             ae.position_current_value, ae.position_avg_price, ae.position_size,
             ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
             opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
-            ms.market_resolved, ms.market_closed, ms.winning_outcome
+            ms.market_resolved, ms.market_closed, ms.winning_outcome, ms.finalized_at as market_finalized_at,
+            mfp.final_pnl::text as final_pnl,
+            mfp.position_found as final_position_found
           FROM alert_events ae
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
           LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
+          LEFT JOIN market_final_pnl mfp ON ae.condition_id = mfp.condition_id AND ae.wallet = mfp.wallet AND ae.outcome = mfp.outcome
           WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
             AND ae.fill_price <= ${maxOdds}
             AND ae.position_current_value IS NOT NULL
@@ -387,10 +408,13 @@ export async function GET(req: NextRequest) {
             ae.position_current_value, ae.position_avg_price, ae.position_size,
             ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
             opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
-            ms.market_resolved, ms.market_closed, ms.winning_outcome
+            ms.market_resolved, ms.market_closed, ms.winning_outcome, ms.finalized_at as market_finalized_at,
+            mfp.final_pnl::text as final_pnl,
+            mfp.position_found as final_position_found
           FROM alert_events ae
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
           LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
+          LEFT JOIN market_final_pnl mfp ON ae.condition_id = mfp.condition_id AND ae.wallet = mfp.wallet AND ae.outcome = mfp.outcome
           WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
             AND ae.fill_price <= ${maxOdds}
             AND ae.position_current_value IS NOT NULL
@@ -414,10 +438,13 @@ export async function GET(req: NextRequest) {
             ae.position_current_value, ae.position_avg_price, ae.position_size,
             ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
             opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
-            ms.market_resolved, ms.market_closed, ms.winning_outcome
+            ms.market_resolved, ms.market_closed, ms.winning_outcome, ms.finalized_at as market_finalized_at,
+            mfp.final_pnl::text as final_pnl,
+            mfp.position_found as final_position_found
           FROM alert_events ae
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
           LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
+          LEFT JOIN market_final_pnl mfp ON ae.condition_id = mfp.condition_id AND ae.wallet = mfp.wallet AND ae.outcome = mfp.outcome
           WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
             AND ae.fill_price <= ${maxOdds}
             AND ae.position_current_value IS NOT NULL
@@ -484,6 +511,10 @@ export async function GET(req: NextRequest) {
         marketResolved: row.market_resolved ?? false,
         marketClosed: row.market_closed ?? false,
         winningOutcome: row.winning_outcome ?? null,
+        marketFinalizedAt: row.market_finalized_at ?? null,
+        // Phase 8: Final P&L from market_final_pnl (when resolved)
+        finalPnl: row.final_pnl !== null ? parseFloat(row.final_pnl) : null,
+        finalPositionFound: row.final_position_found ?? null,
       };
     });
 
@@ -880,6 +911,7 @@ export async function GET(req: NextRequest) {
         // Will be enriched below
         marketResolved: false,
         winningOutcome: null,
+        marketFinalizedAt: null,
       });
     }
 
@@ -897,8 +929,8 @@ export async function GET(req: NextRequest) {
         // Query resolution status for the specific condition IDs in our groups
         // Pass array as JSON and unnest for efficient matching
         const conditionIdsJson = JSON.stringify(conditionIds);
-        const resolutionResult = await sql<{ condition_id: string; market_resolved: boolean; winning_outcome: string | null }>`
-          SELECT ms.condition_id, ms.market_resolved, ms.winning_outcome
+        const resolutionResult = await sql<{ condition_id: string; market_resolved: boolean; winning_outcome: string | null; finalized_at: string | null }>`
+          SELECT ms.condition_id, ms.market_resolved, ms.winning_outcome, ms.finalized_at
           FROM market_status ms
           WHERE ms.condition_id IN (
             SELECT jsonb_array_elements_text(${conditionIdsJson}::jsonb)
@@ -918,6 +950,7 @@ export async function GET(req: NextRequest) {
           if (status) {
             group.marketResolved = status.market_resolved ?? false;
             group.winningOutcome = status.winning_outcome ?? null;
+            group.marketFinalizedAt = status.finalized_at ?? null;
             enrichedCount++;
           } else {
             notFoundCount++;
@@ -980,10 +1013,12 @@ export async function GET(req: NextRequest) {
               SELECT d.condition_id, d.outcome, d.wallet,
                 d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
+                mfp.final_pnl, mfp.position_found as final_position_found,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
               INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
+              LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
             ORDER BY condition_id, outcome, rn
@@ -1028,10 +1063,12 @@ export async function GET(req: NextRequest) {
               SELECT d.condition_id, d.outcome, d.wallet,
                 d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
+                mfp.final_pnl, mfp.position_found as final_position_found,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
               INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
+              LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
             ORDER BY condition_id, outcome, rn
@@ -1076,10 +1113,12 @@ export async function GET(req: NextRequest) {
               SELECT d.condition_id, d.outcome, d.wallet,
                 d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
+                mfp.final_pnl, mfp.position_found as final_position_found,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
               INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
+              LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
             ORDER BY condition_id, outcome, rn
@@ -1123,10 +1162,12 @@ export async function GET(req: NextRequest) {
               SELECT d.condition_id, d.outcome, d.wallet,
                 d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
+                mfp.final_pnl, mfp.position_found as final_position_found,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
               INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
+              LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
             ORDER BY condition_id, outcome, rn
@@ -1161,6 +1202,9 @@ export async function GET(req: NextRequest) {
             latestTimestamp: row.fill_timestamp,
             isWhale: row.is_whale,
             whaleLabel: row.whale_label,
+            // Phase 8: Final P&L
+            finalPnl: row.final_pnl !== null ? parseFloat(row.final_pnl) : null,
+            finalPositionFound: row.final_position_found ?? null,
           });
         }
       }

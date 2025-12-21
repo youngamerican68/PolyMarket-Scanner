@@ -351,6 +351,42 @@ export async function POST(request: Request) {
       ON trade_history_longshot_positions (observed_at DESC)`;
     console.log('[migrate] Created trade_history_longshot_positions indexes');
 
+    // =========================================================================
+    // Phase 8: Final P&L on Market Resolution
+    // =========================================================================
+
+    // Table: market_final_pnl - stores final P&L per wallet/outcome when market resolves
+    await sql`
+      CREATE TABLE IF NOT EXISTS market_final_pnl (
+        condition_id TEXT NOT NULL,
+        wallet TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        position_found BOOLEAN NOT NULL DEFAULT FALSE,
+        shares NUMERIC,
+        avg_price NUMERIC,
+        potential_win NUMERIC,
+        cost_basis NUMERIC,
+        final_pnl NUMERIC,
+        winning_outcome TEXT NOT NULL,
+        finalized_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (condition_id, wallet, outcome)
+      )
+    `;
+    console.log('[migrate] Created market_final_pnl table');
+
+    // Indexes for market_final_pnl
+    await sql`CREATE INDEX IF NOT EXISTS idx_market_final_pnl_condition ON market_final_pnl (condition_id)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_market_final_pnl_wallet ON market_final_pnl (wallet)`;
+    console.log('[migrate] Created market_final_pnl indexes');
+
+    // Add finalized_at column to market_status for idempotency
+    try {
+      await sql`ALTER TABLE market_status ADD COLUMN finalized_at TIMESTAMPTZ`;
+      console.log('[migrate] Added finalized_at column to market_status');
+    } catch (err) {
+      console.log('[migrate] finalized_at column already exists or failed:', String(err).slice(0, 80));
+    }
+
     // Post-migration: run ANALYZE on touched tables for query planner
     try {
       await sql`ANALYZE outcome_price_cache`;
@@ -359,6 +395,7 @@ export async function POST(request: Request) {
       await sql`ANALYZE conviction_anomalies`;
       await sql`ANALYZE market_status`;
       await sql`ANALYZE trade_history_longshot_positions`;
+      await sql`ANALYZE market_final_pnl`;
       console.log('[migrate] ANALYZE completed on all tables');
     } catch (err) {
       console.warn('[migrate] ANALYZE failed (non-critical):', String(err).slice(0, 100));
@@ -369,8 +406,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: 'Phases 1-7 migration complete (includes longshot position archive)',
-      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status', 'trade_history_longshot_positions'],
+      message: 'Phases 1-8 migration complete (includes final P&L tracking)',
+      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status', 'trade_history_longshot_positions', 'market_final_pnl'],
       indexes: [
         'idx_alert_events_fill_timestamp',
         'idx_alert_events_wallet_timestamp',
@@ -396,6 +433,8 @@ export async function POST(request: Request) {
         'idx_longshot_positions_wallet_observed',
         'idx_longshot_positions_condition',
         'idx_longshot_positions_observed',
+        'idx_market_final_pnl_condition',
+        'idx_market_final_pnl_wallet',
       ],
       constraints: [
         'outcome_price_cache PRIMARY KEY (condition_id, outcome)',
@@ -403,10 +442,12 @@ export async function POST(request: Request) {
         'wallet_trade_size_baselines PRIMARY KEY (wallet)',
         'conviction_anomalies REFERENCES alert_events(id)',
         'market_status PRIMARY KEY (condition_id)',
+        'market_final_pnl PRIMARY KEY (condition_id, wallet, outcome)',
       ],
       columnsAdded: [
         'conviction_anomalies.severity',
         'conviction_anomalies.last_seen_at',
+        'market_status.finalized_at',
       ],
     }, { headers: NO_CACHE_HEADERS });
   } catch (err) {

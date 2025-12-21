@@ -7,6 +7,7 @@
 import { NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import { isCronAuthed, cronUnauthorized } from '@/lib/cronAuth';
+import { finalizeResolvedPnL } from '@/lib/finalize-resolved-pnl';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -41,6 +42,9 @@ interface JobMetrics {
   marketsResolved: number;
   marketsClosed: number;
   marketsSkipped: number;
+  // Phase 8: Final P&L metrics
+  pnlMarketsFinalized: number;
+  pnlUpserts: number;
 }
 
 // Phase 6: Market resolution data from CLOB API
@@ -333,6 +337,9 @@ export async function POST(request: Request) {
     marketsResolved: 0,
     marketsClosed: 0,
     marketsSkipped: 0,
+    // Phase 8: Final P&L metrics
+    pnlMarketsFinalized: 0,
+    pnlUpserts: 0,
   };
 
   try {
@@ -483,6 +490,23 @@ export async function POST(request: Request) {
       console.warn('[refresh-prices] Resolution status check failed:', err);
     }
 
+    // Phase 8: Finalize P&L for newly resolved markets
+    // Run after resolution check so we have fresh market_status data
+    try {
+      // Limit to 10 markets per run to avoid timeout (job runs every 10 min)
+      const pnlResult = await finalizeResolvedPnL({ marketLimit: 10, walletConcurrency: 4 });
+      metrics.pnlMarketsFinalized = pnlResult.marketsFinalized;
+      metrics.pnlUpserts = pnlResult.upserts;
+      if (pnlResult.marketsFinalized > 0) {
+        console.log(`[refresh-prices] Finalized P&L: ${pnlResult.marketsFinalized} markets, ${pnlResult.upserts} wallet/outcomes`);
+      }
+    } catch (err) {
+      // Non-critical - don't fail the whole job if P&L finalization fails
+      const errMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`[refresh-prices] P&L finalization failed (non-fatal): ${errMsg}`);
+      // Continue with the rest of the job - finalization will retry on next run
+    }
+
     // Step 4: Mark job as success
     const durationMs = Date.now() - startTime;
     await sql`
@@ -495,7 +519,8 @@ export async function POST(request: Request) {
     `;
 
     const resolvedSkipMsg = metrics.skippedResolved > 0 ? `, ${metrics.skippedResolved} resolved skipped` : '';
-    console.log(`[refresh-prices] Completed: ${metrics.updated} prices updated, ${metrics.failed} failed${resolvedSkipMsg}, ${metrics.marketsResolved} newly resolved, ${durationMs}ms`);
+    const pnlMsg = metrics.pnlMarketsFinalized > 0 ? `, ${metrics.pnlMarketsFinalized} P&L finalized` : '';
+    console.log(`[refresh-prices] Completed: ${metrics.updated} prices updated, ${metrics.failed} failed${resolvedSkipMsg}, ${metrics.marketsResolved} newly resolved${pnlMsg}, ${durationMs}ms`);
 
     return NextResponse.json({
       jobRunId,
