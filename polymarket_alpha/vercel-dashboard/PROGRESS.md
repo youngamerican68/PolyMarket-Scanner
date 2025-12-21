@@ -1,5 +1,92 @@
 # Polymarket Tracker - Development Progress
 
+## Session: December 20, 2025 (Resolved Market Filtering Fixes)
+
+### Issue: Completed Games Still Showing in Dashboard
+
+**Problem:** Resolved markets (e.g., Eagles vs. Commanders) were still appearing in Convergence and other dashboard views even after markets had resolved on Polymarket.
+
+**Root Causes Identified:**
+
+1. **Filter Inconsistency**: Wallet detail queries used a simpler `market_resolved = TRUE` filter while aggregation queries required `market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != ''`
+
+2. **Refresh Scope Too Narrow**: The refresh-prices job only checked markets from a 14-day window with 500 limit, missing markets that fell outside this scope
+
+3. **404 Noise**: Resolved markets returned 404 from CLOB midpoint API (closed order books), counted as failures
+
+4. **Convergence Enrichment Bug**: Enrichment query scanned all `alert_events` instead of using collected `conditionIds` from groups
+
+### Fixes Implemented
+
+**1. EXISTS Predicate Standardization** (commit `66c11ae`)
+- All wallet detail queries now use correlated `EXISTS/NOT EXISTS` predicates
+- Consistent filter: `market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != ''`
+- Added table alias `ae` to support correlated subqueries
+
+**2. Partial Index for Performance** (commit `4fee918`)
+```sql
+CREATE INDEX idx_market_status_resolved_winner
+ON market_status (condition_id)
+WHERE market_resolved = TRUE
+  AND winning_outcome IS NOT NULL
+  AND TRIM(winning_outcome) != '';
+```
+
+**3. DB-Driven Refresh Scope** (commit `e0e3fd5`)
+- Resolution check now queries all `condition_ids` from `alert_events` NOT already resolved
+- Uses `NOT EXISTS` to find markets missing from `market_status` or without known winner
+- Removes arbitrary 14-day window dependency
+
+**4. Skip Resolved Markets for Midpoint** (commit `e0e3fd5`)
+- Price fetching now excludes markets already marked resolved
+- New metric: `skippedResolved` tracks skipped assets
+- Eliminates 404 noise from closed order books
+
+**5. Convergence Enrichment Fix** (commit `dbe73ed`)
+- Changed enrichment query to use collected `conditionIds` array
+- Uses `jsonb_array_elements_text()` for efficient array matching
+- Fixes badges not showing for resolved markets in Convergence view
+
+### New Metrics in refresh-prices
+
+| Metric | Description |
+|--------|-------------|
+| `skippedResolved` | Assets skipped due to already being resolved |
+| `marketsResolved` | Newly resolved markets found this run |
+
+### Sample Job Output (After Fixes)
+```json
+{
+  "requested": 61,
+  "updated": 60,
+  "failed": 1,
+  "skippedResolved": 106,
+  "marketsResolved": 1
+}
+```
+vs previous: 106 "failures" from 404s
+
+### Deployment Steps
+
+1. Deploy code changes
+2. `POST /api/admin/migrate` - Creates partial index
+3. Trigger refresh-prices to backfill `market_status`
+4. Verify resolved markets disappear from unresolved views
+
+### Files Modified
+- `app/api/report/route.ts` - EXISTS predicates, enrichment fix
+- `app/api/jobs/refresh-prices/route.ts` - DB-driven scope, skip resolved
+- `app/api/admin/migrate/route.ts` - Partial index
+
+### Note on Resolution Timing
+Polymarket resolves markets with a delay after events end. If a game is over but still showing, check the CLOB API:
+```bash
+curl "https://clob.polymarket.com/markets/{condition_id}" | jq '{closed, tokens}'
+```
+If `closed: false`, Polymarket hasn't resolved it yet.
+
+---
+
 ## Session: December 20, 2025 (Phase 7: Longshot Position Archive)
 
 ### Phase 7: Longshot Position Archive System (Completed)
