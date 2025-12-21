@@ -298,6 +298,31 @@ function ActualPnL({ alert }: { alert: AlertRow }) {
   return <span className="text-red-400 font-bold">{lossFormatted}</span>
 }
 
+// P&L for convergence wallet rows (uses group-level resolution status)
+function ConvergenceWalletPnL({ wallet, group }: { wallet: ConvergenceWallet; group: ConvergenceGroup }) {
+  const isResolved = group.marketResolved && group.winningOutcome
+  const groupWon = isResolved && group.outcome === group.winningOutcome
+
+  if (!isResolved) {
+    // Unresolved: show potential win as before
+    return <span className="text-cyan-400">{wallet.potentialWinFormatted}</span>
+  }
+
+  if (groupWon) {
+    // WON: show actual profit in green
+    return <span className="text-green-400 font-bold">+{wallet.potentialWinFormatted}</span>
+  }
+
+  // LOST: calculate cost basis from potentialWin and avgPrice
+  // potentialWin = positionSize × (1 - avgPrice)
+  // cost = positionSize × avgPrice = potentialWin × avgPrice / (1 - avgPrice)
+  const avgPrice = wallet.positionAvgPrice ?? 0
+  const potentialWin = wallet.potentialWin ?? 0
+  const cost = avgPrice < 1 ? (potentialWin * avgPrice) / (1 - avgPrice) : 0
+  const lossFormatted = cost >= 1000 ? `-$${(cost / 1000).toFixed(1)}K` : `-$${cost.toFixed(0)}`
+  return <span className="text-red-400 font-bold">{lossFormatted}</span>
+}
+
 export default function ReportPage() {
   const [report, setReport] = useState<ReportData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -712,7 +737,7 @@ export default function ReportPage() {
                             <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade">Fill Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
-                            <th className="text-right p-3 text-poly-muted font-medium" title="Profit if position wins (based on avg entry)">Potential Win</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Actual P&L for resolved, potential profit for open">P&L</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
                         </thead>
@@ -733,7 +758,7 @@ export default function ReportPage() {
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-green">{w.positionValueFormatted}</td>
-                              <td className="p-3 text-right text-cyan-400">{w.potentialWinFormatted}</td>
+                              <td className="p-3 text-right font-medium"><ConvergenceWalletPnL wallet={w} group={group} /></td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
                           ))}
@@ -817,7 +842,7 @@ export default function ReportPage() {
                             <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade">Fill Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
-                            <th className="text-right p-3 text-poly-muted font-medium" title="Profit if position wins (based on avg entry)">Potential Win</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Actual P&L for resolved, potential profit for open">P&L</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
                         </thead>
@@ -838,7 +863,7 @@ export default function ReportPage() {
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-green">{w.positionValueFormatted}</td>
-                              <td className="p-3 text-right text-cyan-400">{w.potentialWinFormatted}</td>
+                              <td className="p-3 text-right font-medium"><ConvergenceWalletPnL wallet={w} group={group} /></td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
                           ))}
