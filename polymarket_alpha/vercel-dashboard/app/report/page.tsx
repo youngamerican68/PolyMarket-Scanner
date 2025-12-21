@@ -276,6 +276,28 @@ function ConvergenceBadge({ group }: { group: ConvergenceGroup }) {
   )
 }
 
+// Actual P&L display for resolved trades, Potential Win for unresolved
+function ActualPnL({ alert }: { alert: AlertRow }) {
+  const isResolved = alert.marketResolved && alert.winningOutcome
+  const traderWon = isResolved && alert.outcome === alert.winningOutcome
+
+  if (!isResolved) {
+    // Unresolved: show potential win as before
+    return <span className="text-amber-400">{alert.potentialWinFormatted}</span>
+  }
+
+  if (traderWon) {
+    // WON: show actual profit in green
+    return <span className="text-green-400 font-bold">+{alert.potentialWinFormatted}</span>
+  }
+
+  // LOST: calculate and show actual loss in red
+  // Loss = cost basis = positionSize × avgPrice
+  const cost = (alert.positionSize ?? 0) * (alert.positionAvgPrice ?? 0)
+  const lossFormatted = cost >= 1000 ? `-$${(cost / 1000).toFixed(1)}K` : `-$${cost.toFixed(0)}`
+  return <span className="text-red-400 font-bold">{lossFormatted}</span>
+}
+
 export default function ReportPage() {
   const [report, setReport] = useState<ReportData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -931,7 +953,7 @@ export default function ReportPage() {
                     <th className="text-right p-3 text-poly-muted font-medium" title="Current market price (cached)">Current Price</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Pos Avg Entry</th>
-                    <th className="text-right p-3 text-poly-muted font-medium">Potential Win</th>
+                    <th className="text-right p-3 text-poly-muted font-medium" title="Actual P&L for resolved, potential profit for open">P&L</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                   </tr>
                 </thead>
@@ -974,7 +996,7 @@ export default function ReportPage() {
                       <td className="p-3 text-right"><PriceDisplay alert={alert} /></td>
                       <td className="p-3 text-right text-white font-medium">{alert.positionCurrentValueFormatted}</td>
                       <td className="p-3 text-right text-poly-muted">{alert.positionAvgPriceFormatted}</td>
-                      <td className="p-3 text-right text-amber-400 font-medium">{alert.potentialWinFormatted}</td>
+                      <td className="p-3 text-right font-medium"><ActualPnL alert={alert} /></td>
                       <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(alert.fillTimestamp)}</td>
                     </tr>
                   ))}
@@ -1028,8 +1050,8 @@ export default function ReportPage() {
                   <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of position">
                     Pos Avg Entry
                   </th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if position wins">
-                    Potential Win
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Actual P&L for resolved, potential profit for open">
+                    P&L
                   </th>
                   <th
                     className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
@@ -1085,7 +1107,7 @@ export default function ReportPage() {
                       <td className="p-3 text-right text-poly-green">{alert.fillValueFormatted}</td>
                       <td className="p-3 text-right text-white font-medium">{alert.positionCurrentValueFormatted}</td>
                       <td className="p-3 text-right text-poly-muted">{alert.positionAvgPriceFormatted}</td>
-                      <td className="p-3 text-right text-amber-400 font-medium">{alert.potentialWinFormatted}</td>
+                      <td className="p-3 text-right font-medium"><ActualPnL alert={alert} /></td>
                       <td className="p-3 text-right text-poly-muted text-xs whitespace-nowrap">
                         {formatTimeAgo(alert.fillTimestamp)}
                       </td>
