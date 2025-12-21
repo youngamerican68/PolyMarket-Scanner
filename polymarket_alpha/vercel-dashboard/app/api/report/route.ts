@@ -947,17 +947,17 @@ export async function GET(req: NextRequest) {
                 condition_id, outcome, wallet,
                 position_current_value, position_size, position_avg_price, fill_price, fill_timestamp,
                 trader_name, trader_pseudonym, is_whale, whale_label
-              FROM alert_events
-              WHERE fill_timestamp >= ${convergenceCutoff}::timestamptz
-                AND fill_price <= ${maxOdds}
-                AND position_current_value IS NOT NULL
-                AND position_current_value >= ${minPosition}
-                AND is_whale = TRUE
-                AND whale_category = ${category}
+              FROM alert_events ae
+              WHERE ae.fill_timestamp >= ${convergenceCutoff}::timestamptz
+                AND ae.fill_price <= ${maxOdds}
+                AND ae.position_current_value IS NOT NULL
+                AND ae.position_current_value >= ${minPosition}
+                AND ae.is_whale = TRUE
+                AND ae.whale_category = ${category}
                 AND (
                   CASE WHEN ${includeResolved}::boolean = TRUE
-                    THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
-                    ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                    THEN EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
+                    ELSE NOT EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
                   END
                 )
               ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
@@ -996,16 +996,16 @@ export async function GET(req: NextRequest) {
                 condition_id, outcome, wallet,
                 position_current_value, position_size, position_avg_price, fill_price, fill_timestamp,
                 trader_name, trader_pseudonym, is_whale, whale_label
-              FROM alert_events
-              WHERE fill_timestamp >= ${convergenceCutoff}::timestamptz
-                AND fill_price <= ${maxOdds}
-                AND position_current_value IS NOT NULL
-                AND position_current_value >= ${minPosition}
-                AND is_whale = TRUE
+              FROM alert_events ae
+              WHERE ae.fill_timestamp >= ${convergenceCutoff}::timestamptz
+                AND ae.fill_price <= ${maxOdds}
+                AND ae.position_current_value IS NOT NULL
+                AND ae.position_current_value >= ${minPosition}
+                AND ae.is_whale = TRUE
                 AND (
                   CASE WHEN ${includeResolved}::boolean = TRUE
-                    THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
-                    ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                    THEN EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
+                    ELSE NOT EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
                   END
                 )
               ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
@@ -1044,16 +1044,16 @@ export async function GET(req: NextRequest) {
                 condition_id, outcome, wallet,
                 position_current_value, position_size, position_avg_price, fill_price, fill_timestamp,
                 trader_name, trader_pseudonym, is_whale, whale_label
-              FROM alert_events
-              WHERE fill_timestamp >= ${convergenceCutoff}::timestamptz
-                AND fill_price <= ${maxOdds}
-                AND position_current_value IS NOT NULL
-                AND position_current_value >= ${minPosition}
-                AND whale_category = ${category}
+              FROM alert_events ae
+              WHERE ae.fill_timestamp >= ${convergenceCutoff}::timestamptz
+                AND ae.fill_price <= ${maxOdds}
+                AND ae.position_current_value IS NOT NULL
+                AND ae.position_current_value >= ${minPosition}
+                AND ae.whale_category = ${category}
                 AND (
                   CASE WHEN ${includeResolved}::boolean = TRUE
-                    THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
-                    ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                    THEN EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
+                    ELSE NOT EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
                   END
                 )
               ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
@@ -1092,15 +1092,15 @@ export async function GET(req: NextRequest) {
                 condition_id, outcome, wallet,
                 position_current_value, position_size, position_avg_price, fill_price, fill_timestamp,
                 trader_name, trader_pseudonym, is_whale, whale_label
-              FROM alert_events
-              WHERE fill_timestamp >= ${convergenceCutoff}::timestamptz
-                AND fill_price <= ${maxOdds}
-                AND position_current_value IS NOT NULL
-                AND position_current_value >= ${minPosition}
+              FROM alert_events ae
+              WHERE ae.fill_timestamp >= ${convergenceCutoff}::timestamptz
+                AND ae.fill_price <= ${maxOdds}
+                AND ae.position_current_value IS NOT NULL
+                AND ae.position_current_value >= ${minPosition}
                 AND (
                   CASE WHEN ${includeResolved}::boolean = TRUE
-                    THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
-                    ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE)
+                    THEN EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
+                    ELSE NOT EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
                   END
                 )
               ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
