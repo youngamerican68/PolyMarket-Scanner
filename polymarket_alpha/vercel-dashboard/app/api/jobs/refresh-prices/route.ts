@@ -31,6 +31,7 @@ interface JobMetrics {
   requested: number;
   updated: number;
   failed: number;
+  skippedResolved: number; // Markets skipped because already resolved
   batches: number;
   distinctMarkets: number;
   capApplied: boolean;
@@ -322,6 +323,7 @@ export async function POST(request: Request) {
     requested: 0,
     updated: 0,
     failed: 0,
+    skippedResolved: 0,
     batches: 0,
     distinctMarkets: 0,
     capApplied: false,
@@ -342,15 +344,38 @@ export async function POST(request: Request) {
     console.log(`[refresh-prices] Started job ${jobRunId}`);
 
     // Step 1: Query distinct (condition_id, outcome, asset) from recent alert_events (72h)
-    // Use deterministic ordering (by condition_id, outcome) with hard cap
+    // EXCLUDING markets already resolved with a known winner (to avoid 404s on closed order books)
     const recentOutcomes = await sql<OutcomeKey>`
-      SELECT DISTINCT condition_id, outcome, asset
-      FROM alert_events
-      WHERE fill_timestamp >= NOW() - INTERVAL '72 hours'
-        AND asset IS NOT NULL
-      ORDER BY condition_id, outcome
+      SELECT DISTINCT ae.condition_id, ae.outcome, ae.asset
+      FROM alert_events ae
+      WHERE ae.fill_timestamp >= NOW() - INTERVAL '72 hours'
+        AND ae.asset IS NOT NULL
+        AND NOT EXISTS (
+          SELECT 1 FROM market_status ms
+          WHERE ms.condition_id = ae.condition_id
+            AND ms.market_resolved = TRUE
+            AND ms.winning_outcome IS NOT NULL
+            AND TRIM(ms.winning_outcome) != ''
+        )
+      ORDER BY ae.condition_id, ae.outcome
       LIMIT ${MAX_OUTCOMES_PER_RUN}
     `;
+
+    // Also count how many we're skipping due to resolution
+    const skippedCount = await sql<{ count: number }>`
+      SELECT COUNT(DISTINCT ae.asset)::int as count
+      FROM alert_events ae
+      WHERE ae.fill_timestamp >= NOW() - INTERVAL '72 hours'
+        AND ae.asset IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM market_status ms
+          WHERE ms.condition_id = ae.condition_id
+            AND ms.market_resolved = TRUE
+            AND ms.winning_outcome IS NOT NULL
+            AND TRIM(ms.winning_outcome) != ''
+        )
+    `;
+    metrics.skippedResolved = skippedCount.rows[0]?.count ?? 0;
 
     const outcomes = recentOutcomes.rows;
     metrics.requested = outcomes.length;
@@ -368,10 +393,14 @@ export async function POST(request: Request) {
         WHERE id = ${jobRunId}
       `;
 
+      const msg = metrics.skippedResolved > 0
+        ? `No active outcomes to refresh (${metrics.skippedResolved} skipped - already resolved)`
+        : 'No outcomes to refresh';
+
       return NextResponse.json({
         jobRunId,
         status: 'success',
-        message: 'No outcomes to refresh',
+        message: msg,
         ...metrics,
         durationMs,
       }, { headers: NO_CACHE_HEADERS });
@@ -381,7 +410,8 @@ export async function POST(request: Request) {
     const marketSet = new Set(outcomes.map(o => o.condition_id));
     metrics.distinctMarkets = marketSet.size;
 
-    console.log(`[refresh-prices] Fetching prices for ${outcomes.length} outcomes across ${metrics.distinctMarkets} markets${metrics.capApplied ? ' (cap applied)' : ''}`);
+    const skipMsg = metrics.skippedResolved > 0 ? ` (${metrics.skippedResolved} resolved assets skipped)` : '';
+    console.log(`[refresh-prices] Fetching prices for ${outcomes.length} outcomes across ${metrics.distinctMarkets} markets${metrics.capApplied ? ' (cap applied)' : ''}${skipMsg}`);
 
     // Step 2: Fetch prices from CLOB API
     const pricesByAsset = await fetchPricesBatch(outcomes, 50);
@@ -419,24 +449,34 @@ export async function POST(request: Request) {
       // Non-critical, ignore
     }
 
-    // Phase 6: Check market resolution status for distinct condition_ids (last 14 days)
-    // Uses a separate query with bounded time window to avoid DDOSing ourselves
+    // Phase 6: Check market resolution status for condition_ids from DB
+    // Scope: all condition_ids in alert_events that are NOT yet resolved (prioritize unknowns)
+    // This ensures we don't miss markets just because they fell outside an arbitrary time window
     try {
+      // Query: condition_ids that are either not in market_status OR not resolved with a winner
       const distinctMarketsResult = await sql<{ condition_id: string }>`
-        SELECT DISTINCT condition_id
-        FROM alert_events
-        WHERE fill_timestamp > NOW() - INTERVAL '14 days'
-          AND condition_id IS NOT NULL
-          AND condition_id != ''
-        ORDER BY condition_id
+        SELECT DISTINCT ae.condition_id
+        FROM alert_events ae
+        WHERE ae.condition_id IS NOT NULL
+          AND ae.condition_id != ''
+          AND NOT EXISTS (
+            SELECT 1 FROM market_status ms
+            WHERE ms.condition_id = ae.condition_id
+              AND ms.market_resolved = TRUE
+              AND ms.winning_outcome IS NOT NULL
+              AND TRIM(ms.winning_outcome) != ''
+          )
+        ORDER BY ae.condition_id
         LIMIT 500
       `;
 
       const conditionIds = distinctMarketsResult.rows.map(r => r.condition_id);
       if (conditionIds.length > 0) {
-        console.log(`[refresh-prices] Checking resolution status for ${conditionIds.length} markets`);
+        console.log(`[refresh-prices] Checking resolution status for ${conditionIds.length} unresolved/unknown markets`);
         await updateMarketResolutionStatus(conditionIds, metrics);
-        console.log(`[refresh-prices] Resolution check: ${metrics.marketsResolved} resolved, ${metrics.marketsClosed} closed, ${metrics.marketsSkipped} skipped`);
+        console.log(`[refresh-prices] Resolution check: ${metrics.marketsResolved} newly resolved, ${metrics.marketsClosed} closed, ${metrics.marketsSkipped} skipped`);
+      } else {
+        console.log('[refresh-prices] All known markets already resolved - no resolution checks needed');
       }
     } catch (err) {
       // Non-critical - don't fail the whole job if resolution check fails
@@ -454,7 +494,8 @@ export async function POST(request: Request) {
       WHERE id = ${jobRunId}
     `;
 
-    console.log(`[refresh-prices] Completed: ${metrics.updated} prices updated, ${metrics.failed} failed, ${metrics.marketsResolved} resolved, ${durationMs}ms`);
+    const resolvedSkipMsg = metrics.skippedResolved > 0 ? `, ${metrics.skippedResolved} resolved skipped` : '';
+    console.log(`[refresh-prices] Completed: ${metrics.updated} prices updated, ${metrics.failed} failed${resolvedSkipMsg}, ${metrics.marketsResolved} newly resolved, ${durationMs}ms`);
 
     return NextResponse.json({
       jobRunId,
