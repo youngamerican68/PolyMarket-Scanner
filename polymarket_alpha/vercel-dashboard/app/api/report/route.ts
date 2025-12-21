@@ -344,8 +344,8 @@ export async function GET(req: NextRequest) {
             AND ae.whale_category = ${category}
             AND (
               CASE WHEN ${includeResolved}::boolean = TRUE
-                THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL
-                ELSE ms.market_resolved IS NOT TRUE OR ms.winning_outcome IS NULL
+                THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL AND TRIM(ms.winning_outcome) != ''
+                ELSE ms.market_resolved IS NOT TRUE OR ms.winning_outcome IS NULL OR TRIM(ms.winning_outcome) = ''
               END
             )
           ORDER BY ae.fill_timestamp DESC, ae.id DESC
@@ -371,8 +371,8 @@ export async function GET(req: NextRequest) {
             AND ae.is_whale = TRUE
             AND (
               CASE WHEN ${includeResolved}::boolean = TRUE
-                THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL
-                ELSE ms.market_resolved IS NOT TRUE OR ms.winning_outcome IS NULL
+                THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL AND TRIM(ms.winning_outcome) != ''
+                ELSE ms.market_resolved IS NOT TRUE OR ms.winning_outcome IS NULL OR TRIM(ms.winning_outcome) = ''
               END
             )
           ORDER BY ae.fill_timestamp DESC, ae.id DESC
@@ -398,8 +398,8 @@ export async function GET(req: NextRequest) {
             AND ae.whale_category = ${category}
             AND (
               CASE WHEN ${includeResolved}::boolean = TRUE
-                THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL
-                ELSE ms.market_resolved IS NOT TRUE OR ms.winning_outcome IS NULL
+                THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL AND TRIM(ms.winning_outcome) != ''
+                ELSE ms.market_resolved IS NOT TRUE OR ms.winning_outcome IS NULL OR TRIM(ms.winning_outcome) = ''
               END
             )
           ORDER BY ae.fill_timestamp DESC, ae.id DESC
@@ -424,8 +424,8 @@ export async function GET(req: NextRequest) {
             AND ae.position_current_value >= ${minPosition}
             AND (
               CASE WHEN ${includeResolved}::boolean = TRUE
-                THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL
-                ELSE ms.market_resolved IS NOT TRUE OR ms.winning_outcome IS NULL
+                THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL AND TRIM(ms.winning_outcome) != ''
+                ELSE ms.market_resolved IS NOT TRUE OR ms.winning_outcome IS NULL OR TRIM(ms.winning_outcome) = ''
               END
             )
           ORDER BY ae.fill_timestamp DESC, ae.id DESC
@@ -573,8 +573,8 @@ export async function GET(req: NextRequest) {
               AND whale_category = ${category}
               AND (
                 CASE WHEN ${includeResolved}::boolean = TRUE
-                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
-                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
                 END
               )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
@@ -603,8 +603,8 @@ export async function GET(req: NextRequest) {
               AND is_whale = TRUE
               AND (
                 CASE WHEN ${includeResolved}::boolean = TRUE
-                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
-                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
                 END
               )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
@@ -633,8 +633,8 @@ export async function GET(req: NextRequest) {
               AND whale_category = ${category}
               AND (
                 CASE WHEN ${includeResolved}::boolean = TRUE
-                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
-                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
                 END
               )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
@@ -662,8 +662,8 @@ export async function GET(req: NextRequest) {
               AND position_current_value >= ${minPosition}
               AND (
                 CASE WHEN ${includeResolved}::boolean = TRUE
-                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
-                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
                 END
               )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
@@ -703,8 +703,8 @@ export async function GET(req: NextRequest) {
               AND whale_category = ${category}
               AND (
                 CASE WHEN ${includeResolved}::boolean = TRUE
-                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
-                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
                 END
               )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
@@ -741,8 +741,8 @@ export async function GET(req: NextRequest) {
               AND is_whale = TRUE
               AND (
                 CASE WHEN ${includeResolved}::boolean = TRUE
-                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
-                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
                 END
               )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
@@ -779,8 +779,8 @@ export async function GET(req: NextRequest) {
               AND whale_category = ${category}
               AND (
                 CASE WHEN ${includeResolved}::boolean = TRUE
-                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
-                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
                 END
               )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
@@ -816,8 +816,8 @@ export async function GET(req: NextRequest) {
               AND position_current_value >= ${minPosition}
               AND (
                 CASE WHEN ${includeResolved}::boolean = TRUE
-                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
-                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL)
+                  THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
+                  ELSE condition_id NOT IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
                 END
               )
             ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
