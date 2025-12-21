@@ -892,20 +892,20 @@ export async function GET(req: NextRequest) {
         for (let i = 0; i < groups.length; i++) {
           conditionIdSet.add(groups[i].conditionId);
         }
+        const conditionIds = Array.from(conditionIdSet);
 
-        // Query resolution status for all condition IDs at once
-        // Only fetch markets with valid winning_outcome (non-null, non-empty)
+        // Query resolution status for the specific condition IDs in our groups
+        // Pass array as JSON and unnest for efficient matching
+        const conditionIdsJson = JSON.stringify(conditionIds);
         const resolutionResult = await sql<{ condition_id: string; market_resolved: boolean; winning_outcome: string | null }>`
           SELECT ms.condition_id, ms.market_resolved, ms.winning_outcome
           FROM market_status ms
           WHERE ms.condition_id IN (
-            SELECT DISTINCT ae.condition_id
-            FROM alert_events ae
-            WHERE ae.condition_id IS NOT NULL
+            SELECT jsonb_array_elements_text(${conditionIdsJson}::jsonb)
           )
-          AND ms.market_resolved = TRUE
-          AND ms.winning_outcome IS NOT NULL
-          AND TRIM(ms.winning_outcome) != ''
+            AND ms.market_resolved = TRUE
+            AND ms.winning_outcome IS NOT NULL
+            AND TRIM(ms.winning_outcome) != ''
         `;
 
         const resolutionMap = new Map(resolutionResult.rows.map(r => [r.condition_id, r]));
