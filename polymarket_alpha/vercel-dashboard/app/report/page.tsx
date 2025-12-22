@@ -1071,14 +1071,14 @@ export default function ReportPage() {
                 <tr>
                   <th className="text-left p-3 text-poly-muted font-medium">Market</th>
                   <th className="text-left p-3 text-poly-muted font-medium">Trader</th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="Price at which this trade filled">
-                    Fill Price
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade (not total position)">
+                    Last Fill Price
                   </th>
                   <th className="text-right p-3 text-poly-muted font-medium" title="Current market price (cached, refreshes every 10min)">
                     Current Price
                   </th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="USD value of this trade fill">
-                    Fill Value
+                  <th className="text-right p-3 text-poly-muted font-medium" title="USD value of this specific trade (not total position)">
+                    Last Fill Value
                   </th>
                   <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis (shares × avg entry) / Current value (shares × current price)">
                     Position Cost / Value
