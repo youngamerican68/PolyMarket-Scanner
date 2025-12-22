@@ -340,6 +340,24 @@ function ConvergenceWalletPnL({ wallet }: { wallet: ConvergenceWallet }) {
   return <span className="text-cyan-400">{formatted}</span>
 }
 
+// Position Cost / Value for convergence tables
+// ConvergenceWallet doesn't have currentPrice, so value is always "—"
+function ConvergencePositionCostValue({ wallet }: { wallet: ConvergenceWallet }) {
+  const costStr = wallet.positionValue !== null ? formatUsd(wallet.positionValue) : '—'
+
+  if (wallet.positionValue === null) {
+    return <span className="text-gray-500">—</span>
+  }
+
+  return (
+    <span className="whitespace-nowrap">
+      <span className="text-poly-green">{costStr}</span>
+      <span className="text-poly-muted/50"> / </span>
+      <span className="text-gray-500">—</span>
+    </span>
+  )
+}
+
 // Position Cost / Value display for All Longshot Trades table
 // Computes cost and value from shares and normalized prices to ensure consistency
 // Format: "$COST / $VALUE" or "$COST / —" if no current price
@@ -763,7 +781,7 @@ export default function ReportPage() {
                             <th className="text-left p-3 text-poly-muted font-medium">Wallet</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade (not total position)">Last Fill Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
-                            <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis (shares × avg entry)">Position Cost</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis / Current value (no live price available)">Position Cost / Value</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">Potential Win</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
@@ -784,7 +802,7 @@ export default function ReportPage() {
                               </td>
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
-                              <td className="p-3 text-right text-poly-green">{w.positionValueFormatted}</td>
+                              <td className="p-3 text-right"><ConvergencePositionCostValue wallet={w} /></td>
                               <td className="p-3 text-right font-medium"><ConvergenceWalletPnL wallet={w} /></td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
@@ -868,7 +886,7 @@ export default function ReportPage() {
                             <th className="text-left p-3 text-poly-muted font-medium">Wallet</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade (not total position)">Last Fill Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
-                            <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis (shares × avg entry)">Position Cost</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis / Current value (no live price available)">Position Cost / Value</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">Potential Win</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
@@ -889,7 +907,7 @@ export default function ReportPage() {
                               </td>
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
-                              <td className="p-3 text-right text-poly-green">{w.positionValueFormatted}</td>
+                              <td className="p-3 text-right"><ConvergencePositionCostValue wallet={w} /></td>
                               <td className="p-3 text-right font-medium"><ConvergenceWalletPnL wallet={w} /></td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
@@ -1003,7 +1021,8 @@ export default function ReportPage() {
                     <th className="text-left p-3 text-poly-muted font-medium">Market</th>
                     <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade (not total position)">Last Fill Price</th>
                     <th className="text-right p-3 text-poly-muted font-medium" title="Current market price (cached)">Current Price</th>
-                    <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
+                    <th className="text-right p-3 text-poly-muted font-medium" title="USD value of this specific trade (not total position)">Last Fill Value</th>
+                    <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis (shares × avg entry) / Current value (shares × current price)">Position Cost / Value</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Pos Avg Entry</th>
                     <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">Potential Win</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Time</th>
@@ -1046,7 +1065,8 @@ export default function ReportPage() {
                       </td>
                       <td className="p-3 text-right text-poly-yellow">{alert.fillPriceFormatted}</td>
                       <td className="p-3 text-right"><PriceDisplay alert={alert} /></td>
-                      <td className="p-3 text-right text-white font-medium">{alert.positionCurrentValueFormatted}</td>
+                      <td className="p-3 text-right text-poly-green">{alert.fillValueFormatted}</td>
+                      <td className="p-3 text-right"><PositionCostValue alert={alert} /></td>
                       <td className="p-3 text-right text-poly-muted">{alert.positionAvgPriceFormatted}</td>
                       <td className="p-3 text-right font-medium"><ActualPnL alert={alert} /></td>
                       <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(alert.fillTimestamp)}</td>
