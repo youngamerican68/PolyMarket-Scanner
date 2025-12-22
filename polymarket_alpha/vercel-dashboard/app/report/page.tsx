@@ -205,13 +205,37 @@ function formatOdds(price: number | null): string {
   return `${(price * 100).toFixed(1)}%`
 }
 
+// Normalize probability: handle both 0-1 and 0-100 formats
+// Returns null for invalid values (<=0 or >=1 after normalization)
+function normalizeProb(x: number | null | undefined): number | null {
+  if (x === null || x === undefined) return null
+  const v = x > 1 && x <= 100 ? x / 100 : x
+  if (v <= 0 || v >= 1) return null
+  return v
+}
+
 // Compute potential win (max upside) from snapshot-derived position
-// potentialWin = shares × (1 - avgEntry), clamped to 0
-function calcPotentialWin(shares: number | null, avgEntry: number | null): number | null {
-  if (shares === null || shares === undefined) return null
-  if (avgEntry === null || avgEntry === undefined) return null
-  const profit = shares * (1 - avgEntry)
-  return Math.max(0, profit)
+// Preferred: shares × (1 - avgEntry)
+// Fallback: costBasis × (1/avgEntry - 1) when shares unavailable
+function calcPotentialWinUsd(opts: {
+  shares?: number | null
+  costBasis?: number | null
+  avgEntry: number | null | undefined
+}): number | null {
+  const avg = normalizeProb(opts.avgEntry)
+  if (avg === null) return null
+
+  const shares = opts.shares ?? null
+  if (shares !== null && shares !== undefined && shares > 0) {
+    return Math.max(0, shares * (1 - avg))
+  }
+
+  const cost = opts.costBasis ?? null
+  if (cost !== null && cost !== undefined && cost > 0) {
+    return Math.max(0, cost * (1 / avg - 1))
+  }
+
+  return null
 }
 
 // Format potential win as USD string
@@ -278,11 +302,13 @@ function ConvergenceBadge({ group }: { group: ConvergenceGroup }) {
   return null
 }
 
-// Potential Win display - computed from snapshot-derived position (shares × (1 - avgEntry))
-// Final/resolution fields not populated yet; UI hidden intentionally
+// Potential Win display - computed from snapshot-derived position
+// Uses shares × (1 - avgEntry) formula; final/resolution fields not used
 function ActualPnL({ alert }: { alert: AlertRow }) {
-  // Compute potential win from snapshot position (positionSize = shares, positionAvgPrice = avgEntry)
-  const potentialWin = calcPotentialWin(alert.positionSize, alert.positionAvgPrice)
+  const potentialWin = calcPotentialWinUsd({
+    shares: alert.positionSize,
+    avgEntry: alert.positionAvgPrice
+  })
   const formatted = formatPotentialWin(potentialWin)
 
   if (potentialWin === null) {
@@ -291,15 +317,20 @@ function ActualPnL({ alert }: { alert: AlertRow }) {
   return <span className="text-amber-400">{formatted}</span>
 }
 
-// Potential Win for convergence wallet rows - uses pre-computed potentialWin from API
-// (ConvergenceWallet doesn't have shares directly, so we use the API-computed value)
-// Final/resolution fields not populated yet; UI hidden intentionally
+// Potential Win for convergence wallet rows - computed locally from cost basis
+// Uses costBasis × (1/avgEntry - 1) formula since ConvergenceWallet lacks shares field
+// Final/resolution fields not used
 function ConvergenceWalletPnL({ wallet }: { wallet: ConvergenceWallet }) {
-  // Use pre-computed potentialWin from API (computed from snapshot position)
-  if (wallet.potentialWin === null || wallet.potentialWin === undefined) {
+  const potentialWin = calcPotentialWinUsd({
+    costBasis: wallet.positionValue,
+    avgEntry: wallet.positionAvgPrice
+  })
+  const formatted = formatPotentialWin(potentialWin)
+
+  if (potentialWin === null) {
     return <span className="text-gray-500">—</span>
   }
-  return <span className="text-cyan-400">{wallet.potentialWinFormatted}</span>
+  return <span className="text-cyan-400">{formatted}</span>
 }
 
 export default function ReportPage() {
@@ -715,7 +746,7 @@ export default function ReportPage() {
                             <th className="text-left p-3 text-poly-muted font-medium">Wallet</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade">Fill Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
-                            <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis (shares × avg entry)">Position Cost</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">Potential Win</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
@@ -820,7 +851,7 @@ export default function ReportPage() {
                             <th className="text-left p-3 text-poly-muted font-medium">Wallet</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade">Fill Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
-                            <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis (shares × avg entry)">Position Cost</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">Potential Win</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
