@@ -28,9 +28,9 @@ interface AlertRow {
   positionAvgPriceFormatted: string
   positionCurrentValue: number | null
   positionCurrentValueFormatted: string
-  // Potential win (profit if position wins)
-  potentialWin: number | null
-  potentialWinFormatted: string
+  // Total payout if outcome wins = positionSize (each share pays $1)
+  totalPayoutIfWins: number | null
+  totalPayoutIfWinsFormatted: string
   // Whale metadata
   isWhale: boolean
   whaleLabel: string | null
@@ -70,8 +70,9 @@ interface ConvergenceWallet {
   fillPriceFormatted: string
   positionAvgPrice: number | null
   positionAvgPriceFormatted: string
-  potentialWin: number | null
-  potentialWinFormatted: string
+  // Total payout if outcome wins = positionSize (each share pays $1)
+  totalPayoutIfWins: number | null
+  totalPayoutIfWinsFormatted: string
   latestTimestamp: string
   isWhale: boolean
   // Cached current price
@@ -98,6 +99,9 @@ interface ConvergenceGroup {
   // Value = sum(positionSize × currentPrice) across wallets; null if any wallet missing price
   totalValue: number | null
   totalValueFormatted: string
+  // Payout if outcome wins = sum(positionSize) across wallets; null if any wallet missing size
+  totalPayoutIfWins: number | null
+  totalPayoutIfWinsFormatted: string
   minOdds: number | null
   maxOdds: number | null
   oddsRangeFormatted: string
@@ -320,35 +324,21 @@ function ConvergenceBadge({ group }: { group: ConvergenceGroup }) {
   return null
 }
 
-// Potential Win display - computed from snapshot-derived position
-// Uses shares × (1 - avgEntry) formula; final/resolution fields not used
-function ActualPnL({ alert }: { alert: AlertRow }) {
-  const potentialWin = calcPotentialWinUsd({
-    shares: alert.positionSize,
-    avgEntry: alert.positionAvgPrice
-  })
-  const formatted = formatPotentialWin(potentialWin)
-
-  if (potentialWin === null) {
+// Payout if Wins display - uses backend-computed totalPayoutIfWins (= positionSize)
+// Each share pays $1 if the outcome wins
+function PayoutIfWinsCell({ alert }: { alert: AlertRow }) {
+  if (alert.totalPayoutIfWins === null) {
     return <span className="text-gray-500">—</span>
   }
-  return <span className="text-amber-400">{formatted}</span>
+  return <span className="text-amber-400">{alert.totalPayoutIfWinsFormatted}</span>
 }
 
-// Potential Win for convergence wallet rows - computed locally from cost basis
-// Uses costBasis × (1/avgEntry - 1) formula since ConvergenceWallet lacks shares field
-// Final/resolution fields not used
-function ConvergenceWalletPnL({ wallet }: { wallet: ConvergenceWallet }) {
-  const potentialWin = calcPotentialWinUsd({
-    costBasis: wallet.positionValue,
-    avgEntry: wallet.positionAvgPrice
-  })
-  const formatted = formatPotentialWin(potentialWin)
-
-  if (potentialWin === null) {
+// Payout if Wins for convergence wallet rows - uses backend-computed totalPayoutIfWins
+function ConvergenceWalletPayoutIfWins({ wallet }: { wallet: ConvergenceWallet }) {
+  if (wallet.totalPayoutIfWins === null) {
     return <span className="text-gray-500">—</span>
   }
-  return <span className="text-cyan-400">{formatted}</span>
+  return <span className="text-cyan-400">{wallet.totalPayoutIfWinsFormatted}</span>
 }
 
 // Position Cost / Value for convergence tables
@@ -799,7 +789,7 @@ export default function ReportPage() {
                             <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade (not total position)">Last Fill Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis / Current value (no live price available)">Position Cost / Value</th>
-                            <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">Potential Win</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Total payout if outcome wins ($1 per share)">Payout if Wins</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
                         </thead>
@@ -820,7 +810,7 @@ export default function ReportPage() {
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
                               <td className="p-3 text-right"><ConvergencePositionCostValue wallet={w} /></td>
-                              <td className="p-3 text-right font-medium"><ConvergenceWalletPnL wallet={w} /></td>
+                              <td className="p-3 text-right font-medium"><ConvergenceWalletPayoutIfWins wallet={w} /></td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
                           ))}
@@ -908,7 +898,7 @@ export default function ReportPage() {
                             <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade (not total position)">Last Fill Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis / Current value (no live price available)">Position Cost / Value</th>
-                            <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">Potential Win</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Total payout if outcome wins ($1 per share)">Payout if Wins</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
                         </thead>
@@ -929,7 +919,7 @@ export default function ReportPage() {
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
                               <td className="p-3 text-right"><ConvergencePositionCostValue wallet={w} /></td>
-                              <td className="p-3 text-right font-medium"><ConvergenceWalletPnL wallet={w} /></td>
+                              <td className="p-3 text-right font-medium"><ConvergenceWalletPayoutIfWins wallet={w} /></td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
                           ))}
@@ -1045,7 +1035,7 @@ export default function ReportPage() {
                     <th className="text-right p-3 text-poly-muted font-medium" title="USD value of this specific trade (not total position)">Last Fill Value</th>
                     <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis (shares × avg entry) / Current value (shares × current price)">Position Cost / Value</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Pos Avg Entry</th>
-                    <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">Potential Win</th>
+                    <th className="text-right p-3 text-poly-muted font-medium" title="Total payout if outcome wins ($1 per share)">Payout if Wins</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                   </tr>
                 </thead>
@@ -1089,7 +1079,7 @@ export default function ReportPage() {
                       <td className="p-3 text-right text-poly-green">{alert.fillValueFormatted}</td>
                       <td className="p-3 text-right"><PositionCostValue alert={alert} /></td>
                       <td className="p-3 text-right text-poly-muted">{alert.positionAvgPriceFormatted}</td>
-                      <td className="p-3 text-right font-medium"><ActualPnL alert={alert} /></td>
+                      <td className="p-3 text-right font-medium"><PayoutIfWinsCell alert={alert} /></td>
                       <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(alert.fillTimestamp)}</td>
                     </tr>
                   ))}
@@ -1127,8 +1117,8 @@ export default function ReportPage() {
                   <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of position">
                     Pos Avg Entry
                   </th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">
-                    Potential Win
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Total payout if outcome wins ($1 per share)">
+                    Payout if Wins
                   </th>
                   <th className="text-right p-3 text-poly-muted font-medium">
                     Time
@@ -1181,7 +1171,7 @@ export default function ReportPage() {
                       <td className="p-3 text-right text-poly-green">{alert.fillValueFormatted}</td>
                       <td className="p-3 text-right"><PositionCostValue alert={alert} /></td>
                       <td className="p-3 text-right text-poly-muted">{alert.positionAvgPriceFormatted}</td>
-                      <td className="p-3 text-right font-medium"><ActualPnL alert={alert} /></td>
+                      <td className="p-3 text-right font-medium"><PayoutIfWinsCell alert={alert} /></td>
                       <td className="p-3 text-right text-poly-muted text-xs whitespace-nowrap">
                         {formatTimeAgo(alert.fillTimestamp)}
                       </td>

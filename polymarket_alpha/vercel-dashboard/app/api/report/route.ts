@@ -180,8 +180,9 @@ interface FormattedAlert {
   positionAvgPrice: number | null;
   positionAvgPriceFormatted: string;
   positionSize: number | null;
-  potentialWin: number | null;
-  potentialWinFormatted: string;
+  // Total payout if outcome wins = positionSize (each share pays $1)
+  totalPayoutIfWins: number | null;
+  totalPayoutIfWinsFormatted: string;
   isWhale: boolean;
   whaleLabel: string | null;
   whaleTier: string | null;
@@ -219,8 +220,9 @@ interface WalletDetail {
   fillPriceFormatted: string;
   positionAvgPrice: number | null;
   positionAvgPriceFormatted: string;
-  potentialWin: number | null;
-  potentialWinFormatted: string;
+  // Total payout if outcome wins = positionSize (each share pays $1)
+  totalPayoutIfWins: number | null;
+  totalPayoutIfWinsFormatted: string;
   latestTimestamp: string;
   isWhale: boolean;
   whaleLabel: string | null;
@@ -248,6 +250,9 @@ interface ConvergenceGroup {
   // Value = sum(positionSize × currentPrice) across wallets; null if any wallet missing price
   totalValue: number | null;
   totalValueFormatted: string;
+  // Payout if outcome wins = sum(positionSize) across wallets; null if any wallet missing size
+  totalPayoutIfWins: number | null;
+  totalPayoutIfWinsFormatted: string;
   minOdds: number | null;
   maxOdds: number | null;
   oddsRangeFormatted: string;
@@ -508,10 +513,8 @@ export async function GET(req: NextRequest) {
       const positionSize = parseNumeric(row.position_size);
       const cachedPrice = parseNumeric(row.cached_price);
 
-      // Potential win = shares * (1 - avg_price) = profit if position resolves to $1
-      const potentialWin = (positionSize !== null && positionAvgPrice !== null)
-        ? positionSize * (1 - positionAvgPrice)
-        : null;
+      // Total payout if outcome wins = positionSize (each share pays $1)
+      const totalPayoutIfWins = positionSize;
 
       // Price status based on cache freshness
       const priceStatus = getPriceStatus(row.price_fetched_at);
@@ -535,8 +538,8 @@ export async function GET(req: NextRequest) {
         positionAvgPrice,
         positionAvgPriceFormatted: formatOdds(positionAvgPrice),
         positionSize,
-        potentialWin,
-        potentialWinFormatted: formatMoney(potentialWin),
+        totalPayoutIfWins,
+        totalPayoutIfWinsFormatted: formatMoney(totalPayoutIfWins),
         isWhale: row.is_whale,
         whaleLabel: row.whale_label,
         whaleTier: row.whale_tier,
@@ -946,6 +949,8 @@ export async function GET(req: NextRequest) {
         totalCostFormatted: '$0',
         totalValue: null,
         totalValueFormatted: '—',
+        totalPayoutIfWins: null,
+        totalPayoutIfWinsFormatted: '—',
         minOdds,
         maxOdds,
         oddsRangeFormatted,
@@ -1257,10 +1262,8 @@ export async function GET(req: NextRequest) {
             ? positionSize * cachedPrice
             : null;
 
-          // Potential win = position_size * (1 - position_avg_price)
-          const potentialWin = (positionSize !== null && positionAvgPrice !== null)
-            ? positionSize * (1 - positionAvgPrice)
-            : null;
+          // Total payout if outcome wins = positionSize (each share pays $1)
+          const totalPayoutIfWins = positionSize;
 
           group.wallets.push({
             wallet: row.wallet,
@@ -1274,8 +1277,8 @@ export async function GET(req: NextRequest) {
             fillPriceFormatted: formatOdds(fillPrice),
             positionAvgPrice: positionAvgPrice,
             positionAvgPriceFormatted: formatOdds(positionAvgPrice),
-            potentialWin: potentialWin,
-            potentialWinFormatted: formatMoney(potentialWin),
+            totalPayoutIfWins: totalPayoutIfWins,
+            totalPayoutIfWinsFormatted: totalPayoutIfWins !== null ? formatMoney(totalPayoutIfWins) : '—',
             latestTimestamp: row.fill_timestamp,
             isWhale: row.is_whale,
             whaleLabel: row.whale_label,
@@ -1296,7 +1299,9 @@ export async function GET(req: NextRequest) {
       for (const group of groups) {
         let totalCost = 0;
         let totalValue: number | null = 0;
+        let totalPayoutIfWins: number | null = 0;
         let hasAllValues = true;
+        let hasAllPayouts = true;
 
         for (const wallet of group.wallets) {
           // Accumulate cost (skip nulls)
@@ -1310,13 +1315,22 @@ export async function GET(req: NextRequest) {
           } else if (totalValue !== null) {
             totalValue += wallet.positionValue;
           }
+
+          // Accumulate payout - if any wallet is missing payout (positionSize), total becomes null
+          if (wallet.totalPayoutIfWins === null) {
+            hasAllPayouts = false;
+          } else if (totalPayoutIfWins !== null) {
+            totalPayoutIfWins += wallet.totalPayoutIfWins;
+          }
         }
 
-        // Set final values: totalValue is null if any wallet was missing price
+        // Set final values
         group.totalCost = totalCost;
         group.totalCostFormatted = formatMoney(totalCost);
         group.totalValue = hasAllValues ? totalValue : null;
         group.totalValueFormatted = hasAllValues && totalValue !== null ? formatMoney(totalValue) : '—';
+        group.totalPayoutIfWins = hasAllPayouts ? totalPayoutIfWins : null;
+        group.totalPayoutIfWinsFormatted = hasAllPayouts && totalPayoutIfWins !== null ? formatMoney(totalPayoutIfWins) : '—';
       }
     }
 
@@ -1356,7 +1370,7 @@ export async function GET(req: NextRequest) {
           fillPrice, // canonical fill price from wallet detail
           posAvgEntry: wallet.positionAvgPrice,
           positionValueUsd: bet.totalCost, // Use cost basis for archive
-          potentialWinUsd: wallet.potentialWin, // Uses IS NULL check, not falsy
+          potentialWinUsd: wallet.totalPayoutIfWins, // Total payout if wins = positionSize
           observedAt,
         });
       }
