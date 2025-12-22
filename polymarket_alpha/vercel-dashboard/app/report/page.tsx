@@ -247,6 +247,15 @@ function formatPotentialWin(value: number | null): string {
   return `$${value.toFixed(0)}`
 }
 
+// Format USD value compactly (same as formatPotentialWin but for general use)
+function formatUsd(value: number | null): string {
+  if (value === null || value === undefined) return '—'
+  if (value >= 1000) {
+    return `$${(value / 1000).toFixed(1)}K`
+  }
+  return `$${value.toFixed(0)}`
+}
+
 
 // Price status indicator component with age display
 function PriceStatusBadge({ status, fetchedAt }: { status: PriceStatus; fetchedAt?: string | null }) {
@@ -329,6 +338,40 @@ function ConvergenceWalletPnL({ wallet }: { wallet: ConvergenceWallet }) {
     return <span className="text-gray-500">—</span>
   }
   return <span className="text-cyan-400">{formatted}</span>
+}
+
+// Position Cost / Value display for All Longshot Trades table
+// Computes cost and value from shares and normalized prices to ensure consistency
+// Format: "$COST / $VALUE" or "$COST / —" if no current price
+function PositionCostValue({ alert }: { alert: AlertRow }) {
+  const shares = alert.positionSize
+  const avgEntry = normalizeProb(alert.positionAvgPrice)
+  const currentPrice = normalizeProb(alert.currentPrice)
+
+  // Compute position cost = shares × avgEntry
+  const positionCost = (shares !== null && avgEntry !== null && shares > 0)
+    ? shares * avgEntry
+    : null
+
+  // Compute position value = shares × currentPrice (only if current price available)
+  const positionValue = (shares !== null && currentPrice !== null && shares > 0)
+    ? shares * currentPrice
+    : null
+
+  const costStr = formatUsd(positionCost)
+  const valueStr = positionValue !== null ? formatUsd(positionValue) : '—'
+
+  if (positionCost === null) {
+    return <span className="text-gray-500">—</span>
+  }
+
+  return (
+    <span className="whitespace-nowrap">
+      <span className="text-poly-muted">{costStr}</span>
+      <span className="text-poly-muted/50"> / </span>
+      <span className={positionValue !== null ? 'text-white font-medium' : 'text-gray-500'}>{valueStr}</span>
+    </span>
+  )
 }
 
 export default function ReportPage() {
@@ -1037,8 +1080,8 @@ export default function ReportPage() {
                   <th className="text-right p-3 text-poly-muted font-medium" title="USD value of this trade fill">
                     Fill Value
                   </th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="Position value at ingestion time (snapshot)">
-                    Position Value
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis (shares × avg entry) / Current value (shares × current price)">
+                    Position Cost / Value
                   </th>
                   <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of position">
                     Pos Avg Entry
@@ -1095,7 +1138,7 @@ export default function ReportPage() {
                       <td className="p-3 text-right text-poly-yellow">{alert.fillPriceFormatted}</td>
                       <td className="p-3 text-right"><PriceDisplay alert={alert} /></td>
                       <td className="p-3 text-right text-poly-green">{alert.fillValueFormatted}</td>
-                      <td className="p-3 text-right text-white font-medium">{alert.positionCurrentValueFormatted}</td>
+                      <td className="p-3 text-right"><PositionCostValue alert={alert} /></td>
                       <td className="p-3 text-right text-poly-muted">{alert.positionAvgPriceFormatted}</td>
                       <td className="p-3 text-right font-medium"><ActualPnL alert={alert} /></td>
                       <td className="p-3 text-right text-poly-muted text-xs whitespace-nowrap">
