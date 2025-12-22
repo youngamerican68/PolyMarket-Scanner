@@ -768,9 +768,194 @@ const historyLookupResult = await sql`
 | 6 | Market Resolution Detection | ✅ Completed |
 | 7 | Longshot Position Archive | ✅ Completed |
 
+## Session: December 21, 2025 (Phase 8-9: Final P&L + Position Snapshots)
+
+### Phase 8: Finalize Resolved P&L (Completed)
+
+**Problem:** Position data becomes stale because we capture snapshots at trade ingestion time. If a trader continues buying after our last alert, the final P&L displayed is incorrect.
+
+**Solution:** When a market resolves, fetch current positions from Polymarket API and store final P&L.
+
+**New Table:**
+```sql
+CREATE TABLE market_final_pnl (
+  condition_id TEXT NOT NULL,
+  wallet TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  position_found BOOLEAN NOT NULL DEFAULT FALSE,
+  shares NUMERIC,
+  avg_price NUMERIC,
+  potential_win NUMERIC,
+  cost_basis NUMERIC,
+  final_pnl NUMERIC,
+  winning_outcome TEXT NOT NULL,
+  finalized_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (condition_id, wallet, outcome)
+);
+```
+
+**New Column:**
+- `market_status.finalized_at` - Tracks when P&L finalization ran for each market
+
+**Files Created/Modified:**
+- `lib/finalize-resolved-pnl.ts` - Core finalization logic
+- `app/api/admin/finalize-resolved-pnl/route.ts` - Manual endpoint for backfill
+- `app/api/jobs/refresh-prices/route.ts` - Integrated automatic finalization
+- `app/api/report/route.ts` - Returns finalPnl, finalPositionFound fields
+- `app/report/page.tsx` - ActualPnL/ConvergenceWalletPnL components
+
+---
+
+### Phase 9: Position Snapshots + Estimated P&L (Completed)
+
+**Problem:** Polymarket positions API only returns open positions. Once markets resolve and positions are redeemed, they disappear from the API. Phase 8's "fetch on resolution" approach can't reliably get final positions.
+
+**Solution:** Continuously snapshot open positions before resolution, then use those snapshots to estimate P&L when API positions are unavailable.
+
+**New Table:**
+```sql
+CREATE TABLE wallet_position_snapshot (
+  wallet TEXT NOT NULL,
+  condition_id TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  shares DOUBLE PRECISION NOT NULL,
+  avg_price DOUBLE PRECISION NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (wallet, condition_id, outcome)
+);
+```
+
+**New Columns on market_final_pnl:**
+- `is_estimated BOOLEAN` - Whether P&L is estimated vs exact
+- `estimate_source TEXT` - 'position_snapshot' or 'alert_snapshot'
+- `estimate_as_of TIMESTAMPTZ` - When the source snapshot was taken
+
+**How It Works:**
+
+1. **Position Snapshotting** (refresh-prices cron):
+   - Every 10 minutes, fetch open positions for tracked wallets
+   - Upsert to `wallet_position_snapshot` table
+   - Defensive avgPrice normalization (if >1, assume 0-100 scale)
+
+2. **Finalization Fallback** (finalize-resolved-pnl):
+   - First tries Polymarket API (usually empty for resolved markets)
+   - Falls back to `wallet_position_snapshot` → `is_estimated=true, estimate_source='position_snapshot'`
+   - Falls back to `alert_events` → `is_estimated=true, estimate_source='alert_snapshot'`
+   - If neither available → `final_pnl=NULL`
+
+3. **UI Display:**
+   - Exact P&L: `+$X` or `-$X` (bold)
+   - Estimated P&L: `~+$X` or `~-$X` (with tooltip, slightly transparent)
+   - No data: "P&L unavailable"
+   - Not yet finalized: "Pending..."
+
+**Files Modified:**
+- `app/api/admin/migrate/route.ts` - Phase 9 migration
+- `app/api/jobs/refresh-prices/route.ts` - Position snapshotting
+- `lib/finalize-resolved-pnl.ts` - Snapshot fallback logic
+- `app/api/report/route.ts` - Estimate metadata fields
+- `app/report/page.tsx` - Estimated vs exact P&L display
+
+**Deployment Steps:**
+1. Deploy code
+2. Enable `ENABLE_ADMIN_MIGRATIONS=true` in Vercel
+3. Run migration: `POST /api/admin/migrate`
+4. Wait for refresh-prices cron (or trigger manually) to populate snapshots
+5. Run finalization: `POST /api/admin/finalize-resolved-pnl`
+6. Disable `ENABLE_ADMIN_MIGRATIONS=false`
+
+**Limitations:**
+- Already-resolved markets without snapshots will show estimates from alert_events (may be stale)
+- Accuracy improves over time as more snapshots accumulate before resolution
+
+---
+
+## Completed Phases Summary
+
+| Phase | Feature | Status |
+|-------|---------|--------|
+| 1 | Trade Ingestion + Alerts | ✅ Completed |
+| 2 | Convergence Detection | ✅ Completed |
+| 3 | Price Cache | ✅ Completed |
+| 4 | Job Tracking + Admin | ✅ Completed |
+| 5 | Conviction Sizing Anomalies | ✅ Completed |
+| 6 | Market Resolution Detection | ✅ Completed |
+| 7 | Longshot Position Archive | ✅ Completed |
+| 8 | Finalize Resolved P&L | ✅ Completed |
+| 9 | Position Snapshots + Estimated P&L | ✅ Completed |
+
+## Session: December 21, 2025 (UI Consistency & Table Alignment)
+
+### UI Fixes: Table Column Consistency (Completed)
+
+**Problem:** Tables had inconsistent columns and confusing labels:
+- "Fill Price" vs "Position Value" semantics unclear (per-trade vs total position)
+- "Position Value" showed even when "Current Price" was missing
+- Tables had different column structures making comparison difficult
+
+**Solution:** Standardized all tables with consistent columns and clear labeling.
+
+### Column Naming Standardization
+
+**Renamed for clarity:**
+- `Fill Price` → `Last Fill Price` (per-trade, not position)
+- `Fill Value` → `Last Fill Value` (per-trade, not position)
+- `Position Value` → `Position Cost / Value` (shows both cost basis and current value)
+
+**Format:** `$COST / $VALUE` or `$COST / —` if no current price available
+
+### New Components
+
+**PositionCostValue** (for AlertRow tables):
+```typescript
+// Computes from normalized prices for consistency
+const positionCost = shares * normalizeProb(avgEntry)
+const positionValue = shares * normalizeProb(currentPrice) // only if available
+// Displays: "$8.4K / $12.1K" or "$8.4K / —"
+```
+
+**ConvergencePositionCostValue** (for ConvergenceWallet tables):
+```typescript
+// ConvergenceWallet lacks currentPrice, so value always shows "—"
+// Displays: "$8.4K / —"
+```
+
+### Table Column Alignment
+
+| Table | Columns | Notes |
+|-------|---------|-------|
+| All Longshot Trades | 9: Market, Trader, Last Fill Price, Current Price, Last Fill Value, Position Cost/Value, Pos Avg Entry, Potential Win, Time | Full data available |
+| Whale Trades | 9: Same as above | Full data available |
+| Convergence | 6: Wallet, Last Fill Price, Pos Avg Entry, Position Cost/Value, Potential Win, Time | No currentPrice in ConvergenceWallet |
+| Large Single Bets | 6: Same as Convergence | No currentPrice in ConvergenceWallet |
+
+### Key Behavior Fixes
+
+1. **"No price yet" + Position Value** - Previously showed a value even without current price. Now shows `$COST / —`
+
+2. **Consistent Potential Win** - Uses `calcPotentialWinUsd()` with normalized prices across all tables
+
+3. **Dev-only sanity check** - Console warning in dev mode when currentPrice ≤ 0.5% but positionValue ≥ $1K (helps detect cross-wiring)
+
+### Sorting Removed
+
+Removed interactive column sorting from All Longshot Trades table for simplicity. Data displays in API-provided order.
+
+### Files Modified
+- `app/report/page.tsx` - All UI changes
+
+### Commits
+- `a5c7263` - Remove table sorting
+- `6658748` - Add PositionCostValue component for consistent display
+- `c5c3fcb` - Rename Fill Price/Value to Last Fill Price/Value
+- `bcc2682` - Apply Last Fill Price to all tables
+- `889f092` - Align all tables with Position Cost / Value column
+
+---
+
 ## Remaining Phases (Planned)
 
-### Phase 8: Position Accumulator
+### Phase 10: Position Accumulator
 - Track positions across days
 - Catch wallets buying $1K/day that cross $2.5K threshold
 - Prevents loss from 48h trade pruning
