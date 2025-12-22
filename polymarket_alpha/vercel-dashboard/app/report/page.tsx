@@ -247,8 +247,6 @@ function formatPotentialWin(value: number | null): string {
   return `$${value.toFixed(0)}`
 }
 
-type SortField = 'fillPrice' | 'fillValue' | 'positionValue' | 'time' | 'currentPrice'
-type SortDirection = 'asc' | 'desc'
 
 // Price status indicator component with age display
 function PriceStatusBadge({ status, fetchedAt }: { status: PriceStatus; fetchedAt?: string | null }) {
@@ -353,10 +351,6 @@ export default function ReportPage() {
   // Pagination
   const [currentPage, setCurrentPage] = useState(1)
 
-  // Sorting
-  const [sortField, setSortField] = useState<SortField>('time')
-  const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
-
   // Convergence expanded state
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
 
@@ -460,49 +454,6 @@ export default function ReportPage() {
     }
   }
 
-  const handleSort = (field: SortField) => {
-    if (sortField === field) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc')
-    } else {
-      setSortField(field)
-      setSortDirection(field === 'fillPrice' ? 'asc' : 'desc')
-    }
-  }
-
-  const getSortedAlerts = (alerts: AlertRow[]): AlertRow[] => {
-    return [...alerts].sort((a, b) => {
-      // For null values, sort them to the end regardless of direction
-      let aVal: number | null, bVal: number | null
-      switch (sortField) {
-        case 'fillPrice':
-          aVal = a.fillPrice
-          bVal = b.fillPrice
-          break
-        case 'fillValue':
-          aVal = a.fillValueUsd
-          bVal = b.fillValueUsd
-          break
-        case 'positionValue':
-          aVal = a.positionCurrentValue
-          bVal = b.positionCurrentValue
-          break
-        case 'currentPrice':
-          aVal = a.currentPrice
-          bVal = b.currentPrice
-          break
-        case 'time':
-          aVal = new Date(a.fillTimestamp).getTime()
-          bVal = new Date(b.fillTimestamp).getTime()
-          break
-      }
-      // Handle nulls - sort them to the end
-      if (aVal === null && bVal === null) return 0
-      if (aVal === null) return 1
-      if (bVal === null) return -1
-      return sortDirection === 'asc' ? aVal - bVal : bVal - aVal
-    })
-  }
-
   const toggleGroupExpanded = (groupKey: string) => {
     setExpandedGroups(prev => {
       const next = new Set(prev)
@@ -513,11 +464,6 @@ export default function ReportPage() {
       }
       return next
     })
-  }
-
-  const SortIcon = ({ field }: { field: SortField }) => {
-    if (sortField !== field) return <span className="ml-1 text-poly-muted/50">↕</span>
-    return <span className="ml-1">{sortDirection === 'asc' ? '↑' : '↓'}</span>
   }
 
   if (loading && !report) {
@@ -552,9 +498,8 @@ export default function ReportPage() {
   if (!report) return null
 
   const { meta, alertsPage, convergence, largeSingleBets } = report
-  const sortedAlerts = getSortedAlerts(alertsPage)
-  const whaleAlerts = sortedAlerts.filter(a => a.isWhale)
-  const regularAlerts = sortedAlerts.filter(a => !a.isWhale)
+  const whaleAlerts = alertsPage.filter(a => a.isWhale)
+  const regularAlerts = alertsPage.filter(a => !a.isWhale)
 
   return (
     <div className="space-y-6">
@@ -1083,33 +1028,17 @@ export default function ReportPage() {
                 <tr>
                   <th className="text-left p-3 text-poly-muted font-medium">Market</th>
                   <th className="text-left p-3 text-poly-muted font-medium">Trader</th>
-                  <th
-                    className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
-                    onClick={() => handleSort('fillPrice')}
-                    title="Price at which this trade filled"
-                  >
-                    Fill Price<SortIcon field="fillPrice" />
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Price at which this trade filled">
+                    Fill Price
                   </th>
-                  <th
-                    className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
-                    onClick={() => handleSort('currentPrice')}
-                    title="Current market price (cached, refreshes every 10min)"
-                  >
-                    Current Price<SortIcon field="currentPrice" />
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Current market price (cached, refreshes every 10min)">
+                    Current Price
                   </th>
-                  <th
-                    className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
-                    onClick={() => handleSort('fillValue')}
-                    title="USD value of this trade fill"
-                  >
-                    Fill Value<SortIcon field="fillValue" />
+                  <th className="text-right p-3 text-poly-muted font-medium" title="USD value of this trade fill">
+                    Fill Value
                   </th>
-                  <th
-                    className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
-                    onClick={() => handleSort('positionValue')}
-                    title="Position value at ingestion time (snapshot)"
-                  >
-                    Position Value<SortIcon field="positionValue" />
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Position value at ingestion time (snapshot)">
+                    Position Value
                   </th>
                   <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of position">
                     Pos Avg Entry
@@ -1117,17 +1046,14 @@ export default function ReportPage() {
                   <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">
                     Potential Win
                   </th>
-                  <th
-                    className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
-                    onClick={() => handleSort('time')}
-                  >
-                    Time<SortIcon field="time" />
+                  <th className="text-right p-3 text-poly-muted font-medium">
+                    Time
                   </th>
                 </tr>
               </thead>
               <tbody>
                 {(() => {
-                  const displayAlerts = whalesOnly ? sortedAlerts : regularAlerts.length > 0 ? regularAlerts : sortedAlerts
+                  const displayAlerts = whalesOnly ? alertsPage : regularAlerts.length > 0 ? regularAlerts : alertsPage
                   if (displayAlerts.length === 0) {
                     return (
                       <tr>
@@ -1183,7 +1109,7 @@ export default function ReportPage() {
           </div>
           <div className="px-3 py-2 border-t border-poly-border flex items-center justify-between">
             <span className="text-xs text-poly-muted">
-              Showing {sortedAlerts.length} of {meta.totalAlerts} alerts
+              Showing {alertsPage.length} of {meta.totalAlerts} alerts
             </span>
             <div className="flex items-center gap-2">
               <button
