@@ -761,7 +761,7 @@ export default function ReportPage() {
                         <thead className="bg-poly-border/50">
                           <tr>
                             <th className="text-left p-3 text-poly-muted font-medium">Wallet</th>
-                            <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade">Fill Price</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade (not total position)">Last Fill Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis (shares × avg entry)">Position Cost</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">Potential Win</th>
@@ -866,7 +866,7 @@ export default function ReportPage() {
                         <thead className="bg-poly-border/50">
                           <tr>
                             <th className="text-left p-3 text-poly-muted font-medium">Wallet</th>
-                            <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade">Fill Price</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade (not total position)">Last Fill Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis (shares × avg entry)">Position Cost</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">Potential Win</th>
@@ -1001,7 +1001,7 @@ export default function ReportPage() {
                   <tr>
                     <th className="text-left p-3 text-poly-muted font-medium">Whale</th>
                     <th className="text-left p-3 text-poly-muted font-medium">Market</th>
-                    <th className="text-right p-3 text-poly-muted font-medium">Fill Price</th>
+                    <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade (not total position)">Last Fill Price</th>
                     <th className="text-right p-3 text-poly-muted font-medium" title="Current market price (cached)">Current Price</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Pos Avg Entry</th>
