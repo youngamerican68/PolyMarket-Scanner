@@ -425,6 +425,35 @@ export default function ReportPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [windowHours, whalesOnly, category, includeResolved, ultraLongshots])
 
+  // Dev-only warning for potential column cross-wiring detection
+  // Flags rows where currentPrice is tiny but positionValue is large
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'production') return
+    const alerts = report?.alertsPage
+    if (!Array.isArray(alerts)) return
+
+    for (const alert of alerts) {
+      // Normalize currentPrice to handle both 0-1 and 0-100 formats
+      const currentPrice = normalizeProb(alert.currentPrice)
+      const positionValue = alert.positionCurrentValue
+
+      // Warn if current price is extremely small but position value is large
+      // This MIGHT indicate cross-wiring but could also be legitimate (longshot with big position)
+      if (
+        currentPrice !== null &&
+        positionValue !== null &&
+        currentPrice <= 0.005 &&
+        positionValue >= 1000
+      ) {
+        console.warn(
+          `[DEV Sanity Check] Alert ${alert.id}: currentPrice=${(currentPrice * 100).toFixed(2)}% with positionValue=$${positionValue.toFixed(0)}. ` +
+          `Market: "${alert.title}", Outcome: "${alert.outcome}". ` +
+          `Verify: (1) Current Price corresponds to same outcome as position, (2) Position Value is truly current value (not cost basis).`
+        )
+      }
+    }
+  }, [report?.alertsPage])
+
   const goToPage = (page: number) => {
     if (report && page >= 1 && page <= report.meta.totalPages) {
       fetchReport(page)
