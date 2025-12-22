@@ -208,8 +208,12 @@ interface FormattedAlert {
 interface WalletDetail {
   wallet: string;
   traderName: string;
+  positionSize: number | null;
+  // Cost basis = positionSize × positionAvgPrice
+  positionCost: number | null;
+  positionCostFormatted: string;
+  // Mark-to-market value = positionSize × currentPrice (null if currentPrice missing)
   positionValue: number | null;
-  positionValueRaw: string | null;
   positionValueFormatted: string;
   fillPrice: number | null;
   fillPriceFormatted: string;
@@ -238,9 +242,12 @@ interface ConvergenceGroup {
   slug: string | null;
   eventSlug: string | null;
   distinctWallets: number;
-  totalPositionValue: number;
-  totalPositionValueRaw: string;
-  totalPositionValueFormatted: string;
+  // Cost = sum(positionSize × positionAvgPrice) across wallets
+  totalCost: number;
+  totalCostFormatted: string;
+  // Value = sum(positionSize × currentPrice) across wallets; null if any wallet missing price
+  totalValue: number | null;
+  totalValueFormatted: string;
   minOdds: number | null;
   maxOdds: number | null;
   oddsRangeFormatted: string;
@@ -913,8 +920,6 @@ export async function GET(req: NextRequest) {
     const groupTimestampMap = new Map<string, string | null>();
 
     for (const row of convergenceAggResult.rows) {
-      const totalRaw = row.total_position_value || '0';
-      const totalPositionValue = new Decimal(totalRaw).toNumber();
       const minOdds = parseNumeric(row.min_fill_price);
       const maxOdds = parseNumeric(row.max_fill_price);
 
@@ -936,9 +941,11 @@ export async function GET(req: NextRequest) {
         slug: row.slug,
         eventSlug: row.event_slug,
         distinctWallets: row.distinct_wallets,
-        totalPositionValue,
-        totalPositionValueRaw: totalRaw,
-        totalPositionValueFormatted: formatMoney(totalPositionValue),
+        // Placeholder totals - will be computed from wallet details below
+        totalCost: 0,
+        totalCostFormatted: '$0',
+        totalValue: null,
+        totalValueFormatted: '—',
         minOdds,
         maxOdds,
         oddsRangeFormatted,
@@ -1235,21 +1242,34 @@ export async function GET(req: NextRequest) {
         const key = `${row.condition_id}:${row.outcome}`;
         const group = groupMap.get(key);
         if (group) {
-          const posValue = parseNumeric(row.position_current_value);
           const fillPrice = parseNumeric(row.fill_price);
           const positionSize = parseNumeric(row.position_size);
           const positionAvgPrice = parseNumeric(row.position_avg_price);
           const cachedPrice = parseNumeric(row.cached_price);
+
+          // Cost basis = positionSize × positionAvgPrice
+          const positionCost = (positionSize !== null && positionAvgPrice !== null)
+            ? positionSize * positionAvgPrice
+            : null;
+
+          // Mark-to-market value = positionSize × currentPrice (null if no price)
+          const positionValue = (positionSize !== null && cachedPrice !== null)
+            ? positionSize * cachedPrice
+            : null;
+
           // Potential win = position_size * (1 - position_avg_price)
           const potentialWin = (positionSize !== null && positionAvgPrice !== null)
             ? positionSize * (1 - positionAvgPrice)
             : null;
+
           group.wallets.push({
             wallet: row.wallet,
             traderName: row.trader_name || row.trader_pseudonym || 'Anonymous',
-            positionValue: posValue,
-            positionValueRaw: row.position_current_value,
-            positionValueFormatted: formatMoney(posValue),
+            positionSize: positionSize,
+            positionCost: positionCost,
+            positionCostFormatted: positionCost !== null ? formatMoney(positionCost) : '—',
+            positionValue: positionValue,
+            positionValueFormatted: positionValue !== null ? formatMoney(positionValue) : '—',
             fillPrice: fillPrice,
             fillPriceFormatted: formatOdds(fillPrice),
             positionAvgPrice: positionAvgPrice,
@@ -1269,6 +1289,34 @@ export async function GET(req: NextRequest) {
             finalPnlEstimateAsOf: row.final_pnl_estimate_as_of ?? null,
           });
         }
+      }
+
+      // Compute group totals from wallet details
+      const groups = Array.from(groupMap.values());
+      for (const group of groups) {
+        let totalCost = 0;
+        let totalValue: number | null = 0;
+        let hasAllValues = true;
+
+        for (const wallet of group.wallets) {
+          // Accumulate cost (skip nulls)
+          if (wallet.positionCost !== null) {
+            totalCost += wallet.positionCost;
+          }
+
+          // Accumulate value - if any wallet is missing value, total value becomes null
+          if (wallet.positionValue === null) {
+            hasAllValues = false;
+          } else if (totalValue !== null) {
+            totalValue += wallet.positionValue;
+          }
+        }
+
+        // Set final values: totalValue is null if any wallet was missing price
+        group.totalCost = totalCost;
+        group.totalCostFormatted = formatMoney(totalCost);
+        group.totalValue = hasAllValues ? totalValue : null;
+        group.totalValueFormatted = hasAllValues && totalValue !== null ? formatMoney(totalValue) : '—';
       }
     }
 
@@ -1307,7 +1355,7 @@ export async function GET(req: NextRequest) {
           outcome: bet.outcome,
           fillPrice, // canonical fill price from wallet detail
           posAvgEntry: wallet.positionAvgPrice,
-          positionValueUsd: bet.totalPositionValue,
+          positionValueUsd: bet.totalCost, // Use cost basis for archive
           potentialWinUsd: wallet.potentialWin, // Uses IS NULL check, not falsy
           observedAt,
         });

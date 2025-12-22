@@ -59,6 +59,11 @@ interface ConvergenceWallet {
   wallet: string
   traderName: string
   whaleLabel: string | null
+  positionSize: number | null
+  // Cost basis = positionSize × positionAvgPrice
+  positionCost: number | null
+  positionCostFormatted: string
+  // Mark-to-market value = positionSize × currentPrice
   positionValue: number | null
   positionValueFormatted: string
   fillPrice: number | null
@@ -87,8 +92,12 @@ interface ConvergenceGroup {
   slug: string | null
   eventSlug: string | null
   distinctWallets: number
-  totalPositionValue: number
-  totalPositionValueFormatted: string
+  // Cost = sum(positionSize × positionAvgPrice) across wallets
+  totalCost: number
+  totalCostFormatted: string
+  // Value = sum(positionSize × currentPrice) across wallets; null if any wallet missing price
+  totalValue: number | null
+  totalValueFormatted: string
   minOdds: number | null
   maxOdds: number | null
   oddsRangeFormatted: string
@@ -343,25 +352,13 @@ function ConvergenceWalletPnL({ wallet }: { wallet: ConvergenceWallet }) {
 }
 
 // Position Cost / Value for convergence tables
-// Cost = positionValue (cost basis from API)
-// Value = (positionValue / avgEntry) × currentPrice (if currentPrice available)
+// Uses backend-computed values: positionCost = shares × avgEntry, positionValue = shares × currentPrice
 function ConvergencePositionCostValue({ wallet }: { wallet: ConvergenceWallet }) {
-  const costBasis = wallet.positionValue
-  const avgEntry = normalizeProb(wallet.positionAvgPrice)
-  const currentPrice = normalizeProb(wallet.currentPrice)
+  // Use the correctly computed values from the backend
+  const costStr = wallet.positionCostFormatted
+  const valueStr = wallet.positionValueFormatted
 
-  // Compute shares from cost basis: shares = costBasis / avgEntry
-  // Then value = shares × currentPrice
-  let positionValue: number | null = null
-  if (costBasis !== null && avgEntry !== null && currentPrice !== null && avgEntry > 0) {
-    const shares = costBasis / avgEntry
-    positionValue = shares * currentPrice
-  }
-
-  const costStr = costBasis !== null ? formatUsd(costBasis) : '—'
-  const valueStr = positionValue !== null ? formatUsd(positionValue) : '—'
-
-  if (costBasis === null) {
+  if (wallet.positionCost === null) {
     return <span className="text-gray-500">—</span>
   }
 
@@ -369,7 +366,7 @@ function ConvergencePositionCostValue({ wallet }: { wallet: ConvergenceWallet })
     <span className="whitespace-nowrap">
       <span className="text-poly-green">{costStr}</span>
       <span className="text-poly-muted/50"> / </span>
-      <span className={positionValue !== null ? 'text-white font-medium' : 'text-gray-500'}>{valueStr}</span>
+      <span className={wallet.positionValue !== null ? 'text-white font-medium' : 'text-gray-500'}>{valueStr}</span>
     </span>
   )
 }
@@ -778,12 +775,16 @@ export default function ReportPage() {
                         <span className="font-bold text-amber-400">{group.distinctWallets}</span>
                       </div>
                       <div className="text-right">
-                        <span className="text-poly-muted">Odds: </span>
+                        <span className="text-poly-muted">Fill Odds: </span>
                         <span className="font-bold text-yellow-400">{group.oddsRangeFormatted}</span>
                       </div>
                       <div className="text-right">
-                        <span className="text-poly-muted">Total Value: </span>
-                        <span className="font-bold text-poly-green">{group.totalPositionValueFormatted}</span>
+                        <span className="text-poly-muted">Total Cost / Value: </span>
+                        <span className="whitespace-nowrap">
+                          <span className="font-bold text-poly-green">{group.totalCostFormatted}</span>
+                          <span className="text-poly-muted/50"> / </span>
+                          <span className={group.totalValue !== null ? 'font-bold text-white' : 'text-gray-500'}>{group.totalValueFormatted}</span>
+                        </span>
                       </div>
                       <span className="text-poly-muted">{isExpanded ? '▼' : '▶'}</span>
                     </div>
@@ -883,12 +884,16 @@ export default function ReportPage() {
                         <span className="font-bold text-cyan-400">{group.distinctWallets}</span>
                       </div>
                       <div className="text-right">
-                        <span className="text-poly-muted">Odds: </span>
+                        <span className="text-poly-muted">Fill Odds: </span>
                         <span className="font-bold text-yellow-400">{group.oddsRangeFormatted}</span>
                       </div>
                       <div className="text-right">
-                        <span className="text-poly-muted">Total Value: </span>
-                        <span className="font-bold text-poly-green">{group.totalPositionValueFormatted}</span>
+                        <span className="text-poly-muted">Total Cost / Value: </span>
+                        <span className="whitespace-nowrap">
+                          <span className="font-bold text-poly-green">{group.totalCostFormatted}</span>
+                          <span className="text-poly-muted/50"> / </span>
+                          <span className={group.totalValue !== null ? 'font-bold text-white' : 'text-gray-500'}>{group.totalValueFormatted}</span>
+                        </span>
                       </div>
                       <span className="text-poly-muted">{isExpanded ? '▼' : '▶'}</span>
                     </div>
