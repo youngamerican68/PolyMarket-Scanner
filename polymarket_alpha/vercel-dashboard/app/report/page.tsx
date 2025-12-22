@@ -205,6 +205,24 @@ function formatOdds(price: number | null): string {
   return `${(price * 100).toFixed(1)}%`
 }
 
+// Compute potential win (max upside) from snapshot-derived position
+// potentialWin = shares × (1 - avgEntry), clamped to 0
+function calcPotentialWin(shares: number | null, avgEntry: number | null): number | null {
+  if (shares === null || shares === undefined) return null
+  if (avgEntry === null || avgEntry === undefined) return null
+  const profit = shares * (1 - avgEntry)
+  return Math.max(0, profit)
+}
+
+// Format potential win as USD string
+function formatPotentialWin(value: number | null): string {
+  if (value === null || value === undefined) return '—'
+  if (value >= 1000) {
+    return `$${(value / 1000).toFixed(1)}K`
+  }
+  return `$${value.toFixed(0)}`
+}
+
 type SortField = 'fillPrice' | 'fillValue' | 'positionValue' | 'time' | 'currentPrice'
 type SortDirection = 'asc' | 'desc'
 
@@ -249,139 +267,39 @@ function PriceDisplay({ alert }: { alert: AlertRow }) {
 }
 
 // Phase 6: Resolved market badge with win/loss indicator
+// Final/resolution fields not populated yet; UI hidden intentionally
 function ResolvedBadge({ alert }: { alert: AlertRow }) {
-  if (!alert.marketResolved || !alert.winningOutcome) return null
-
-  const traderWon = alert.outcome === alert.winningOutcome
-
-  if (traderWon) {
-    return (
-      <span className="ml-2 px-2 py-0.5 text-xs rounded font-bold bg-green-500 text-white">
-        ✓ WON
-      </span>
-    )
-  }
-
-  return (
-    <span className="ml-2 text-xs whitespace-nowrap">
-      <span className="px-2 py-0.5 rounded font-bold bg-red-500 text-white">✗ LOST</span>
-      <span className="ml-1 text-gray-400">→ {alert.winningOutcome}</span>
-    </span>
-  )
+  return null
 }
 
 // Convergence group badge (shows if the group's outcome won or lost)
+// Final/resolution fields not populated yet; UI hidden intentionally
 function ConvergenceBadge({ group }: { group: ConvergenceGroup }) {
-  if (!group.marketResolved || !group.winningOutcome) return null
-
-  const groupWon = group.outcome === group.winningOutcome
-
-  if (groupWon) {
-    return (
-      <span className="ml-2 px-2 py-0.5 text-xs rounded font-bold bg-green-500 text-white">
-        ✓ WON
-      </span>
-    )
-  }
-
-  return (
-    <span className="ml-2 text-xs whitespace-nowrap">
-      <span className="px-2 py-0.5 rounded font-bold bg-red-500 text-white">✗ LOST</span>
-      <span className="ml-1 text-gray-400">→ {group.winningOutcome}</span>
-    </span>
-  )
+  return null
 }
 
-// Actual P&L display for resolved trades, Potential Win for unresolved
+// Potential Win display - computed from snapshot-derived position (shares × (1 - avgEntry))
+// Final/resolution fields not populated yet; UI hidden intentionally
 function ActualPnL({ alert }: { alert: AlertRow }) {
-  const isResolved = alert.marketResolved && alert.winningOutcome
+  // Compute potential win from snapshot position (positionSize = shares, positionAvgPrice = avgEntry)
+  const potentialWin = calcPotentialWin(alert.positionSize, alert.positionAvgPrice)
+  const formatted = formatPotentialWin(potentialWin)
 
-  if (!isResolved) {
-    // Unresolved: show potential win (snapshot-based is fine for open markets)
-    return <span className="text-amber-400">{alert.potentialWinFormatted}</span>
+  if (potentialWin === null) {
+    return <span className="text-gray-500">—</span>
   }
-
-  // RESOLVED MARKET
-
-  // Case 1: We have finalized P&L - display it
-  if (alert.finalPnl !== null && alert.finalPnl !== undefined) {
-    const isWin = alert.finalPnl >= 0
-    const absValue = Math.abs(alert.finalPnl)
-    const isEstimated = alert.finalPnlIsEstimated === true
-    const prefix = isEstimated ? '~' : ''
-    const formatted = absValue >= 1000
-      ? `${prefix}${isWin ? '+' : '-'}$${(absValue / 1000).toFixed(1)}K`
-      : `${prefix}${isWin ? '+' : '-'}$${absValue.toFixed(0)}`
-
-    // Tooltip for estimated values
-    const tooltip = isEstimated
-      ? 'Estimated from last observed position; actual may differ'
-      : undefined
-
-    return (
-      <span
-        className={`font-bold ${isWin ? 'text-green-400' : 'text-red-400'} ${isEstimated ? 'opacity-80' : ''}`}
-        title={tooltip}
-      >
-        {formatted}
-      </span>
-    )
-  }
-
-  // Case 2: No finalized P&L - distinguish states
-  if (alert.marketFinalizedAt) {
-    // Finalization ran but no P&L available (no snapshot data found)
-    return <span className="text-gray-500 italic text-sm" title="No position data available">P&L unavailable</span>
-  }
-
-  // Finalization hasn't run yet for this market
-  return <span className="text-gray-500 italic text-sm" title="Awaiting finalization">Pending...</span>
+  return <span className="text-amber-400">{formatted}</span>
 }
 
-// P&L for convergence wallet rows (uses group-level resolution status)
-function ConvergenceWalletPnL({ wallet, group }: { wallet: ConvergenceWallet; group: ConvergenceGroup }) {
-  const isResolved = group.marketResolved && group.winningOutcome
-
-  if (!isResolved) {
-    // Unresolved: show potential win (snapshot-based is fine for open markets)
-    return <span className="text-cyan-400">{wallet.potentialWinFormatted}</span>
+// Potential Win for convergence wallet rows - uses pre-computed potentialWin from API
+// (ConvergenceWallet doesn't have shares directly, so we use the API-computed value)
+// Final/resolution fields not populated yet; UI hidden intentionally
+function ConvergenceWalletPnL({ wallet }: { wallet: ConvergenceWallet }) {
+  // Use pre-computed potentialWin from API (computed from snapshot position)
+  if (wallet.potentialWin === null || wallet.potentialWin === undefined) {
+    return <span className="text-gray-500">—</span>
   }
-
-  // RESOLVED MARKET
-
-  // Case 1: We have finalized P&L - display it
-  if (wallet.finalPnl !== null && wallet.finalPnl !== undefined) {
-    const isWin = wallet.finalPnl >= 0
-    const absValue = Math.abs(wallet.finalPnl)
-    const isEstimated = wallet.finalPnlIsEstimated === true
-    const prefix = isEstimated ? '~' : ''
-    const formatted = absValue >= 1000
-      ? `${prefix}${isWin ? '+' : '-'}$${(absValue / 1000).toFixed(1)}K`
-      : `${prefix}${isWin ? '+' : '-'}$${absValue.toFixed(0)}`
-
-    // Tooltip for estimated values
-    const tooltip = isEstimated
-      ? 'Estimated from last observed position; actual may differ'
-      : undefined
-
-    return (
-      <span
-        className={`font-bold ${isWin ? 'text-green-400' : 'text-red-400'} ${isEstimated ? 'opacity-80' : ''}`}
-        title={tooltip}
-      >
-        {formatted}
-      </span>
-    )
-  }
-
-  // Case 2: No finalized P&L - distinguish states
-  if (group.marketFinalizedAt) {
-    // Finalization ran but no P&L available (no snapshot data found)
-    return <span className="text-gray-500 italic text-sm" title="No position data available">P&L unavailable</span>
-  }
-
-  // Finalization hasn't run yet for this market
-  return <span className="text-gray-500 italic text-sm" title="Awaiting finalization">Pending...</span>
+  return <span className="text-cyan-400">{wallet.potentialWinFormatted}</span>
 }
 
 export default function ReportPage() {
@@ -798,7 +716,7 @@ export default function ReportPage() {
                             <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade">Fill Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
-                            <th className="text-right p-3 text-poly-muted font-medium" title="Actual P&L for resolved, potential profit for open">P&L</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">Potential Win</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
                         </thead>
@@ -819,7 +737,7 @@ export default function ReportPage() {
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-green">{w.positionValueFormatted}</td>
-                              <td className="p-3 text-right font-medium"><ConvergenceWalletPnL wallet={w} group={group} /></td>
+                              <td className="p-3 text-right font-medium"><ConvergenceWalletPnL wallet={w} /></td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
                           ))}
@@ -903,7 +821,7 @@ export default function ReportPage() {
                             <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade">Fill Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
-                            <th className="text-right p-3 text-poly-muted font-medium" title="Actual P&L for resolved, potential profit for open">P&L</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">Potential Win</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
                         </thead>
@@ -924,7 +842,7 @@ export default function ReportPage() {
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-green">{w.positionValueFormatted}</td>
-                              <td className="p-3 text-right font-medium"><ConvergenceWalletPnL wallet={w} group={group} /></td>
+                              <td className="p-3 text-right font-medium"><ConvergenceWalletPnL wallet={w} /></td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
                           ))}
@@ -1039,7 +957,7 @@ export default function ReportPage() {
                     <th className="text-right p-3 text-poly-muted font-medium" title="Current market price (cached)">Current Price</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Position Value</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Pos Avg Entry</th>
-                    <th className="text-right p-3 text-poly-muted font-medium" title="Actual P&L for resolved, potential profit for open">P&L</th>
+                    <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">Potential Win</th>
                     <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                   </tr>
                 </thead>
@@ -1136,8 +1054,8 @@ export default function ReportPage() {
                   <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of position">
                     Pos Avg Entry
                   </th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="Actual P&L for resolved, potential profit for open">
-                    P&L
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Potential profit if held outcome wins">
+                    Potential Win
                   </th>
                   <th
                     className="text-right p-3 text-poly-muted font-medium cursor-pointer hover:text-white select-none"
