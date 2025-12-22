@@ -69,6 +69,8 @@ interface ConvergenceWallet {
   potentialWinFormatted: string
   latestTimestamp: string
   isWhale: boolean
+  // Cached current price
+  currentPrice: number | null
   // Phase 8: Final P&L
   finalPnl: number | null
   finalPositionFound: boolean | null
@@ -341,11 +343,25 @@ function ConvergenceWalletPnL({ wallet }: { wallet: ConvergenceWallet }) {
 }
 
 // Position Cost / Value for convergence tables
-// ConvergenceWallet doesn't have currentPrice, so value is always "—"
+// Cost = positionValue (cost basis from API)
+// Value = (positionValue / avgEntry) × currentPrice (if currentPrice available)
 function ConvergencePositionCostValue({ wallet }: { wallet: ConvergenceWallet }) {
-  const costStr = wallet.positionValue !== null ? formatUsd(wallet.positionValue) : '—'
+  const costBasis = wallet.positionValue
+  const avgEntry = normalizeProb(wallet.positionAvgPrice)
+  const currentPrice = normalizeProb(wallet.currentPrice)
 
-  if (wallet.positionValue === null) {
+  // Compute shares from cost basis: shares = costBasis / avgEntry
+  // Then value = shares × currentPrice
+  let positionValue: number | null = null
+  if (costBasis !== null && avgEntry !== null && currentPrice !== null && avgEntry > 0) {
+    const shares = costBasis / avgEntry
+    positionValue = shares * currentPrice
+  }
+
+  const costStr = costBasis !== null ? formatUsd(costBasis) : '—'
+  const valueStr = positionValue !== null ? formatUsd(positionValue) : '—'
+
+  if (costBasis === null) {
     return <span className="text-gray-500">—</span>
   }
 
@@ -353,7 +369,7 @@ function ConvergencePositionCostValue({ wallet }: { wallet: ConvergenceWallet })
     <span className="whitespace-nowrap">
       <span className="text-poly-green">{costStr}</span>
       <span className="text-poly-muted/50"> / </span>
-      <span className="text-gray-500">—</span>
+      <span className={positionValue !== null ? 'text-white font-medium' : 'text-gray-500'}>{valueStr}</span>
     </span>
   )
 }

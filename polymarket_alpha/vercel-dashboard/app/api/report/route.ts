@@ -145,6 +145,8 @@ type WalletDetailRow = {
   is_whale: boolean;
   whale_label: string | null;
   rn: number;
+  // Cached price (from LEFT JOIN outcome_price_cache)
+  cached_price: string | null;
   // Phase 8: Final P&L
   final_pnl: string | null;
   final_position_found: boolean | null;
@@ -218,6 +220,8 @@ interface WalletDetail {
   latestTimestamp: string;
   isWhale: boolean;
   whaleLabel: string | null;
+  // Cached current price
+  currentPrice: number | null;
   // Phase 8: Final P&L
   finalPnl: number | null;
   finalPositionFound: boolean | null;
@@ -1045,6 +1049,7 @@ export async function GET(req: NextRequest) {
               SELECT d.condition_id, d.outcome, d.wallet,
                 d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
+                opc.price::text as cached_price,
                 mfp.final_pnl, mfp.position_found as final_position_found,
                 mfp.is_estimated as final_pnl_is_estimated,
                 mfp.estimate_source as final_pnl_estimate_source,
@@ -1053,6 +1058,7 @@ export async function GET(req: NextRequest) {
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
               INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
+              LEFT JOIN outcome_price_cache opc ON opc.condition_id = d.condition_id AND opc.outcome = d.outcome
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
@@ -1098,6 +1104,7 @@ export async function GET(req: NextRequest) {
               SELECT d.condition_id, d.outcome, d.wallet,
                 d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
+                opc.price::text as cached_price,
                 mfp.final_pnl, mfp.position_found as final_position_found,
                 mfp.is_estimated as final_pnl_is_estimated,
                 mfp.estimate_source as final_pnl_estimate_source,
@@ -1106,6 +1113,7 @@ export async function GET(req: NextRequest) {
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
               INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
+              LEFT JOIN outcome_price_cache opc ON opc.condition_id = d.condition_id AND opc.outcome = d.outcome
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
@@ -1151,6 +1159,7 @@ export async function GET(req: NextRequest) {
               SELECT d.condition_id, d.outcome, d.wallet,
                 d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
+                opc.price::text as cached_price,
                 mfp.final_pnl, mfp.position_found as final_position_found,
                 mfp.is_estimated as final_pnl_is_estimated,
                 mfp.estimate_source as final_pnl_estimate_source,
@@ -1159,6 +1168,7 @@ export async function GET(req: NextRequest) {
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
               INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
+              LEFT JOIN outcome_price_cache opc ON opc.condition_id = d.condition_id AND opc.outcome = d.outcome
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
@@ -1203,6 +1213,7 @@ export async function GET(req: NextRequest) {
               SELECT d.condition_id, d.outcome, d.wallet,
                 d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
                 d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
+                opc.price::text as cached_price,
                 mfp.final_pnl, mfp.position_found as final_position_found,
                 mfp.is_estimated as final_pnl_is_estimated,
                 mfp.estimate_source as final_pnl_estimate_source,
@@ -1211,6 +1222,7 @@ export async function GET(req: NextRequest) {
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
               INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
+              LEFT JOIN outcome_price_cache opc ON opc.condition_id = d.condition_id AND opc.outcome = d.outcome
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
@@ -1227,6 +1239,7 @@ export async function GET(req: NextRequest) {
           const fillPrice = parseNumeric(row.fill_price);
           const positionSize = parseNumeric(row.position_size);
           const positionAvgPrice = parseNumeric(row.position_avg_price);
+          const cachedPrice = parseNumeric(row.cached_price);
           // Potential win = position_size * (1 - position_avg_price)
           const potentialWin = (positionSize !== null && positionAvgPrice !== null)
             ? positionSize * (1 - positionAvgPrice)
@@ -1246,6 +1259,7 @@ export async function GET(req: NextRequest) {
             latestTimestamp: row.fill_timestamp,
             isWhale: row.is_whale,
             whaleLabel: row.whale_label,
+            currentPrice: cachedPrice,
             // Phase 8: Final P&L
             finalPnl: row.final_pnl !== null ? parseFloat(row.final_pnl) : null,
             finalPositionFound: row.final_position_found ?? null,
