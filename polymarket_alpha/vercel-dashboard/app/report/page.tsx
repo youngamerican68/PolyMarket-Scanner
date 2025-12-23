@@ -941,7 +941,7 @@ export default function ReportPage() {
             <span className="w-3 h-3 bg-red-500 rounded-full mr-3"></span>
             Conviction Anomalies
             <span className="text-sm font-normal text-poly-muted ml-2">
-              ({anomalies.meta.stats.total} unusually large trades)
+              ({anomalies.meta.count} unusually large trades)
             </span>
           </h2>
           <p className="text-xs text-poly-muted">
