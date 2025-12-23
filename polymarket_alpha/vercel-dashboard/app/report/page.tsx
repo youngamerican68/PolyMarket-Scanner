@@ -209,15 +209,19 @@ function formatTimeAgo(timestamp: string): string {
 
 function formatMoney(value: number | null): string {
   if (value === null || value === undefined) return 'N/A'
-  if (Math.abs(value) >= 1000) {
-    return `$${(value / 1000).toFixed(1)}K`
+  const num = typeof value === 'string' ? parseFloat(value) : value
+  if (isNaN(num)) return 'N/A'
+  if (Math.abs(num) >= 1000) {
+    return `$${(num / 1000).toFixed(1)}K`
   }
-  return `$${value.toFixed(0)}`
+  return `$${num.toFixed(0)}`
 }
 
 function formatOdds(price: number | null): string {
   if (price === null || price === undefined) return 'N/A'
-  return `${(price * 100).toFixed(1)}%`
+  const num = typeof price === 'string' ? parseFloat(price) : price
+  if (isNaN(num)) return 'N/A'
+  return `${(num * 100).toFixed(1)}%`
 }
 
 // Normalize probability: handle both 0-1 and 0-100 formats
@@ -256,19 +260,23 @@ function calcPotentialWinUsd(opts: {
 // Format potential win as USD string
 function formatPotentialWin(value: number | null): string {
   if (value === null || value === undefined) return '—'
-  if (value >= 1000) {
-    return `$${(value / 1000).toFixed(1)}K`
+  const num = typeof value === 'string' ? parseFloat(value) : value
+  if (isNaN(num)) return '—'
+  if (num >= 1000) {
+    return `$${(num / 1000).toFixed(1)}K`
   }
-  return `$${value.toFixed(0)}`
+  return `$${num.toFixed(0)}`
 }
 
 // Format USD value compactly (same as formatPotentialWin but for general use)
 function formatUsd(value: number | null): string {
   if (value === null || value === undefined) return '—'
-  if (value >= 1000) {
-    return `$${(value / 1000).toFixed(1)}K`
+  const num = typeof value === 'string' ? parseFloat(value) : value
+  if (isNaN(num)) return '—'
+  if (num >= 1000) {
+    return `$${(num / 1000).toFixed(1)}K`
   }
-  return `$${value.toFixed(0)}`
+  return `$${num.toFixed(0)}`
 }
 
 
@@ -940,7 +948,7 @@ export default function ReportPage() {
             </span>
           </h2>
           <p className="text-xs text-poly-muted">
-            Sorted by severity (ln(1+notional) × ln(1+ratio)) • Max severity: {anomalies.meta.stats.maxSeverity?.toFixed(1) || 'N/A'} • Max ratio: {anomalies.meta.stats.maxRatio}x
+            Sorted by severity (ln(1+notional) × ln(1+ratio)) • Max severity: {anomalies.meta.stats.maxSeverity != null ? Number(anomalies.meta.stats.maxSeverity).toFixed(1) : 'N/A'} • Max ratio: {anomalies.meta.stats.maxRatio != null ? Number(anomalies.meta.stats.maxRatio).toFixed(1) : 'N/A'}x
           </p>
 
           <div className="bg-poly-card rounded-lg border border-red-500/30 overflow-hidden">
@@ -986,13 +994,13 @@ export default function ReportPage() {
                       <td className="p-3 text-right text-red-400 font-bold">{formatMoney(anomaly.trade_notional)}</td>
                       <td className="p-3 text-right text-poly-muted">{formatMoney(anomaly.baseline_median)}</td>
                       <td className="p-3 text-right">
-                        <span className={`font-bold ${anomaly.ratio_to_median >= 5 ? 'text-red-400' : anomaly.ratio_to_median >= 3 ? 'text-orange-400' : 'text-yellow-400'}`}>
-                          {anomaly.ratio_to_median.toFixed(1)}x
+                        <span className={`font-bold ${Number(anomaly.ratio_to_median) >= 5 ? 'text-red-400' : Number(anomaly.ratio_to_median) >= 3 ? 'text-orange-400' : 'text-yellow-400'}`}>
+                          {Number(anomaly.ratio_to_median).toFixed(1)}x
                         </span>
                       </td>
                       <td className="p-3 text-right">
-                        <span className={`font-mono ${anomaly.severity >= 50 ? 'text-red-400' : anomaly.severity >= 30 ? 'text-orange-400' : 'text-yellow-400'}`}>
-                          {(anomaly.severity || 0).toFixed(1)}
+                        <span className={`font-mono ${Number(anomaly.severity) >= 50 ? 'text-red-400' : Number(anomaly.severity) >= 30 ? 'text-orange-400' : 'text-yellow-400'}`}>
+                          {Number(anomaly.severity || 0).toFixed(1)}
                         </span>
                       </td>
                       <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(anomaly.fill_timestamp)}</td>
