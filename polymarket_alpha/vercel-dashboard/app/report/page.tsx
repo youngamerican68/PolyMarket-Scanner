@@ -321,15 +321,29 @@ function PriceDisplay({ alert }: { alert: AlertRow }) {
 }
 
 // Phase 6: Resolved market badge with win/loss indicator
-// Final/resolution fields not populated yet; UI hidden intentionally
 function ResolvedBadge({ alert }: { alert: AlertRow }) {
-  return null
+  if (!alert.marketResolved || !alert.winningOutcome) {
+    return null
+  }
+  const won = alert.outcome === alert.winningOutcome
+  return (
+    <span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${won ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+      {won ? 'WON' : 'LOST'}
+    </span>
+  )
 }
 
 // Convergence group badge (shows if the group's outcome won or lost)
-// Final/resolution fields not populated yet; UI hidden intentionally
 function ConvergenceBadge({ group }: { group: ConvergenceGroup }) {
-  return null
+  if (!group.marketResolved || !group.winningOutcome) {
+    return null
+  }
+  const won = group.outcome === group.winningOutcome
+  return (
+    <span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${won ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+      {won ? 'WON' : 'LOST'}
+    </span>
+  )
 }
 
 // Payout if Wins display - uses backend-computed totalPayoutIfWins (= positionSize)
