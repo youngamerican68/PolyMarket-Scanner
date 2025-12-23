@@ -64,6 +64,7 @@ export async function GET(request: Request) {
   const limitStr = url.searchParams.get('limit') || '100';
   const walletFilter = url.searchParams.get('wallet')?.toLowerCase();
   const whalesOnly = url.searchParams.get('whales') === 'true';
+  const resolvedOnly = url.searchParams.get('resolved') === 'true';
   const minRatio = url.searchParams.get('minRatio');
   const minSeverity = url.searchParams.get('minSeverity');
   const sortBy = url.searchParams.get('sort') || 'severity'; // 'severity' or 'time'
@@ -120,6 +121,7 @@ export async function GET(request: Request) {
         WHERE ca.fill_timestamp >= ${cutoff}::timestamptz
           AND (${walletFilter}::text IS NULL OR ca.wallet = ${walletFilter})
           AND (${whalesOnly}::boolean = FALSE OR ca.is_whale = TRUE)
+          AND (${resolvedOnly}::boolean = FALSE OR ms.market_resolved = TRUE)
           AND (${minRatioValue}::numeric IS NULL OR ca.ratio_to_median >= ${minRatioValue})
           AND (${minSeverityValue}::numeric IS NULL OR COALESCE(ca.severity, 0) >= ${minSeverityValue})
         ORDER BY ca.fill_timestamp DESC
@@ -157,6 +159,7 @@ export async function GET(request: Request) {
         WHERE ca.fill_timestamp >= ${cutoff}::timestamptz
           AND (${walletFilter}::text IS NULL OR ca.wallet = ${walletFilter})
           AND (${whalesOnly}::boolean = FALSE OR ca.is_whale = TRUE)
+          AND (${resolvedOnly}::boolean = FALSE OR ms.market_resolved = TRUE)
           AND (${minRatioValue}::numeric IS NULL OR ca.ratio_to_median >= ${minRatioValue})
           AND (${minSeverityValue}::numeric IS NULL OR COALESCE(ca.severity, 0) >= ${minSeverityValue})
         ORDER BY COALESCE(ca.severity, 0) DESC, ca.created_at DESC
@@ -176,17 +179,19 @@ export async function GET(request: Request) {
     }>`
       SELECT
         COUNT(*)::int as total_count,
-        COUNT(*) FILTER (WHERE is_whale = TRUE)::int as whale_count,
-        COALESCE(AVG(ratio_to_median), 0) as avg_ratio,
-        COALESCE(MAX(ratio_to_median), 0) as max_ratio,
-        COALESCE(AVG(severity), 0) as avg_severity,
-        COALESCE(MAX(severity), 0) as max_severity
-      FROM conviction_anomalies
-      WHERE fill_timestamp >= ${cutoff}::timestamptz
-        AND (${walletFilter}::text IS NULL OR wallet = ${walletFilter})
-        AND (${whalesOnly}::boolean = FALSE OR is_whale = TRUE)
-        AND (${minRatioValue}::numeric IS NULL OR ratio_to_median >= ${minRatioValue})
-        AND (${minSeverityValue}::numeric IS NULL OR COALESCE(severity, 0) >= ${minSeverityValue})
+        COUNT(*) FILTER (WHERE ca.is_whale = TRUE)::int as whale_count,
+        COALESCE(AVG(ca.ratio_to_median), 0) as avg_ratio,
+        COALESCE(MAX(ca.ratio_to_median), 0) as max_ratio,
+        COALESCE(AVG(ca.severity), 0) as avg_severity,
+        COALESCE(MAX(ca.severity), 0) as max_severity
+      FROM conviction_anomalies ca
+      LEFT JOIN market_status ms ON ca.condition_id = ms.condition_id
+      WHERE ca.fill_timestamp >= ${cutoff}::timestamptz
+        AND (${walletFilter}::text IS NULL OR ca.wallet = ${walletFilter})
+        AND (${whalesOnly}::boolean = FALSE OR ca.is_whale = TRUE)
+        AND (${resolvedOnly}::boolean = FALSE OR ms.market_resolved = TRUE)
+        AND (${minRatioValue}::numeric IS NULL OR ca.ratio_to_median >= ${minRatioValue})
+        AND (${minSeverityValue}::numeric IS NULL OR COALESCE(ca.severity, 0) >= ${minSeverityValue})
     `;
 
     const stats = statsResult.rows[0] || {

@@ -463,6 +463,10 @@ export default function ReportPage() {
         limit: '50',
         _t: Date.now().toString(),
       })
+      // Pass resolved filter to match main dashboard filter
+      if (includeResolved) {
+        params.set('resolved', 'true')
+      }
       const res = await fetch(`/api/anomalies/conviction?${params}`, {
         cache: 'no-store',
       })
@@ -474,7 +478,7 @@ export default function ReportPage() {
       // Non-fatal, just log
       console.warn('[report] Failed to fetch anomalies:', err)
     }
-  }, [windowHours])
+  }, [windowHours, includeResolved])
 
   const fetchReport = useCallback(async (page = currentPage) => {
     try {
