@@ -712,7 +712,7 @@ export default function ReportPage() {
           title={anomaliesExpanded ? 'Click to collapse anomalies section' : 'Click to expand anomalies section'}
         >
           <p className="text-poly-muted text-sm">Conviction Anomalies {anomaliesExpanded && '✓'}</p>
-          <p className="text-2xl font-bold text-red-400">{anomalies?.meta.stats.total || 0} 🎯</p>
+          <p className="text-2xl font-bold text-red-400">{anomalies?.meta.count || 0} 🎯</p>
         </button>
       </div>
 

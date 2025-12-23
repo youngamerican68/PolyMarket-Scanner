@@ -156,7 +156,7 @@ export async function GET(request: Request) {
       anomalies = result.rows;
     }
 
-    // Get summary stats
+    // Get summary stats (with same filters as main query for consistency)
     const statsResult = await sql<{
       total_count: number;
       whale_count: number;
@@ -174,6 +174,10 @@ export async function GET(request: Request) {
         COALESCE(MAX(severity), 0) as max_severity
       FROM conviction_anomalies
       WHERE fill_timestamp >= ${cutoff}::timestamptz
+        AND (${walletFilter}::text IS NULL OR wallet = ${walletFilter})
+        AND (${whalesOnly}::boolean = FALSE OR is_whale = TRUE)
+        AND (${minRatioValue}::numeric IS NULL OR ratio_to_median >= ${minRatioValue})
+        AND (${minSeverityValue}::numeric IS NULL OR COALESCE(severity, 0) >= ${minSeverityValue})
     `;
 
     const stats = statsResult.rows[0] || {
