@@ -403,7 +403,6 @@ export default function ReportPage() {
 
   // Phase 5: Conviction anomalies state
   const [anomalies, setAnomalies] = useState<ConvictionAnomalyResponse | null>(null)
-  const [anomaliesExpanded, setAnomaliesExpanded] = useState(false)
 
   // Filters
   const [windowHours, setWindowHours] = useState<WindowHours>(24)
@@ -706,14 +705,10 @@ export default function ReportPage() {
           <p className="text-poly-muted text-sm">Large Single Bets</p>
           <p className="text-2xl font-bold text-cyan-400">{largeSingleBets.totalGroups}</p>
         </div>
-        <button
-          onClick={() => setAnomaliesExpanded(!anomaliesExpanded)}
-          className={`bg-poly-card rounded-lg p-4 border text-left transition-colors ${anomaliesExpanded ? 'border-red-500 bg-red-500/10' : 'border-poly-border hover:border-red-500/50'}`}
-          title={anomaliesExpanded ? 'Click to collapse anomalies section' : 'Click to expand anomalies section'}
-        >
-          <p className="text-poly-muted text-sm">Conviction Anomalies {anomaliesExpanded && '✓'}</p>
+        <div className="bg-poly-card rounded-lg p-4 border border-poly-border border-red-500/50">
+          <p className="text-poly-muted text-sm">Conviction Anomalies</p>
           <p className="text-2xl font-bold text-red-400">{anomalies?.meta.count || 0} 🎯</p>
-        </button>
+        </div>
       </div>
 
       {/* Convergence Section */}
@@ -935,7 +930,7 @@ export default function ReportPage() {
       )}
 
       {/* Conviction Anomalies Section */}
-      {anomaliesExpanded && anomalies && anomalies.anomalies.length > 0 && (
+      {anomalies && anomalies.anomalies.length > 0 && (
         <section className="space-y-4">
           <h2 className="text-xl font-bold flex items-center">
             <span className="w-3 h-3 bg-red-500 rounded-full mr-3"></span>
