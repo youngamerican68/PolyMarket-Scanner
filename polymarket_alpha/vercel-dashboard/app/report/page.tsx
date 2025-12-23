@@ -150,6 +150,9 @@ interface ConvictionAnomaly {
   side: string
   fill_price: number
   is_whale: boolean
+  // Market resolution fields (from market_status JOIN)
+  market_resolved: boolean
+  winning_outcome: string | null
 }
 
 interface ConvictionAnomalyResponse {
@@ -339,6 +342,19 @@ function ConvergenceBadge({ group }: { group: ConvergenceGroup }) {
     return null
   }
   const won = group.outcome === group.winningOutcome
+  return (
+    <span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${won ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+      {won ? 'WON' : 'LOST'}
+    </span>
+  )
+}
+
+// Badge for conviction anomaly resolution
+function ConvictionBadge({ anomaly }: { anomaly: ConvictionAnomaly }) {
+  if (!anomaly.market_resolved || !anomaly.winning_outcome) {
+    return null
+  }
+  const won = anomaly.outcome === anomaly.winning_outcome
   return (
     <span className={`ml-2 px-2 py-0.5 rounded text-xs font-bold ${won ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
       {won ? 'WON' : 'LOST'}
@@ -1004,6 +1020,7 @@ export default function ReportPage() {
                           {(anomaly.title || 'Unknown Market').slice(0, 35)}
                         </a>
                         <span className="text-poly-muted ml-2">({anomaly.outcome})</span>
+                        <ConvictionBadge anomaly={anomaly} />
                       </td>
                       <td className="p-3 text-right text-red-400 font-bold">{formatMoney(anomaly.trade_notional)}</td>
                       <td className="p-3 text-right text-poly-muted">{formatMoney(anomaly.baseline_median)}</td>

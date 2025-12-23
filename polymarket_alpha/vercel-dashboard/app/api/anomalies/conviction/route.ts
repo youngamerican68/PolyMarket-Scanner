@@ -35,6 +35,9 @@ interface ConvictionAnomaly {
   side: string;
   fill_price: number;
   is_whale: boolean;
+  // Market resolution fields (from market_status JOIN)
+  market_resolved: boolean;
+  winning_outcome: string | null;
 }
 
 // Parse window parameter (e.g., "24h", "7d", "30d")
@@ -90,33 +93,36 @@ export async function GET(request: Request) {
     if (sortBy === 'time') {
       const result = await sql<ConvictionAnomaly>`
         SELECT
-          id,
-          created_at::text,
-          wallet,
-          trader_name,
-          fill_timestamp::text,
-          trade_notional,
-          baseline_median,
-          baseline_mad,
-          baseline_trade_count,
-          ratio_to_median,
-          robust_z,
-          COALESCE(severity, 0) as severity,
-          last_seen_at::text,
-          condition_id,
-          outcome,
-          title,
-          slug,
-          side,
-          fill_price,
-          is_whale
-        FROM conviction_anomalies
-        WHERE fill_timestamp >= ${cutoff}::timestamptz
-          AND (${walletFilter}::text IS NULL OR wallet = ${walletFilter})
-          AND (${whalesOnly}::boolean = FALSE OR is_whale = TRUE)
-          AND (${minRatioValue}::numeric IS NULL OR ratio_to_median >= ${minRatioValue})
-          AND (${minSeverityValue}::numeric IS NULL OR COALESCE(severity, 0) >= ${minSeverityValue})
-        ORDER BY fill_timestamp DESC
+          ca.id,
+          ca.created_at::text,
+          ca.wallet,
+          ca.trader_name,
+          ca.fill_timestamp::text,
+          ca.trade_notional,
+          ca.baseline_median,
+          ca.baseline_mad,
+          ca.baseline_trade_count,
+          ca.ratio_to_median,
+          ca.robust_z,
+          COALESCE(ca.severity, 0) as severity,
+          ca.last_seen_at::text,
+          ca.condition_id,
+          ca.outcome,
+          ca.title,
+          ca.slug,
+          ca.side,
+          ca.fill_price,
+          ca.is_whale,
+          COALESCE(ms.market_resolved, FALSE) as market_resolved,
+          ms.winning_outcome
+        FROM conviction_anomalies ca
+        LEFT JOIN market_status ms ON ca.condition_id = ms.condition_id
+        WHERE ca.fill_timestamp >= ${cutoff}::timestamptz
+          AND (${walletFilter}::text IS NULL OR ca.wallet = ${walletFilter})
+          AND (${whalesOnly}::boolean = FALSE OR ca.is_whale = TRUE)
+          AND (${minRatioValue}::numeric IS NULL OR ca.ratio_to_median >= ${minRatioValue})
+          AND (${minSeverityValue}::numeric IS NULL OR COALESCE(ca.severity, 0) >= ${minSeverityValue})
+        ORDER BY ca.fill_timestamp DESC
         LIMIT ${limit}
       `;
       anomalies = result.rows;
@@ -124,33 +130,36 @@ export async function GET(request: Request) {
       // Default: sort by severity
       const result = await sql<ConvictionAnomaly>`
         SELECT
-          id,
-          created_at::text,
-          wallet,
-          trader_name,
-          fill_timestamp::text,
-          trade_notional,
-          baseline_median,
-          baseline_mad,
-          baseline_trade_count,
-          ratio_to_median,
-          robust_z,
-          COALESCE(severity, 0) as severity,
-          last_seen_at::text,
-          condition_id,
-          outcome,
-          title,
-          slug,
-          side,
-          fill_price,
-          is_whale
-        FROM conviction_anomalies
-        WHERE fill_timestamp >= ${cutoff}::timestamptz
-          AND (${walletFilter}::text IS NULL OR wallet = ${walletFilter})
-          AND (${whalesOnly}::boolean = FALSE OR is_whale = TRUE)
-          AND (${minRatioValue}::numeric IS NULL OR ratio_to_median >= ${minRatioValue})
-          AND (${minSeverityValue}::numeric IS NULL OR COALESCE(severity, 0) >= ${minSeverityValue})
-        ORDER BY COALESCE(severity, 0) DESC, created_at DESC
+          ca.id,
+          ca.created_at::text,
+          ca.wallet,
+          ca.trader_name,
+          ca.fill_timestamp::text,
+          ca.trade_notional,
+          ca.baseline_median,
+          ca.baseline_mad,
+          ca.baseline_trade_count,
+          ca.ratio_to_median,
+          ca.robust_z,
+          COALESCE(ca.severity, 0) as severity,
+          ca.last_seen_at::text,
+          ca.condition_id,
+          ca.outcome,
+          ca.title,
+          ca.slug,
+          ca.side,
+          ca.fill_price,
+          ca.is_whale,
+          COALESCE(ms.market_resolved, FALSE) as market_resolved,
+          ms.winning_outcome
+        FROM conviction_anomalies ca
+        LEFT JOIN market_status ms ON ca.condition_id = ms.condition_id
+        WHERE ca.fill_timestamp >= ${cutoff}::timestamptz
+          AND (${walletFilter}::text IS NULL OR ca.wallet = ${walletFilter})
+          AND (${whalesOnly}::boolean = FALSE OR ca.is_whale = TRUE)
+          AND (${minRatioValue}::numeric IS NULL OR ca.ratio_to_median >= ${minRatioValue})
+          AND (${minSeverityValue}::numeric IS NULL OR COALESCE(ca.severity, 0) >= ${minSeverityValue})
+        ORDER BY COALESCE(ca.severity, 0) DESC, ca.created_at DESC
         LIMIT ${limit}
       `;
       anomalies = result.rows;
