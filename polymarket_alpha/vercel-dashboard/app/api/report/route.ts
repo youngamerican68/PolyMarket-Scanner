@@ -93,6 +93,8 @@ type AlertRow = {
   position_current_value: string | null;
   position_avg_price: string | null;
   position_size: string | null;
+  // Latest position size for this wallet/market (for consistent payout display)
+  latest_position_size: string | null;
   is_whale: boolean;
   whale_label: string | null;
   whale_tier: string | null;
@@ -399,10 +401,18 @@ export async function GET(req: NextRequest) {
     switch (filterMode) {
       case 'both':
         alertsResult = await sql<AlertRow>`
+          WITH latest_positions AS (
+            SELECT DISTINCT ON (condition_id, outcome, wallet)
+              condition_id, outcome, wallet, position_size as latest_position_size
+            FROM alert_events
+            WHERE fill_timestamp >= ${alertCutoff}::timestamptz
+            ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
+          )
           SELECT ae.id, ae.fill_timestamp, ae.wallet, ae.trader_name, ae.trader_pseudonym,
             ae.title, ae.slug, ae.event_slug, ae.outcome, ae.condition_id, ae.outcome_index,
             ae.fill_price, ae.fill_size, ae.fill_value_usd,
             ae.position_current_value, ae.position_avg_price, ae.position_size,
+            lp.latest_position_size,
             ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
             opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
             ms.market_resolved, ms.market_closed, ms.winning_outcome, ms.finalized_at as market_finalized_at,
@@ -412,6 +422,7 @@ export async function GET(req: NextRequest) {
             mfp.estimate_source as final_pnl_estimate_source,
             mfp.estimate_as_of::text as final_pnl_estimate_as_of
           FROM alert_events ae
+          LEFT JOIN latest_positions lp ON ae.condition_id = lp.condition_id AND ae.outcome = lp.outcome AND ae.wallet = lp.wallet
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
           LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
           LEFT JOIN market_final_pnl mfp ON ae.condition_id = mfp.condition_id AND ae.wallet = mfp.wallet AND ae.outcome = mfp.outcome
@@ -433,10 +444,18 @@ export async function GET(req: NextRequest) {
         break;
       case 'whalesOnly':
         alertsResult = await sql<AlertRow>`
+          WITH latest_positions AS (
+            SELECT DISTINCT ON (condition_id, outcome, wallet)
+              condition_id, outcome, wallet, position_size as latest_position_size
+            FROM alert_events
+            WHERE fill_timestamp >= ${alertCutoff}::timestamptz
+            ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
+          )
           SELECT ae.id, ae.fill_timestamp, ae.wallet, ae.trader_name, ae.trader_pseudonym,
             ae.title, ae.slug, ae.event_slug, ae.outcome, ae.condition_id, ae.outcome_index,
             ae.fill_price, ae.fill_size, ae.fill_value_usd,
             ae.position_current_value, ae.position_avg_price, ae.position_size,
+            lp.latest_position_size,
             ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
             opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
             ms.market_resolved, ms.market_closed, ms.winning_outcome, ms.finalized_at as market_finalized_at,
@@ -446,6 +465,7 @@ export async function GET(req: NextRequest) {
             mfp.estimate_source as final_pnl_estimate_source,
             mfp.estimate_as_of::text as final_pnl_estimate_as_of
           FROM alert_events ae
+          LEFT JOIN latest_positions lp ON ae.condition_id = lp.condition_id AND ae.outcome = lp.outcome AND ae.wallet = lp.wallet
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
           LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
           LEFT JOIN market_final_pnl mfp ON ae.condition_id = mfp.condition_id AND ae.wallet = mfp.wallet AND ae.outcome = mfp.outcome
@@ -466,10 +486,18 @@ export async function GET(req: NextRequest) {
         break;
       case 'categoryOnly':
         alertsResult = await sql<AlertRow>`
+          WITH latest_positions AS (
+            SELECT DISTINCT ON (condition_id, outcome, wallet)
+              condition_id, outcome, wallet, position_size as latest_position_size
+            FROM alert_events
+            WHERE fill_timestamp >= ${alertCutoff}::timestamptz
+            ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
+          )
           SELECT ae.id, ae.fill_timestamp, ae.wallet, ae.trader_name, ae.trader_pseudonym,
             ae.title, ae.slug, ae.event_slug, ae.outcome, ae.condition_id, ae.outcome_index,
             ae.fill_price, ae.fill_size, ae.fill_value_usd,
             ae.position_current_value, ae.position_avg_price, ae.position_size,
+            lp.latest_position_size,
             ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
             opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
             ms.market_resolved, ms.market_closed, ms.winning_outcome, ms.finalized_at as market_finalized_at,
@@ -479,6 +507,7 @@ export async function GET(req: NextRequest) {
             mfp.estimate_source as final_pnl_estimate_source,
             mfp.estimate_as_of::text as final_pnl_estimate_as_of
           FROM alert_events ae
+          LEFT JOIN latest_positions lp ON ae.condition_id = lp.condition_id AND ae.outcome = lp.outcome AND ae.wallet = lp.wallet
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
           LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
           LEFT JOIN market_final_pnl mfp ON ae.condition_id = mfp.condition_id AND ae.wallet = mfp.wallet AND ae.outcome = mfp.outcome
@@ -499,10 +528,18 @@ export async function GET(req: NextRequest) {
         break;
       default:
         alertsResult = await sql<AlertRow>`
+          WITH latest_positions AS (
+            SELECT DISTINCT ON (condition_id, outcome, wallet)
+              condition_id, outcome, wallet, position_size as latest_position_size
+            FROM alert_events
+            WHERE fill_timestamp >= ${alertCutoff}::timestamptz
+            ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
+          )
           SELECT ae.id, ae.fill_timestamp, ae.wallet, ae.trader_name, ae.trader_pseudonym,
             ae.title, ae.slug, ae.event_slug, ae.outcome, ae.condition_id, ae.outcome_index,
             ae.fill_price, ae.fill_size, ae.fill_value_usd,
             ae.position_current_value, ae.position_avg_price, ae.position_size,
+            lp.latest_position_size,
             ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
             opc.price::text as cached_price, opc.fetched_at::text as price_fetched_at,
             ms.market_resolved, ms.market_closed, ms.winning_outcome, ms.finalized_at as market_finalized_at,
@@ -512,6 +549,7 @@ export async function GET(req: NextRequest) {
             mfp.estimate_source as final_pnl_estimate_source,
             mfp.estimate_as_of::text as final_pnl_estimate_as_of
           FROM alert_events ae
+          LEFT JOIN latest_positions lp ON ae.condition_id = lp.condition_id AND ae.outcome = lp.outcome AND ae.wallet = lp.wallet
           LEFT JOIN outcome_price_cache opc ON ae.condition_id = opc.condition_id AND ae.outcome = opc.outcome
           LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
           LEFT JOIN market_final_pnl mfp ON ae.condition_id = mfp.condition_id AND ae.wallet = mfp.wallet AND ae.outcome = mfp.outcome
@@ -555,10 +593,12 @@ export async function GET(req: NextRequest) {
       const positionCurrentValue = parseNumeric(row.position_current_value);
       const positionAvgPrice = parseNumeric(row.position_avg_price);
       const positionSize = parseNumeric(row.position_size);
+      const latestPositionSize = parseNumeric(row.latest_position_size);
       const cachedPrice = parseNumeric(row.cached_price);
 
-      // Total payout if outcome wins = positionSize (each share pays $1)
-      const totalPayoutIfWins = positionSize;
+      // Total payout if outcome wins = latest position size for this wallet/market
+      // This ensures all trades from the same wallet in the same market show the same payout
+      const totalPayoutIfWins = latestPositionSize ?? positionSize;
 
       // Price status based on cache freshness
       const priceStatus = getPriceStatus(row.price_fetched_at);
