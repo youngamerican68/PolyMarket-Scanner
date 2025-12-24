@@ -55,11 +55,13 @@ function isPositionSyncEnabled(): boolean {
 
 // Check if wallet was recently synced (TTL check)
 async function shouldSkipWallet(wallet: string): Promise<boolean> {
+  // Compute TTL cutoff in JS (can't interpolate inside SQL string literals)
+  const ttlCutoff = new Date(Date.now() - SYNC_TTL_MS).toISOString();
   const result = await sql<{ last_synced_at: string }>`
     SELECT last_synced_at::text
     FROM wallet_sync_state
     WHERE wallet = ${wallet.toLowerCase()}
-      AND last_synced_at > NOW() - INTERVAL '${SYNC_TTL_MS} milliseconds'
+      AND last_synced_at > ${ttlCutoff}::timestamptz
   `;
   return result.rows.length > 0;
 }
