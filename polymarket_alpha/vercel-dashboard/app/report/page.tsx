@@ -86,7 +86,12 @@ interface ConvergenceWallet {
   finalPnlEstimateAsOf: string | null
   // Phase 10: Position sync overlay (when ENABLE_POSITION_SYNC=true)
   syncedPositionSize: number | null
+  syncedAvgPrice: number | null
+  syncedCurrentValue: number | null
   syncedPayoutIfWins: number | null
+  syncedPositionCost: number | null
+  syncedPositionCostFormatted: string
+  syncedCurrentValueFormatted: string
   syncedPayoutIfWinsFormatted: string
   syncedAt: string | null
   syncStatus: string | null // 'synced' | 'not_found' | null
@@ -436,6 +441,36 @@ function ConvergencePositionCostValue({ wallet }: { wallet: ConvergenceWallet })
       <span className={wallet.positionValue !== null ? 'text-white font-medium' : 'text-gray-500'}>{valueStr}</span>
     </span>
   )
+}
+
+// Phase 10: Synced Position Cost / Value display with "synced X ago" indicator
+// Shows synced data when available, falls back to snapshot data
+function SyncedPositionCostValue({ wallet }: { wallet: ConvergenceWallet }) {
+  // If we have synced data, show it with indicator
+  if (wallet.syncedPositionCost !== null && wallet.syncedAt) {
+    const syncAge = formatTimeAgo(wallet.syncedAt)
+    const isClosed = wallet.syncStatus === 'not_found'
+
+    if (isClosed) {
+      return (
+        <span className="text-gray-500" title="Position closed (not found in API)">
+          $0 / $0 <span className="text-xs text-gray-600">(closed)</span>
+        </span>
+      )
+    }
+
+    return (
+      <span className="whitespace-nowrap" title={`Synced ${syncAge}`}>
+        <span className="text-emerald-400">{wallet.syncedPositionCostFormatted}</span>
+        <span className="text-poly-muted/50"> / </span>
+        <span className="text-emerald-300 font-medium">{wallet.syncedCurrentValueFormatted}</span>
+        <span className="ml-1 text-xs text-emerald-500/60">⟳ {syncAge}</span>
+      </span>
+    )
+  }
+
+  // Fall back to snapshot data
+  return <ConvergencePositionCostValue wallet={wallet} />
 }
 
 // Position Cost / Value display for All Longshot Trades table
@@ -958,7 +993,7 @@ export default function ReportPage() {
                               </td>
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
-                              <td className="p-3 text-right"><ConvergencePositionCostValue wallet={w} /></td>
+                              <td className="p-3 text-right"><SyncedPositionCostValue wallet={w} /></td>
                               <td className="p-3 text-right font-medium"><SyncedPayoutDisplay wallet={w} /></td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
@@ -1067,7 +1102,7 @@ export default function ReportPage() {
                               </td>
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
-                              <td className="p-3 text-right"><ConvergencePositionCostValue wallet={w} /></td>
+                              <td className="p-3 text-right"><SyncedPositionCostValue wallet={w} /></td>
                               <td className="p-3 text-right font-medium"><SyncedPayoutDisplay wallet={w} /></td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>

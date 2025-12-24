@@ -159,6 +159,8 @@ type WalletDetailRow = {
   final_pnl_estimate_as_of: string | null;
   // Phase 10: Position sync overlay (from LEFT JOIN position_sync_overlay)
   synced_position_size: string | null;
+  synced_avg_price: string | null;
+  synced_current_value: string | null;
   synced_payout_if_wins: string | null;
   synced_at: string | null;
   sync_status: string | null;
@@ -245,7 +247,13 @@ interface WalletDetail {
   finalPnlEstimateAsOf: string | null;
   // Phase 10: Position sync overlay (when ENABLE_POSITION_SYNC=true)
   syncedPositionSize: number | null;
+  syncedAvgPrice: number | null;
+  syncedCurrentValue: number | null;
   syncedPayoutIfWins: number | null;
+  // Computed synced cost = syncedPositionSize × syncedAvgPrice
+  syncedPositionCost: number | null;
+  syncedPositionCostFormatted: string;
+  syncedCurrentValueFormatted: string;
   syncedPayoutIfWinsFormatted: string;
   syncedAt: string | null;
   syncStatus: string | null; // 'synced' | 'not_found' | null
@@ -1154,6 +1162,8 @@ export async function GET(req: NextRequest) {
                 mfp.estimate_source as final_pnl_estimate_source,
                 mfp.estimate_as_of::text as final_pnl_estimate_as_of,
                 pso.synced_position_size::text as synced_position_size,
+                pso.synced_avg_price::text as synced_avg_price,
+                pso.synced_current_value::text as synced_current_value,
                 pso.synced_payout_if_wins::text as synced_payout_if_wins,
                 pso.synced_at::text as synced_at,
                 pso.sync_status as sync_status,
@@ -1214,6 +1224,8 @@ export async function GET(req: NextRequest) {
                 mfp.estimate_source as final_pnl_estimate_source,
                 mfp.estimate_as_of::text as final_pnl_estimate_as_of,
                 pso.synced_position_size::text as synced_position_size,
+                pso.synced_avg_price::text as synced_avg_price,
+                pso.synced_current_value::text as synced_current_value,
                 pso.synced_payout_if_wins::text as synced_payout_if_wins,
                 pso.synced_at::text as synced_at,
                 pso.sync_status as sync_status,
@@ -1274,6 +1286,8 @@ export async function GET(req: NextRequest) {
                 mfp.estimate_source as final_pnl_estimate_source,
                 mfp.estimate_as_of::text as final_pnl_estimate_as_of,
                 pso.synced_position_size::text as synced_position_size,
+                pso.synced_avg_price::text as synced_avg_price,
+                pso.synced_current_value::text as synced_current_value,
                 pso.synced_payout_if_wins::text as synced_payout_if_wins,
                 pso.synced_at::text as synced_at,
                 pso.sync_status as sync_status,
@@ -1351,6 +1365,8 @@ export async function GET(req: NextRequest) {
                 mfp.estimate_source as final_pnl_estimate_source,
                 mfp.estimate_as_of::text as final_pnl_estimate_as_of,
                 pso.synced_position_size::text as synced_position_size,
+                pso.synced_avg_price::text as synced_avg_price,
+                pso.synced_current_value::text as synced_current_value,
                 pso.synced_payout_if_wins::text as synced_payout_if_wins,
                 pso.synced_at::text as synced_at,
                 pso.sync_status as sync_status,
@@ -1392,7 +1408,13 @@ export async function GET(req: NextRequest) {
 
           // Phase 10: Position sync overlay (when feature enabled)
           const syncedPositionSize = parseNumeric(row.synced_position_size);
+          const syncedAvgPrice = parseNumeric(row.synced_avg_price);
+          const syncedCurrentValue = parseNumeric(row.synced_current_value);
           const syncedPayoutIfWins = parseNumeric(row.synced_payout_if_wins);
+          // Compute synced cost = syncedPositionSize × syncedAvgPrice
+          const syncedPositionCost = (syncedPositionSize !== null && syncedAvgPrice !== null)
+            ? syncedPositionSize * syncedAvgPrice
+            : null;
 
           group.wallets.push({
             wallet: row.wallet,
@@ -1421,7 +1443,12 @@ export async function GET(req: NextRequest) {
             finalPnlEstimateAsOf: row.final_pnl_estimate_as_of ?? null,
             // Phase 10: Position sync overlay
             syncedPositionSize: syncedPositionSize,
+            syncedAvgPrice: syncedAvgPrice,
+            syncedCurrentValue: syncedCurrentValue,
             syncedPayoutIfWins: syncedPayoutIfWins,
+            syncedPositionCost: syncedPositionCost,
+            syncedPositionCostFormatted: syncedPositionCost !== null ? formatMoney(syncedPositionCost) : '—',
+            syncedCurrentValueFormatted: syncedCurrentValue !== null ? formatMoney(syncedCurrentValue) : '—',
             syncedPayoutIfWinsFormatted: syncedPayoutIfWins !== null ? formatMoney(syncedPayoutIfWins) : '—',
             syncedAt: row.synced_at ?? null,
             syncStatus: row.sync_status ?? null,
