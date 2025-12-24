@@ -227,6 +227,9 @@ function formatMoney(value: number | null): string {
   if (value === null || value === undefined) return 'N/A'
   const num = typeof value === 'string' ? parseFloat(value) : value
   if (isNaN(num)) return 'N/A'
+  if (Math.abs(num) >= 1000000) {
+    return `$${(num / 1000000).toFixed(2)}M`
+  }
   if (Math.abs(num) >= 1000) {
     return `$${(num / 1000).toFixed(1)}K`
   }

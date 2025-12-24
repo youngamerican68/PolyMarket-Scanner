@@ -8,6 +8,9 @@ export const dynamic = 'force-dynamic';
 
 function formatMoney(value: number | null): string {
   if (value === null || value === undefined) return 'N/A';
+  if (Math.abs(value) >= 1000000) {
+    return `$${(value / 1000000).toFixed(2)}M`;
+  }
   if (Math.abs(value) >= 1000) {
     return `$${(value / 1000).toFixed(1)}K`;
   }
