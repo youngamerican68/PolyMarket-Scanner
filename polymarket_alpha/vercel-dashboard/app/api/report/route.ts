@@ -345,6 +345,7 @@ export async function GET(req: NextRequest) {
     const whalesOnly = searchParams.get('whalesOnly') === 'true';
     const includeResolved = searchParams.get('includeResolved') === 'true';
     const category = (searchParams.get('category') ?? '').trim().toLowerCase() || null;
+    const excludeCategory = (searchParams.get('excludeCategory') ?? '').trim().toLowerCase() || null;
     const minPosition = parseFloatParam(searchParams.get('minPosition'), 2500, 0, 1e12);
     const maxOdds = parseFloatParam(searchParams.get('maxOdds'), 0.25, 0, 1);
     const page = parseIntParam(searchParams.get('page'), 1, 1, 1_000_000);
@@ -493,6 +494,7 @@ export async function GET(req: NextRequest) {
             AND ae.fill_price <= ${maxOdds}
             AND ae.position_current_value IS NOT NULL
             AND ae.position_current_value >= ${minPosition}
+            AND (${excludeCategory}::text IS NULL OR ae.whale_category IS NULL OR ae.whale_category != ${excludeCategory})
             AND (
               CASE WHEN ${includeResolved}::boolean = TRUE
                 THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL AND TRIM(ms.winning_outcome) != ''
@@ -621,6 +623,7 @@ export async function GET(req: NextRequest) {
             AND fill_price <= ${maxOdds}
             AND position_current_value IS NOT NULL
             AND position_current_value >= ${minPosition}
+            AND (${excludeCategory}::text IS NULL OR whale_category IS NULL OR whale_category != ${excludeCategory})
         `;
     }
 
@@ -737,6 +740,7 @@ export async function GET(req: NextRequest) {
               AND fill_price <= ${maxOdds}
               AND position_current_value IS NOT NULL
               AND position_current_value >= ${minPosition}
+              AND (${excludeCategory}::text IS NULL OR whale_category IS NULL OR whale_category != ${excludeCategory})
               AND (
                 CASE WHEN ${includeResolved}::boolean = TRUE
                   THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
@@ -891,6 +895,7 @@ export async function GET(req: NextRequest) {
               AND fill_price <= ${maxOdds}
               AND position_current_value IS NOT NULL
               AND position_current_value >= ${minPosition}
+              AND (${excludeCategory}::text IS NULL OR whale_category IS NULL OR whale_category != ${excludeCategory})
               AND (
                 CASE WHEN ${includeResolved}::boolean = TRUE
                   THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
@@ -1199,6 +1204,7 @@ export async function GET(req: NextRequest) {
                 AND ae.fill_price <= ${maxOdds}
                 AND ae.position_current_value IS NOT NULL
                 AND ae.position_current_value >= ${minPosition}
+                AND (${excludeCategory}::text IS NULL OR ae.whale_category IS NULL OR ae.whale_category != ${excludeCategory})
                 AND (
                   CASE WHEN ${includeResolved}::boolean = TRUE
                     THEN EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')

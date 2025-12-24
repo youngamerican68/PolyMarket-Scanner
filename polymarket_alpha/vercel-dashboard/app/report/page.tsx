@@ -445,7 +445,7 @@ export default function ReportPage() {
   // Filters
   const [windowHours, setWindowHours] = useState<WindowHours>(24)
   const [whalesOnly, setWhalesOnly] = useState(false)
-  const [category, setCategory] = useState<string>('')
+  const [hideCrypto, setHideCrypto] = useState(false)
   const [includeResolved, setIncludeResolved] = useState(false)
   const [ultraLongshots, setUltraLongshots] = useState(false) // ≤10% odds filter
 
@@ -491,7 +491,7 @@ export default function ReportPage() {
         _t: Date.now().toString(),
       })
       if (whalesOnly) params.set('whalesOnly', 'true')
-      if (category.trim()) params.set('category', category.trim())
+      if (hideCrypto) params.set('excludeCategory', 'crypto')
       if (includeResolved) params.set('includeResolved', 'true')
       if (ultraLongshots) params.set('maxOdds', '0.10')
 
@@ -515,14 +515,14 @@ export default function ReportPage() {
     } finally {
       setLoading(false)
     }
-  }, [windowHours, whalesOnly, category, includeResolved, ultraLongshots, currentPage, fetchAnomalies])
+  }, [windowHours, whalesOnly, hideCrypto, includeResolved, ultraLongshots, currentPage, fetchAnomalies])
 
   useEffect(() => {
     fetchReport(1) // Reset to page 1 when filters change
     const interval = setInterval(() => fetchReport(currentPage), 10 * 60 * 1000)
     return () => clearInterval(interval)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [windowHours, whalesOnly, category, includeResolved, ultraLongshots])
+  }, [windowHours, whalesOnly, hideCrypto, includeResolved, ultraLongshots])
 
   // Dev-only warning for potential column cross-wiring detection
   // Flags rows where currentPrice is tiny but positionValue is large
@@ -691,22 +691,20 @@ export default function ReportPage() {
             </label>
           </div>
 
-          <div className="flex items-center gap-2">
-            <label className="text-poly-muted text-sm">Category:</label>
-            <select
-              value={category}
-              onChange={(e) => setCategory(e.target.value)}
-              className="bg-poly-border border border-poly-border rounded px-3 py-1.5 text-sm"
-            >
-              <option value="">All</option>
-              <option value="crypto">crypto</option>
-              <option value="sports">sports</option>
-            </select>
-          </div>
+          <button
+            onClick={() => setHideCrypto(!hideCrypto)}
+            className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+              hideCrypto
+                ? 'bg-orange-500/20 text-orange-400 border border-orange-500/50'
+                : 'bg-poly-border text-poly-muted border border-poly-border hover:border-orange-500/30'
+            }`}
+          >
+            {hideCrypto ? '🚫 Crypto Hidden' : 'Hide Crypto'}
+          </button>
 
           <div className="text-xs text-poly-muted ml-auto">
             {meta.whalesOnly && <span className="mr-2">🐋 whales only</span>}
-            {meta.category && <span className="mr-2">📁 {meta.category}</span>}
+            {hideCrypto && <span className="mr-2">🚫 no crypto</span>}
           </div>
         </div>
 
