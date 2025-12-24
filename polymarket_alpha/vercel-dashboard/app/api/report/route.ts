@@ -494,7 +494,24 @@ export async function GET(req: NextRequest) {
             AND ae.fill_price <= ${maxOdds}
             AND ae.position_current_value IS NOT NULL
             AND ae.position_current_value >= ${minPosition}
-            AND (${excludeCategory}::text IS NULL OR ae.whale_category IS NULL OR ae.whale_category != ${excludeCategory})
+            AND (
+              ${excludeCategory}::text IS NULL
+              OR ${excludeCategory} != 'crypto'
+              OR (
+                ae.whale_category IS DISTINCT FROM 'crypto'
+                AND ae.title NOT ILIKE '%bitcoin%'
+                AND ae.title NOT ILIKE '%btc%'
+                AND ae.title NOT ILIKE '%ethereum%'
+                AND ae.title NOT ILIKE '%eth %'
+                AND ae.title NOT ILIKE '%solana%'
+                AND ae.title NOT ILIKE '%sol %'
+                AND ae.title NOT ILIKE '%crypto%'
+                AND ae.title NOT ILIKE '%token%'
+                AND ae.title NOT ILIKE '%market cap%'
+                AND ae.title NOT ILIKE '%fdv%'
+                AND ae.title NOT ILIKE '%defi%'
+              )
+            )
             AND (
               CASE WHEN ${includeResolved}::boolean = TRUE
                 THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL AND TRIM(ms.winning_outcome) != ''
@@ -623,7 +640,24 @@ export async function GET(req: NextRequest) {
             AND fill_price <= ${maxOdds}
             AND position_current_value IS NOT NULL
             AND position_current_value >= ${minPosition}
-            AND (${excludeCategory}::text IS NULL OR whale_category IS NULL OR whale_category != ${excludeCategory})
+            AND (
+              ${excludeCategory}::text IS NULL
+              OR ${excludeCategory} != 'crypto'
+              OR (
+                whale_category IS DISTINCT FROM 'crypto'
+                AND title NOT ILIKE '%bitcoin%'
+                AND title NOT ILIKE '%btc%'
+                AND title NOT ILIKE '%ethereum%'
+                AND title NOT ILIKE '%eth %'
+                AND title NOT ILIKE '%solana%'
+                AND title NOT ILIKE '%sol %'
+                AND title NOT ILIKE '%crypto%'
+                AND title NOT ILIKE '%token%'
+                AND title NOT ILIKE '%market cap%'
+                AND title NOT ILIKE '%fdv%'
+                AND title NOT ILIKE '%defi%'
+              )
+            )
         `;
     }
 
@@ -740,7 +774,24 @@ export async function GET(req: NextRequest) {
               AND fill_price <= ${maxOdds}
               AND position_current_value IS NOT NULL
               AND position_current_value >= ${minPosition}
-              AND (${excludeCategory}::text IS NULL OR whale_category IS NULL OR whale_category != ${excludeCategory})
+              AND (
+                ${excludeCategory}::text IS NULL
+                OR ${excludeCategory} != 'crypto'
+                OR (
+                  whale_category IS DISTINCT FROM 'crypto'
+                  AND title NOT ILIKE '%bitcoin%'
+                  AND title NOT ILIKE '%btc%'
+                  AND title NOT ILIKE '%ethereum%'
+                  AND title NOT ILIKE '%eth %'
+                  AND title NOT ILIKE '%solana%'
+                  AND title NOT ILIKE '%sol %'
+                  AND title NOT ILIKE '%crypto%'
+                  AND title NOT ILIKE '%token%'
+                  AND title NOT ILIKE '%market cap%'
+                  AND title NOT ILIKE '%fdv%'
+                  AND title NOT ILIKE '%defi%'
+                )
+              )
               AND (
                 CASE WHEN ${includeResolved}::boolean = TRUE
                   THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
@@ -895,7 +946,24 @@ export async function GET(req: NextRequest) {
               AND fill_price <= ${maxOdds}
               AND position_current_value IS NOT NULL
               AND position_current_value >= ${minPosition}
-              AND (${excludeCategory}::text IS NULL OR whale_category IS NULL OR whale_category != ${excludeCategory})
+              AND (
+                ${excludeCategory}::text IS NULL
+                OR ${excludeCategory} != 'crypto'
+                OR (
+                  whale_category IS DISTINCT FROM 'crypto'
+                  AND title NOT ILIKE '%bitcoin%'
+                  AND title NOT ILIKE '%btc%'
+                  AND title NOT ILIKE '%ethereum%'
+                  AND title NOT ILIKE '%eth %'
+                  AND title NOT ILIKE '%solana%'
+                  AND title NOT ILIKE '%sol %'
+                  AND title NOT ILIKE '%crypto%'
+                  AND title NOT ILIKE '%token%'
+                  AND title NOT ILIKE '%market cap%'
+                  AND title NOT ILIKE '%fdv%'
+                  AND title NOT ILIKE '%defi%'
+                )
+              )
               AND (
                 CASE WHEN ${includeResolved}::boolean = TRUE
                   THEN condition_id IN (SELECT condition_id FROM market_status WHERE market_resolved = TRUE AND winning_outcome IS NOT NULL AND TRIM(winning_outcome) != '')
@@ -1204,7 +1272,24 @@ export async function GET(req: NextRequest) {
                 AND ae.fill_price <= ${maxOdds}
                 AND ae.position_current_value IS NOT NULL
                 AND ae.position_current_value >= ${minPosition}
-                AND (${excludeCategory}::text IS NULL OR ae.whale_category IS NULL OR ae.whale_category != ${excludeCategory})
+                AND (
+                  ${excludeCategory}::text IS NULL
+                  OR ${excludeCategory} != 'crypto'
+                  OR (
+                    ae.whale_category IS DISTINCT FROM 'crypto'
+                    AND ae.title NOT ILIKE '%bitcoin%'
+                    AND ae.title NOT ILIKE '%btc%'
+                    AND ae.title NOT ILIKE '%ethereum%'
+                    AND ae.title NOT ILIKE '%eth %'
+                    AND ae.title NOT ILIKE '%solana%'
+                    AND ae.title NOT ILIKE '%sol %'
+                    AND ae.title NOT ILIKE '%crypto%'
+                    AND ae.title NOT ILIKE '%token%'
+                    AND ae.title NOT ILIKE '%market cap%'
+                    AND ae.title NOT ILIKE '%fdv%'
+                    AND ae.title NOT ILIKE '%defi%'
+                  )
+                )
                 AND (
                   CASE WHEN ${includeResolved}::boolean = TRUE
                     THEN EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
