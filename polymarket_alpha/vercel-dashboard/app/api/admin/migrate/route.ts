@@ -432,6 +432,55 @@ export async function POST(request: Request) {
       console.log('[migrate] estimate_as_of column already exists or failed:', String(err).slice(0, 80));
     }
 
+    // =========================================================================
+    // Phase 10: Position Sync Overlay (on-demand position refresh)
+    // Feature flag: ENABLE_POSITION_SYNC
+    // Additive only - does NOT modify existing snapshot fields
+    // =========================================================================
+
+    // Table: position_sync_overlay - stores current position data overlay
+    // Keyed by (wallet, condition_id, outcome) to match dashboard rows
+    await sql`
+      CREATE TABLE IF NOT EXISTS position_sync_overlay (
+        wallet TEXT NOT NULL,
+        condition_id TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        synced_position_size NUMERIC,
+        synced_avg_price NUMERIC,
+        synced_current_value NUMERIC,
+        synced_payout_if_wins NUMERIC,
+        synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        sync_status TEXT NOT NULL DEFAULT 'synced',
+        sync_error TEXT,
+        PRIMARY KEY (wallet, condition_id, outcome)
+      )
+    `;
+    console.log('[migrate] Created position_sync_overlay table');
+
+    // Indexes for efficient lookups
+    await sql`CREATE INDEX IF NOT EXISTS idx_position_sync_overlay_wallet ON position_sync_overlay (wallet)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_position_sync_overlay_synced_at ON position_sync_overlay (synced_at DESC)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_position_sync_overlay_condition ON position_sync_overlay (condition_id)`;
+    console.log('[migrate] Created position_sync_overlay indexes');
+
+    // Table: wallet_sync_state - TTL cache for wallet-level sync tracking
+    // Prevents re-syncing the same wallet within TTL window
+    await sql`
+      CREATE TABLE IF NOT EXISTS wallet_sync_state (
+        wallet TEXT PRIMARY KEY,
+        last_synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_sync_status TEXT NOT NULL DEFAULT 'success',
+        positions_count INTEGER NOT NULL DEFAULT 0,
+        last_sync_error TEXT,
+        last_sync_duration_ms INTEGER
+      )
+    `;
+    console.log('[migrate] Created wallet_sync_state table');
+
+    // Index for TTL queries
+    await sql`CREATE INDEX IF NOT EXISTS idx_wallet_sync_state_last_synced ON wallet_sync_state (last_synced_at DESC)`;
+    console.log('[migrate] Created wallet_sync_state index');
+
     // Post-migration: run ANALYZE on touched tables for query planner
     try {
       await sql`ANALYZE outcome_price_cache`;
@@ -442,6 +491,8 @@ export async function POST(request: Request) {
       await sql`ANALYZE trade_history_longshot_positions`;
       await sql`ANALYZE market_final_pnl`;
       await sql`ANALYZE wallet_position_snapshot`;
+      await sql`ANALYZE position_sync_overlay`;
+      await sql`ANALYZE wallet_sync_state`;
       console.log('[migrate] ANALYZE completed on all tables');
     } catch (err) {
       console.warn('[migrate] ANALYZE failed (non-critical):', String(err).slice(0, 100));
@@ -452,8 +503,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: 'Phases 1-9 migration complete (includes position snapshots + estimated P&L)',
-      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status', 'trade_history_longshot_positions', 'market_final_pnl', 'wallet_position_snapshot'],
+      message: 'Phases 1-10 migration complete (includes position sync overlay)',
+      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status', 'trade_history_longshot_positions', 'market_final_pnl', 'wallet_position_snapshot', 'position_sync_overlay', 'wallet_sync_state'],
       indexes: [
         'idx_alert_events_fill_timestamp',
         'idx_alert_events_wallet_timestamp',
@@ -482,6 +533,10 @@ export async function POST(request: Request) {
         'idx_market_final_pnl_condition',
         'idx_market_final_pnl_wallet',
         'idx_wallet_position_snapshot_condition',
+        'idx_position_sync_overlay_wallet',
+        'idx_position_sync_overlay_synced_at',
+        'idx_position_sync_overlay_condition',
+        'idx_wallet_sync_state_last_synced',
       ],
       constraints: [
         'outcome_price_cache PRIMARY KEY (condition_id, outcome)',
@@ -491,6 +546,8 @@ export async function POST(request: Request) {
         'market_status PRIMARY KEY (condition_id)',
         'market_final_pnl PRIMARY KEY (condition_id, wallet, outcome)',
         'wallet_position_snapshot PRIMARY KEY (wallet, condition_id, outcome)',
+        'position_sync_overlay PRIMARY KEY (wallet, condition_id, outcome)',
+        'wallet_sync_state PRIMARY KEY (wallet)',
       ],
       columnsAdded: [
         'conviction_anomalies.severity',

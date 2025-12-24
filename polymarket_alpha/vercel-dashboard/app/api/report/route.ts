@@ -17,6 +17,9 @@ const PRICE_STALE_THRESHOLD_MS = 30 * 60 * 1000;
 // Phase 7: Longshot archive feature flag (default: off)
 const LONGSHOT_ARCHIVE_ENABLED = process.env.ENABLE_LONGSHOT_ARCHIVE === 'true';
 
+// Phase 10: Position sync overlay feature flag (default: off)
+const POSITION_SYNC_ENABLED = process.env.ENABLE_POSITION_SYNC === 'true' || process.env.ENABLE_POSITION_SYNC === '1';
+
 // ============================================================================
 // Constants - Convergence qualification thresholds (keep in one place)
 // ============================================================================
@@ -154,6 +157,11 @@ type WalletDetailRow = {
   final_pnl_is_estimated: boolean | null;
   final_pnl_estimate_source: string | null;
   final_pnl_estimate_as_of: string | null;
+  // Phase 10: Position sync overlay (from LEFT JOIN position_sync_overlay)
+  synced_position_size: string | null;
+  synced_payout_if_wins: string | null;
+  synced_at: string | null;
+  sync_status: string | null;
 };
 
 type TotalGroupsRow = {
@@ -235,6 +243,12 @@ interface WalletDetail {
   finalPnlIsEstimated: boolean | null;
   finalPnlEstimateSource: string | null;
   finalPnlEstimateAsOf: string | null;
+  // Phase 10: Position sync overlay (when ENABLE_POSITION_SYNC=true)
+  syncedPositionSize: number | null;
+  syncedPayoutIfWins: number | null;
+  syncedPayoutIfWinsFormatted: string;
+  syncedAt: string | null;
+  syncStatus: string | null; // 'synced' | 'not_found' | null
 }
 
 interface ConvergenceGroup {
@@ -1139,12 +1153,17 @@ export async function GET(req: NextRequest) {
                 mfp.is_estimated as final_pnl_is_estimated,
                 mfp.estimate_source as final_pnl_estimate_source,
                 mfp.estimate_as_of::text as final_pnl_estimate_as_of,
+                pso.synced_position_size::text as synced_position_size,
+                pso.synced_payout_if_wins::text as synced_payout_if_wins,
+                pso.synced_at::text as synced_at,
+                pso.sync_status as sync_status,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
               INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
               LEFT JOIN outcome_price_cache opc ON opc.condition_id = d.condition_id AND opc.outcome = d.outcome
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
+              LEFT JOIN position_sync_overlay pso ON pso.condition_id = d.condition_id AND pso.wallet = d.wallet AND pso.outcome = d.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
             ORDER BY condition_id, outcome, rn
@@ -1194,12 +1213,17 @@ export async function GET(req: NextRequest) {
                 mfp.is_estimated as final_pnl_is_estimated,
                 mfp.estimate_source as final_pnl_estimate_source,
                 mfp.estimate_as_of::text as final_pnl_estimate_as_of,
+                pso.synced_position_size::text as synced_position_size,
+                pso.synced_payout_if_wins::text as synced_payout_if_wins,
+                pso.synced_at::text as synced_at,
+                pso.sync_status as sync_status,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
               INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
               LEFT JOIN outcome_price_cache opc ON opc.condition_id = d.condition_id AND opc.outcome = d.outcome
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
+              LEFT JOIN position_sync_overlay pso ON pso.condition_id = d.condition_id AND pso.wallet = d.wallet AND pso.outcome = d.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
             ORDER BY condition_id, outcome, rn
@@ -1249,12 +1273,17 @@ export async function GET(req: NextRequest) {
                 mfp.is_estimated as final_pnl_is_estimated,
                 mfp.estimate_source as final_pnl_estimate_source,
                 mfp.estimate_as_of::text as final_pnl_estimate_as_of,
+                pso.synced_position_size::text as synced_position_size,
+                pso.synced_payout_if_wins::text as synced_payout_if_wins,
+                pso.synced_at::text as synced_at,
+                pso.sync_status as sync_status,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
               INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
               LEFT JOIN outcome_price_cache opc ON opc.condition_id = d.condition_id AND opc.outcome = d.outcome
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
+              LEFT JOIN position_sync_overlay pso ON pso.condition_id = d.condition_id AND pso.wallet = d.wallet AND pso.outcome = d.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
             ORDER BY condition_id, outcome, rn
@@ -1321,12 +1350,17 @@ export async function GET(req: NextRequest) {
                 mfp.is_estimated as final_pnl_is_estimated,
                 mfp.estimate_source as final_pnl_estimate_source,
                 mfp.estimate_as_of::text as final_pnl_estimate_as_of,
+                pso.synced_position_size::text as synced_position_size,
+                pso.synced_payout_if_wins::text as synced_payout_if_wins,
+                pso.synced_at::text as synced_at,
+                pso.sync_status as sync_status,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
               INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
               LEFT JOIN outcome_price_cache opc ON opc.condition_id = d.condition_id AND opc.outcome = d.outcome
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
+              LEFT JOIN position_sync_overlay pso ON pso.condition_id = d.condition_id AND pso.wallet = d.wallet AND pso.outcome = d.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
             ORDER BY condition_id, outcome, rn
@@ -1356,6 +1390,10 @@ export async function GET(req: NextRequest) {
           // Total payout if outcome wins = positionSize (each share pays $1)
           const totalPayoutIfWins = positionSize;
 
+          // Phase 10: Position sync overlay (when feature enabled)
+          const syncedPositionSize = parseNumeric(row.synced_position_size);
+          const syncedPayoutIfWins = parseNumeric(row.synced_payout_if_wins);
+
           group.wallets.push({
             wallet: row.wallet,
             traderName: row.trader_name || row.trader_pseudonym || 'Anonymous',
@@ -1381,6 +1419,12 @@ export async function GET(req: NextRequest) {
             finalPnlIsEstimated: row.final_pnl_is_estimated ?? null,
             finalPnlEstimateSource: row.final_pnl_estimate_source ?? null,
             finalPnlEstimateAsOf: row.final_pnl_estimate_as_of ?? null,
+            // Phase 10: Position sync overlay
+            syncedPositionSize: syncedPositionSize,
+            syncedPayoutIfWins: syncedPayoutIfWins,
+            syncedPayoutIfWinsFormatted: syncedPayoutIfWins !== null ? formatMoney(syncedPayoutIfWins) : '—',
+            syncedAt: row.synced_at ?? null,
+            syncStatus: row.sync_status ?? null,
           });
         }
       }
@@ -1493,6 +1537,8 @@ export async function GET(req: NextRequest) {
         page,
         pageSize,
         totalPages: Math.ceil(totalAlerts / pageSize),
+        // Phase 10: Position sync feature flag
+        positionSyncEnabled: POSITION_SYNC_ENABLED,
       },
       alertsPage: formattedAlerts,
       convergence: {

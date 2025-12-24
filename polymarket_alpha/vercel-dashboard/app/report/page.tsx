@@ -84,6 +84,12 @@ interface ConvergenceWallet {
   finalPnlIsEstimated: boolean | null
   finalPnlEstimateSource: string | null
   finalPnlEstimateAsOf: string | null
+  // Phase 10: Position sync overlay (when ENABLE_POSITION_SYNC=true)
+  syncedPositionSize: number | null
+  syncedPayoutIfWins: number | null
+  syncedPayoutIfWinsFormatted: string
+  syncedAt: string | null
+  syncStatus: string | null // 'synced' | 'not_found' | null
 }
 
 interface ConvergenceGroup {
@@ -126,6 +132,8 @@ interface ReportMeta {
   page: number
   pageSize: number
   totalPages: number
+  // Phase 10: Position sync feature flag
+  positionSyncEnabled?: boolean
 }
 
 // Phase 5 (Hardened): Conviction Anomaly types
@@ -379,6 +387,37 @@ function ConvergenceWalletPayoutIfWins({ wallet }: { wallet: ConvergenceWallet }
   return <span className="text-cyan-400">{wallet.totalPayoutIfWinsFormatted}</span>
 }
 
+// Phase 10: Synced payout display with "synced X ago" indicator
+// Shows synced data when available, falls back to snapshot data
+function SyncedPayoutDisplay({ wallet }: { wallet: ConvergenceWallet }) {
+  // If we have synced data, show it with indicator
+  if (wallet.syncedPayoutIfWins !== null && wallet.syncedAt) {
+    const syncAge = formatTimeAgo(wallet.syncedAt)
+    const isClosed = wallet.syncStatus === 'not_found'
+
+    if (isClosed) {
+      return (
+        <span className="text-gray-500" title="Position closed (not found in API)">
+          $0 <span className="text-xs text-gray-600">(closed)</span>
+        </span>
+      )
+    }
+
+    return (
+      <span className="whitespace-nowrap" title={`Synced ${syncAge}`}>
+        <span className="text-emerald-400 font-medium">{wallet.syncedPayoutIfWinsFormatted}</span>
+        <span className="ml-1 text-xs text-emerald-500/60">⟳ {syncAge}</span>
+      </span>
+    )
+  }
+
+  // Fall back to snapshot data
+  if (wallet.totalPayoutIfWins === null) {
+    return <span className="text-gray-500">—</span>
+  }
+  return <span className="text-cyan-400">{wallet.totalPayoutIfWinsFormatted}</span>
+}
+
 // Position Cost / Value for convergence tables
 // Uses backend-computed values: positionCost = shares × avgEntry, positionValue = shares × currentPrice
 function ConvergencePositionCostValue({ wallet }: { wallet: ConvergenceWallet }) {
@@ -442,6 +481,16 @@ export default function ReportPage() {
   // Phase 5: Conviction anomalies state
   const [anomalies, setAnomalies] = useState<ConvictionAnomalyResponse | null>(null)
 
+  // Phase 10: Position sync state
+  const [positionSyncLoading, setPositionSyncLoading] = useState(false)
+  const [positionSyncResult, setPositionSyncResult] = useState<{
+    walletsSynced: number
+    walletsSkippedTtl: number
+    walletsFailed: number
+    rowsUpdated: number
+    durationMs: number
+  } | null>(null)
+
   // Filters
   const [windowHours, setWindowHours] = useState<WindowHours>(24)
   const [whalesOnly, setWhalesOnly] = useState(false)
@@ -454,6 +503,41 @@ export default function ReportPage() {
 
   // Convergence expanded state
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+
+  // Phase 10: Refresh positions on-demand
+  const refreshPositions = useCallback(async () => {
+    if (!report?.meta.positionSyncEnabled) return
+    setPositionSyncLoading(true)
+    setPositionSyncResult(null)
+    try {
+      const res = await fetch('/api/positions/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scope: 'filter',
+          alertWindowHours: windowHours,
+          whalesOnly,
+          includeResolved,
+          excludeCategory: hideCrypto ? 'crypto' : undefined,
+          maxOdds: ultraLongshots ? 0.10 : 0.25,
+          minPosition: 2500,
+        }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && data.result) {
+          setPositionSyncResult(data.result)
+          // Refetch report to get updated overlay data
+          await fetchReport()
+        }
+      }
+    } catch (err) {
+      console.warn('[report] Position sync failed:', err)
+    } finally {
+      setPositionSyncLoading(false)
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report?.meta.positionSyncEnabled, windowHours, whalesOnly, includeResolved, hideCrypto, ultraLongshots])
 
   // Phase 5: Fetch conviction anomalies
   const fetchAnomalies = useCallback(async () => {
@@ -637,6 +721,27 @@ export default function ReportPage() {
             >
               {loading ? 'Refreshing...' : 'Refresh'}
             </button>
+            {/* Phase 10: Position sync refresh button */}
+            {report?.meta.positionSyncEnabled && (
+              <button
+                onClick={refreshPositions}
+                disabled={positionSyncLoading}
+                className="px-4 py-2 bg-blue-600 text-white font-medium rounded hover:bg-blue-500 disabled:opacity-50 flex items-center gap-2"
+                title="Fetch latest positions from Polymarket API (2min cache)"
+              >
+                {positionSyncLoading ? (
+                  <>
+                    <span className="animate-spin">⟳</span>
+                    Syncing...
+                  </>
+                ) : (
+                  <>
+                    <span>⟳</span>
+                    Sync Positions
+                  </>
+                )}
+              </button>
+            )}
           </div>
         </div>
 
@@ -711,6 +816,15 @@ export default function ReportPage() {
         {lastUpdate && (
           <p className="text-xs text-poly-muted">
             Last refresh: {lastUpdate.toLocaleTimeString()} • Window: {meta.alertWindowHours}h alerts, {meta.convergenceWindowHours}h convergence
+          </p>
+        )}
+        {/* Phase 10: Position sync result */}
+        {positionSyncResult && (
+          <p className="text-xs text-emerald-400">
+            Position sync: {positionSyncResult.walletsSynced} wallets synced
+            {positionSyncResult.walletsSkippedTtl > 0 && <>, {positionSyncResult.walletsSkippedTtl} cached</>}
+            {positionSyncResult.walletsFailed > 0 && <>, {positionSyncResult.walletsFailed} failed</>}
+            <span className="text-poly-muted ml-2">({positionSyncResult.durationMs}ms)</span>
           </p>
         )}
       </header>
@@ -845,7 +959,7 @@ export default function ReportPage() {
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
                               <td className="p-3 text-right"><ConvergencePositionCostValue wallet={w} /></td>
-                              <td className="p-3 text-right font-medium"><ConvergenceWalletPayoutIfWins wallet={w} /></td>
+                              <td className="p-3 text-right font-medium"><SyncedPayoutDisplay wallet={w} /></td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
                           ))}
@@ -954,7 +1068,7 @@ export default function ReportPage() {
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
                               <td className="p-3 text-right"><ConvergencePositionCostValue wallet={w} /></td>
-                              <td className="p-3 text-right font-medium"><ConvergenceWalletPayoutIfWins wallet={w} /></td>
+                              <td className="p-3 text-right font-medium"><SyncedPayoutDisplay wallet={w} /></td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
                           ))}
@@ -1187,6 +1301,11 @@ export default function ReportPage() {
       <footer className="text-center text-poly-muted text-sm py-4 border-t border-poly-border">
         <p>Convergence detection enabled</p>
         <p className="mt-1">Position values are snapshots from ingestion time • Current prices refresh every 10 min</p>
+        {report?.meta.positionSyncEnabled && (
+          <p className="mt-1 text-xs text-emerald-400/80">
+            ⟳ Position sync enabled • Click &quot;Sync Positions&quot; for live position data (2min cache)
+          </p>
+        )}
         <p className="mt-1 text-xs">
           Price status: <span className="text-cyan-400">fresh</span> (&le;30min) &bull;
           <span className="text-yellow-400 ml-2">⚠ Xm ago</span> (stale &gt;30min) &bull;
