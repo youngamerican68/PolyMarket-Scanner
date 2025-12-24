@@ -1,5 +1,131 @@
 # Polymarket Tracker - Development Progress
 
+## Session: December 24, 2025 (Phase 10 + UI Fixes)
+
+### Phase 10: Position Sync Overlay (Completed)
+
+**Goal:** On-demand refresh of position data from Polymarket API to show real-time position values (not just stale snapshots from trade ingestion).
+
+**Feature Flag:** `ENABLE_POSITION_SYNC=true`
+
+**New Tables:**
+```sql
+CREATE TABLE position_sync_overlay (
+  wallet TEXT NOT NULL,
+  condition_id TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  synced_position_size NUMERIC,
+  synced_avg_price NUMERIC,
+  synced_current_value NUMERIC,
+  synced_payout_if_wins NUMERIC,
+  synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  sync_status TEXT NOT NULL DEFAULT 'synced',
+  sync_error TEXT,
+  PRIMARY KEY (wallet, condition_id, outcome)
+);
+
+CREATE TABLE wallet_sync_state (
+  wallet TEXT PRIMARY KEY,
+  last_synced_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_sync_status TEXT NOT NULL DEFAULT 'pending',
+  last_sync_error TEXT,
+  positions_count INTEGER,
+  last_sync_duration_ms INTEGER
+);
+```
+
+**How It Works:**
+1. User clicks "Refresh Positions" button in dashboard
+2. POST to `/api/positions/refresh` with current filter params
+3. API fetches positions from Polymarket for wallets in scope
+4. Overlays stored in `position_sync_overlay` table
+5. UI displays synced values with "⟳ Xm ago" indicator
+
+**UI Components:**
+- `SyncedPayoutIfWins` - Shows synced payout with freshness indicator
+- `SyncedPositionCostValue` - Shows synced cost/value with freshness indicator
+- Position values show "(closed)" when sync_status='not_found'
+
+**TTL:** 2-minute cache per wallet to prevent excessive API calls
+
+**Files Created/Modified:**
+- `app/api/positions/refresh/route.ts` - POST (sync) + GET (status) endpoints
+- `app/api/report/route.ts` - LEFT JOIN to overlay, synced fields in response
+- `app/report/page.tsx` - Refresh button, synced components
+- `app/api/admin/migrate/route.ts` - Phase 10 migration
+
+---
+
+### UI Fix: Million Dollar Formatting (Completed)
+
+**Problem:** Large values like $3,163,600 displayed as "$3163.6K" which is hard to read.
+
+**Solution:** Updated `formatMoney()` in all 6 locations to use millions format:
+- `>= $1,000,000` → `$3.16M` (2 decimal places)
+- `>= $1,000` → `$163.6K` (1 decimal place)
+- `< $1,000` → `$500` (whole dollars)
+
+**Files Modified:**
+- `app/report/page.tsx`
+- `app/api/report/route.ts`
+- `app/api/whale-trades/route.ts`
+- `app/api/longshot-history/route.ts`
+- `app/api/daily-report/route.ts`
+- `lib/scoring.ts`
+
+---
+
+### UI Fix: Consistent Payout if Wins in All Longshot Trades (Completed)
+
+**Problem:** Multiple trades from the same wallet in the same market showed different "Payout if Wins" values because each row used its historical position snapshot.
+
+**Example:** Arbguy on "Epstein client list 2025" showed $39K for one trade and $45.5K for another, even though it's the same total position.
+
+**Solution:** Added CTE to fetch latest position_size for each (condition_id, outcome, wallet):
+```sql
+WITH latest_positions AS (
+  SELECT DISTINCT ON (condition_id, outcome, wallet)
+    condition_id, outcome, wallet, position_size as latest_position_size
+  FROM alert_events
+  WHERE fill_timestamp >= ${alertCutoff}::timestamptz
+  ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
+)
+SELECT ..., lp.latest_position_size, ...
+FROM alert_events ae
+LEFT JOIN latest_positions lp ON ...
+```
+
+Now all trades from the same wallet/market show the **same (latest) payout value**.
+
+**Files Modified:**
+- `app/api/report/route.ts` - All 4 alert query branches updated
+
+---
+
+### Commits
+- `2e21961` - feat: add currentPrice to convergence/large single bet wallets
+- `ee47c5e` - ui: format large numbers as X.XXM instead of XXXXK
+- `82089d2` - fix: use latest position snapshot for Payout if Wins
+
+---
+
+## Completed Phases Summary
+
+| Phase | Feature | Status |
+|-------|---------|--------|
+| 1 | Trade Ingestion + Alerts | ✅ Completed |
+| 2 | Convergence Detection | ✅ Completed |
+| 3 | Price Cache | ✅ Completed |
+| 4 | Job Tracking + Admin | ✅ Completed |
+| 5 | Conviction Sizing Anomalies | ✅ Completed |
+| 6 | Market Resolution Detection | ✅ Completed |
+| 7 | Longshot Position Archive | ✅ Completed |
+| 8 | Finalize Resolved P&L | ✅ Completed |
+| 9 | Position Snapshots + Estimated P&L | ✅ Completed |
+| 10 | Position Sync Overlay | ✅ Completed |
+
+---
+
 ## Session: December 20, 2025 (Resolved Market Filtering Fixes)
 
 ### Issue: Completed Games Still Showing in Dashboard
@@ -955,7 +1081,7 @@ Removed interactive column sorting from All Longshot Trades table for simplicity
 
 ## Remaining Phases (Planned)
 
-### Phase 10: Position Accumulator
+### Phase 11: Position Accumulator (Future)
 - Track positions across days
 - Catch wallets buying $1K/day that cross $2.5K threshold
 - Prevents loss from 48h trade pruning
