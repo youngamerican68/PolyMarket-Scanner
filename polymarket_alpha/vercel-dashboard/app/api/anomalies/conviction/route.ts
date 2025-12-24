@@ -64,7 +64,10 @@ export async function GET(request: Request) {
   const limitStr = url.searchParams.get('limit') || '100';
   const walletFilter = url.searchParams.get('wallet')?.toLowerCase();
   const whalesOnly = url.searchParams.get('whales') === 'true';
-  const resolvedOnly = url.searchParams.get('resolved') === 'true';
+  // resolved param: 'only' = show only resolved, 'exclude' = hide resolved, anything else = show all
+  const resolvedParam = url.searchParams.get('resolved');
+  const resolvedOnly = resolvedParam === 'only';
+  const excludeResolved = resolvedParam === 'exclude';
   const minRatio = url.searchParams.get('minRatio');
   const minSeverity = url.searchParams.get('minSeverity');
   const sortBy = url.searchParams.get('sort') || 'severity'; // 'severity' or 'time'
@@ -122,6 +125,7 @@ export async function GET(request: Request) {
           AND (${walletFilter}::text IS NULL OR ca.wallet = ${walletFilter})
           AND (${whalesOnly}::boolean = FALSE OR ca.is_whale = TRUE)
           AND (${resolvedOnly}::boolean = FALSE OR ms.market_resolved = TRUE)
+          AND (${excludeResolved}::boolean = FALSE OR COALESCE(ms.market_resolved, FALSE) = FALSE)
           AND (${minRatioValue}::numeric IS NULL OR ca.ratio_to_median >= ${minRatioValue})
           AND (${minSeverityValue}::numeric IS NULL OR COALESCE(ca.severity, 0) >= ${minSeverityValue})
         ORDER BY ca.fill_timestamp DESC
@@ -160,6 +164,7 @@ export async function GET(request: Request) {
           AND (${walletFilter}::text IS NULL OR ca.wallet = ${walletFilter})
           AND (${whalesOnly}::boolean = FALSE OR ca.is_whale = TRUE)
           AND (${resolvedOnly}::boolean = FALSE OR ms.market_resolved = TRUE)
+          AND (${excludeResolved}::boolean = FALSE OR COALESCE(ms.market_resolved, FALSE) = FALSE)
           AND (${minRatioValue}::numeric IS NULL OR ca.ratio_to_median >= ${minRatioValue})
           AND (${minSeverityValue}::numeric IS NULL OR COALESCE(ca.severity, 0) >= ${minSeverityValue})
         ORDER BY COALESCE(ca.severity, 0) DESC, ca.created_at DESC
@@ -190,6 +195,7 @@ export async function GET(request: Request) {
         AND (${walletFilter}::text IS NULL OR ca.wallet = ${walletFilter})
         AND (${whalesOnly}::boolean = FALSE OR ca.is_whale = TRUE)
         AND (${resolvedOnly}::boolean = FALSE OR ms.market_resolved = TRUE)
+        AND (${excludeResolved}::boolean = FALSE OR COALESCE(ms.market_resolved, FALSE) = FALSE)
         AND (${minRatioValue}::numeric IS NULL OR ca.ratio_to_median >= ${minRatioValue})
         AND (${minSeverityValue}::numeric IS NULL OR COALESCE(ca.severity, 0) >= ${minSeverityValue})
     `;

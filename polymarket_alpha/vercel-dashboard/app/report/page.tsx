@@ -464,9 +464,9 @@ export default function ReportPage() {
         _t: Date.now().toString(),
       })
       // Pass resolved filter to match main dashboard filter
-      if (includeResolved) {
-        params.set('resolved', 'true')
-      }
+      // includeResolved=true means show ONLY resolved
+      // includeResolved=false means EXCLUDE resolved (show active only)
+      params.set('resolved', includeResolved ? 'only' : 'exclude')
       const res = await fetch(`/api/anomalies/conviction?${params}`, {
         cache: 'no-store',
       })
