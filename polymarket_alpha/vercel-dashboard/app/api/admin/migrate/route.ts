@@ -660,6 +660,119 @@ export async function POST(request: Request) {
       console.log('[migrate] Hardening state consistency skipped:', String(err).slice(0, 80));
     }
 
+    // =========================================================================
+    // Phase 10.3: Final Production Hardening
+    // NOT VALID + VALIDATE for CHECK constraints, COALESCE-based partial backfill
+    // =========================================================================
+
+    // Step 1: Normalize any invalid position_state values FIRST
+    try {
+      const normalizeResult = await sql`
+        UPDATE position_sync_overlay
+        SET position_state = 'unknown'
+        WHERE position_state IS NULL
+           OR position_state NOT IN ('open', 'not_found_in_sync', 'closed_confirmed', 'redeemed_confirmed', 'unknown')
+      `;
+      if (normalizeResult.rowCount && normalizeResult.rowCount > 0) {
+        console.log(`[migrate] Phase 10.3: Normalized ${normalizeResult.rowCount} invalid position_state values`);
+      }
+    } catch (err) {
+      console.log('[migrate] Phase 10.3: Normalization skipped:', String(err).slice(0, 80));
+    }
+
+    // Step 2: Drop and re-add constraints with NOT VALID + VALIDATE
+    try {
+      // Drop existing constraints if they exist
+      await sql`ALTER TABLE position_sync_overlay DROP CONSTRAINT IF EXISTS chk_position_state`;
+      await sql`ALTER TABLE position_sync_overlay DROP CONSTRAINT IF EXISTS chk_sync_status`;
+      console.log('[migrate] Phase 10.3: Dropped existing constraints (if any)');
+
+      // Re-add with NOT VALID (instant, no table scan)
+      await sql`ALTER TABLE position_sync_overlay ADD CONSTRAINT chk_position_state CHECK (position_state IN ('open', 'not_found_in_sync', 'closed_confirmed', 'redeemed_confirmed', 'unknown')) NOT VALID`;
+      await sql`ALTER TABLE position_sync_overlay VALIDATE CONSTRAINT chk_position_state`;
+      console.log('[migrate] Phase 10.3: Added and validated chk_position_state');
+
+      await sql`ALTER TABLE position_sync_overlay ADD CONSTRAINT chk_sync_status CHECK (sync_status IN ('synced', 'not_found', 'error')) NOT VALID`;
+      await sql`ALTER TABLE position_sync_overlay VALIDATE CONSTRAINT chk_sync_status`;
+      console.log('[migrate] Phase 10.3: Added and validated chk_sync_status');
+    } catch (err) {
+      console.log('[migrate] Phase 10.3: Constraint setup issue:', String(err).slice(0, 100));
+    }
+
+    // Step 3: COALESCE-based idempotent backfill for partial nulls
+    try {
+      const coalesceResult = await sql`
+        UPDATE position_sync_overlay
+        SET
+          last_known_position_size = COALESCE(last_known_position_size,
+            CASE WHEN synced_position_size > 0 THEN synced_position_size ELSE NULL END),
+          last_known_avg_price = COALESCE(last_known_avg_price,
+            CASE WHEN synced_position_size > 0 AND synced_avg_price IS NOT NULL THEN synced_avg_price ELSE NULL END),
+          last_known_current_value = COALESCE(last_known_current_value,
+            CASE WHEN synced_current_value > 0 THEN synced_current_value ELSE NULL END),
+          last_known_payout_if_wins = COALESCE(last_known_payout_if_wins,
+            CASE WHEN synced_payout_if_wins > 0 THEN synced_payout_if_wins ELSE NULL END),
+          last_nonzero_at = COALESCE(last_nonzero_at,
+            CASE WHEN synced_position_size > 0 AND synced_payout_if_wins > 0 THEN synced_at ELSE NULL END)
+        WHERE
+          (last_known_position_size IS NULL AND synced_position_size > 0)
+          OR (last_known_avg_price IS NULL AND synced_position_size > 0 AND synced_avg_price IS NOT NULL)
+          OR (last_known_current_value IS NULL AND synced_current_value > 0)
+          OR (last_known_payout_if_wins IS NULL AND synced_payout_if_wins > 0)
+          OR (last_nonzero_at IS NULL AND synced_position_size > 0 AND synced_payout_if_wins > 0)
+      `;
+      if (coalesceResult.rowCount && coalesceResult.rowCount > 0) {
+        console.log(`[migrate] Phase 10.3: COALESCE backfill updated ${coalesceResult.rowCount} rows`);
+      }
+    } catch (err) {
+      console.log('[migrate] Phase 10.3: COALESCE backfill skipped:', String(err).slice(0, 80));
+    }
+
+    // =========================================================================
+    // Phase 10.4: Ultra Production Hardening
+    // last_nonzero_at integrity, concurrency index
+    // =========================================================================
+
+    // Step 1: Fix any rows where last_nonzero_at is set but last_known_* are all NULL/zero
+    try {
+      const fixIntegrityResult = await sql`
+        UPDATE position_sync_overlay
+        SET last_nonzero_at = NULL
+        WHERE last_nonzero_at IS NOT NULL
+          AND (last_known_position_size IS NULL OR last_known_position_size <= 0)
+          AND (last_known_payout_if_wins IS NULL OR last_known_payout_if_wins <= 0)
+      `;
+      if (fixIntegrityResult.rowCount && fixIntegrityResult.rowCount > 0) {
+        console.log(`[migrate] Phase 10.4: Fixed ${fixIntegrityResult.rowCount} rows with orphaned last_nonzero_at`);
+      }
+    } catch (err) {
+      console.log('[migrate] Phase 10.4: Integrity fix skipped:', String(err).slice(0, 80));
+    }
+
+    // Step 2: Add CHECK constraint for last_nonzero_at integrity
+    try {
+      await sql`ALTER TABLE position_sync_overlay DROP CONSTRAINT IF EXISTS chk_last_nonzero_at_integrity`;
+      await sql`ALTER TABLE position_sync_overlay ADD CONSTRAINT chk_last_nonzero_at_integrity CHECK (last_nonzero_at IS NULL OR last_known_position_size > 0 OR last_known_payout_if_wins > 0) NOT VALID`;
+      await sql`ALTER TABLE position_sync_overlay VALIDATE CONSTRAINT chk_last_nonzero_at_integrity`;
+      console.log('[migrate] Phase 10.4: Added and validated chk_last_nonzero_at_integrity');
+    } catch (err) {
+      console.log('[migrate] Phase 10.4: Integrity constraint issue:', String(err).slice(0, 100));
+    }
+
+    // Step 3: Add index for quality-based concurrency lookups
+    await sql`CREATE INDEX IF NOT EXISTS idx_position_sync_overlay_concurrency ON position_sync_overlay (wallet, condition_id, outcome, synced_at, sync_status)`;
+    console.log('[migrate] Phase 10.4: Created concurrency index');
+
+    // Step 4: Add column comment for sync_status quality semantics
+    try {
+      await sql`COMMENT ON COLUMN position_sync_overlay.sync_status IS 'Sync result quality: synced (highest - found), not_found (medium), error (lowest). Used for tie-breaking at equal timestamps.'`;
+      console.log('[migrate] Phase 10.4: Added sync_status column comment');
+    } catch (err) {
+      console.log('[migrate] Phase 10.4: Column comment skipped');
+    }
+
+    console.log('[migrate] Phase 10.3 + 10.4 hardening complete');
+
     // Post-migration: run ANALYZE on touched tables for query planner
     try {
       await sql`ANALYZE outcome_price_cache`;
@@ -682,7 +795,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: 'Phases 1-10 migration complete (includes position sync overlay)',
+      message: 'Phases 1-10.4 migration complete (includes ultra hardening)',
       tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status', 'trade_history_longshot_positions', 'market_final_pnl', 'wallet_position_snapshot', 'position_sync_overlay', 'wallet_sync_state'],
       indexes: [
         'idx_alert_events_fill_timestamp',
@@ -717,6 +830,7 @@ export async function POST(request: Request) {
         'idx_position_sync_overlay_condition',
         'idx_position_sync_overlay_state',
         'idx_position_sync_overlay_not_found',
+        'idx_position_sync_overlay_concurrency',
         'idx_wallet_sync_state_last_synced',
       ],
       constraints: [
@@ -728,6 +842,9 @@ export async function POST(request: Request) {
         'market_final_pnl PRIMARY KEY (condition_id, wallet, outcome)',
         'wallet_position_snapshot PRIMARY KEY (wallet, condition_id, outcome)',
         'position_sync_overlay PRIMARY KEY (wallet, condition_id, outcome)',
+        'position_sync_overlay CHECK chk_position_state (open, not_found_in_sync, closed_confirmed, redeemed_confirmed, unknown)',
+        'position_sync_overlay CHECK chk_sync_status (synced, not_found, error)',
+        'position_sync_overlay CHECK chk_last_nonzero_at_integrity',
         'wallet_sync_state PRIMARY KEY (wallet)',
       ],
       columnsAdded: [
