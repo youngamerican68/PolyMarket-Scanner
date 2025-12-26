@@ -1429,14 +1429,20 @@ export default function ReportPage() {
                   <th className="text-right p-3 text-poly-muted font-medium" title="USD value of most recent fill">
                     Last Fill Value
                   </th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis (shares × avg entry) / Current value (shares × current price)">
-                    Position Cost / Value
+                  <th className="text-right p-3 text-poly-muted font-medium" title="TOTAL position (all-time, not just this window): Cost basis / Current value">
+                    <span className="flex items-center justify-end gap-1">
+                      Position Cost / Value
+                      <span className="text-xs text-poly-muted/60" title="Reflects full position, may include fills from before window">ⓘ</span>
+                    </span>
                   </th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of position">
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of TOTAL position">
                     Pos Avg Entry
                   </th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="Total payout if outcome wins ($1 per share)">
-                    Payout if Wins
+                  <th className="text-right p-3 text-poly-muted font-medium" title="TOTAL payout if outcome wins - full position, not just window fills">
+                    <span className="flex items-center justify-end gap-1">
+                      Payout if Wins
+                      <span className="text-xs text-poly-muted/60" title="Reflects full position, may include fills from before window">ⓘ</span>
+                    </span>
                   </th>
                   <th className="text-right p-3 text-poly-muted font-medium">
                     Time
@@ -1544,27 +1550,32 @@ export default function ReportPage() {
                         {isExpanded && position.fills && position.fills.length > 0 && (
                           <tr className="bg-poly-bg/50">
                             <td colSpan={9} className="p-0">
-                              <div className="ml-8 mr-4 my-2 rounded border border-poly-border/50 overflow-hidden">
-                                <table className="w-full text-sm">
-                                  <thead className="bg-poly-border/30 text-xs">
-                                    <tr>
-                                      <th className="text-left p-2 text-poly-muted font-medium">Fill Time</th>
-                                      <th className="text-right p-2 text-poly-muted font-medium">Fill Price</th>
-                                      <th className="text-right p-2 text-poly-muted font-medium">Shares</th>
-                                      <th className="text-right p-2 text-poly-muted font-medium">Value</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {position.fills.map((fill) => (
-                                      <tr key={fill.fillId} className="border-t border-poly-border/30 hover:bg-poly-border/20">
-                                        <td className="p-2 text-poly-muted text-xs">{formatTimeAgo(fill.fillTimestamp)}</td>
-                                        <td className="p-2 text-right text-poly-yellow">{fill.fillPriceFormatted}</td>
-                                        <td className="p-2 text-right text-white">{fill.fillSizeFormatted}</td>
-                                        <td className="p-2 text-right text-poly-green">{fill.fillValueFormatted}</td>
+                              <div className="ml-8 mr-4 my-2">
+                                <div className="rounded border border-poly-border/50 overflow-hidden">
+                                  <table className="w-full text-sm">
+                                    <thead className="bg-poly-border/30 text-xs">
+                                      <tr>
+                                        <th className="text-left p-2 text-poly-muted font-medium">Fill Time</th>
+                                        <th className="text-right p-2 text-poly-muted font-medium">Fill Price</th>
+                                        <th className="text-right p-2 text-poly-muted font-medium">Shares</th>
+                                        <th className="text-right p-2 text-poly-muted font-medium">Value</th>
                                       </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
+                                    </thead>
+                                    <tbody>
+                                      {position.fills.map((fill) => (
+                                        <tr key={fill.fillId} className="border-t border-poly-border/30 hover:bg-poly-border/20">
+                                          <td className="p-2 text-poly-muted text-xs">{formatTimeAgo(fill.fillTimestamp)}</td>
+                                          <td className="p-2 text-right text-poly-yellow">{fill.fillPriceFormatted}</td>
+                                          <td className="p-2 text-right text-white">{fill.fillSizeFormatted}</td>
+                                          <td className="p-2 text-right text-poly-green">{fill.fillValueFormatted}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                                <p className="text-xs text-poly-muted/70 mt-1.5 italic">
+                                  ↑ Fills in this window ({position.fillCount}) · Position Cost/Value/Payout reflect total position (may include earlier fills)
+                                </p>
                               </div>
                             </td>
                           </tr>
