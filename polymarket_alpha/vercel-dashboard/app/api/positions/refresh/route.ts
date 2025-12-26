@@ -151,6 +151,11 @@ async function syncWalletPositions(
 
     let rowsUpdated = 0;
 
+    // IMPORTANT: Create sync timestamp ONCE per wallet sync request
+    // This ensures all rows in this sync batch have the same timestamp
+    // for consistent "last checked" display and proper concurrency handling
+    const syncTimestamp = new Date().toISOString();
+
     // For each dashboard row, find matching position and upsert overlay
     for (const row of dashboardRows) {
       // Find matching position by condition_id and outcome
@@ -165,51 +170,101 @@ async function syncWalletPositions(
         const currentValue = matchingPosition.currentValue ?? 0;
         const payoutIfWins = positionSize; // Each share pays $1 if outcome wins
 
-        // Upsert overlay
-        await sql`
+        // Upsert overlay - update both synced_* AND last_known_* fields
+        // Set position_state = 'open' since we found an active position
+        // CONCURRENCY SAFETY with quality-based tie-breaker:
+        //   - sync_status='synced' is highest quality (found position)
+        //   - At equal timestamps, higher quality always wins
+        //   - 'synced' can overwrite anything at equal or newer timestamps
+        const result = await sql`
           INSERT INTO position_sync_overlay (
             wallet, condition_id, outcome,
             synced_position_size, synced_avg_price, synced_current_value, synced_payout_if_wins,
-            synced_at, sync_status
+            last_known_position_size, last_known_avg_price, last_known_current_value, last_known_payout_if_wins,
+            synced_at, sync_status, sync_error, position_state, last_nonzero_at
           )
           VALUES (
             ${walletLower}, ${row.condition_id}, ${row.outcome},
             ${positionSize}, ${avgPrice}, ${currentValue}, ${payoutIfWins},
-            NOW(), 'synced'
+            ${positionSize}, ${avgPrice}, ${currentValue}, ${payoutIfWins},
+            ${syncTimestamp}::timestamptz, 'synced', NULL, 'open', ${syncTimestamp}::timestamptz
           )
           ON CONFLICT (wallet, condition_id, outcome) DO UPDATE SET
             synced_position_size = EXCLUDED.synced_position_size,
             synced_avg_price = EXCLUDED.synced_avg_price,
             synced_current_value = EXCLUDED.synced_current_value,
             synced_payout_if_wins = EXCLUDED.synced_payout_if_wins,
-            synced_at = NOW(),
+            -- Also update last_known_* when position is found
+            last_known_position_size = EXCLUDED.last_known_position_size,
+            last_known_avg_price = EXCLUDED.last_known_avg_price,
+            last_known_current_value = EXCLUDED.last_known_current_value,
+            last_known_payout_if_wins = EXCLUDED.last_known_payout_if_wins,
+            synced_at = EXCLUDED.synced_at,
             sync_status = 'synced',
-            sync_error = NULL
+            sync_error = NULL,
+            position_state = 'open',
+            last_nonzero_at = EXCLUDED.last_nonzero_at
+          WHERE position_sync_overlay.synced_at IS NULL
+             OR position_sync_overlay.synced_at <= EXCLUDED.synced_at
         `;
-        rowsUpdated++;
+        if (result.rowCount && result.rowCount > 0) {
+          rowsUpdated++;
+        }
       } else {
-        // Position not found - mark as not_found (position may have been closed)
-        await sql`
+        // Position not found in API response
+        // CRITICAL FIX: Do NOT overwrite last_known_* values!
+        // Set synced_* to NULL to indicate "no current open position"
+        // Keep last_known_* intact for historical display
+        // Set position_state = 'not_found_in_sync' to indicate reason is unknown
+        // CONCURRENCY SAFETY with quality-based tie-breaker:
+        //   - sync_status='not_found' is lower quality than 'synced'
+        //   - At equal timestamps, REJECT if existing is 'synced' (don't downgrade)
+        //   - At strictly newer timestamps, allow the update
+        //   - Never overwrite confirmed position_states
+        const result = await sql`
           INSERT INTO position_sync_overlay (
             wallet, condition_id, outcome,
-            synced_position_size, synced_payout_if_wins,
-            synced_at, sync_status
+            synced_position_size, synced_avg_price, synced_current_value, synced_payout_if_wins,
+            synced_at, sync_status, sync_error, position_state
           )
           VALUES (
             ${walletLower}, ${row.condition_id}, ${row.outcome},
-            0, 0,
-            NOW(), 'not_found'
+            NULL, NULL, NULL, NULL,
+            ${syncTimestamp}::timestamptz, 'not_found', 'Position not found in API response (may be closed/redeemed)', 'not_found_in_sync'
           )
           ON CONFLICT (wallet, condition_id, outcome) DO UPDATE SET
-            synced_position_size = 0,
+            -- Set synced_* to NULL to indicate no current open position
+            synced_position_size = NULL,
             synced_avg_price = NULL,
             synced_current_value = NULL,
-            synced_payout_if_wins = 0,
-            synced_at = NOW(),
+            synced_payout_if_wins = NULL,
+            synced_at = EXCLUDED.synced_at,
             sync_status = 'not_found',
-            sync_error = 'Position not found in API response'
+            sync_error = EXCLUDED.sync_error,
+            position_state = CASE
+              -- Don't overwrite confirmed states
+              WHEN position_sync_overlay.position_state IN ('closed_confirmed', 'redeemed_confirmed')
+              THEN position_sync_overlay.position_state
+              ELSE 'not_found_in_sync'
+            END
+            -- IMPORTANT: Do NOT update last_known_* fields - they preserve historical values
+          WHERE (
+            -- Allow if never synced before
+            position_sync_overlay.synced_at IS NULL
+            -- Allow if incoming timestamp is strictly newer
+            OR position_sync_overlay.synced_at < EXCLUDED.synced_at
+            -- At equal timestamps: only allow if existing is NOT 'synced' (quality-based tie-breaker)
+            OR (
+              position_sync_overlay.synced_at = EXCLUDED.synced_at
+              AND position_sync_overlay.sync_status IS DISTINCT FROM 'synced'
+            )
+          )
+          -- Additionally, never overwrite confirmed position_states regardless of timestamp
+          AND position_sync_overlay.position_state NOT IN ('closed_confirmed', 'redeemed_confirmed')
         `;
-        rowsUpdated++;
+        if (result.rowCount && result.rowCount > 0) {
+          rowsUpdated++;
+        }
       }
     }
 

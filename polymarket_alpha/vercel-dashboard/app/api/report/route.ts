@@ -166,6 +166,13 @@ type WalletDetailRow = {
   synced_payout_if_wins: string | null;
   synced_at: string | null;
   sync_status: string | null;
+  // Phase 10.1: Safe state model (preserves last-known values)
+  position_state: string | null;
+  last_known_position_size: string | null;
+  last_known_avg_price: string | null;
+  last_known_current_value: string | null;
+  last_known_payout_if_wins: string | null;
+  last_nonzero_at: string | null;
 };
 
 type TotalGroupsRow = {
@@ -259,6 +266,17 @@ interface WalletDetail {
   syncedPayoutIfWinsFormatted: string;
   syncedAt: string | null;
   syncStatus: string | null; // 'synced' | 'not_found' | null
+  // Phase 10.1: Safe state model (preserves last-known values when sync returns empty)
+  positionState: string | null; // 'open' | 'not_found_in_sync' | 'closed_confirmed' | 'redeemed_confirmed' | 'unknown'
+  lastKnownPositionSize: number | null;
+  lastKnownAvgPrice: number | null;
+  lastKnownCurrentValue: number | null;
+  lastKnownPayoutIfWins: number | null;
+  lastKnownPositionCost: number | null;
+  lastKnownPositionCostFormatted: string;
+  lastKnownCurrentValueFormatted: string;
+  lastKnownPayoutIfWinsFormatted: string;
+  lastNonzeroAt: string | null;
 }
 
 interface ConvergenceGroup {
@@ -1210,6 +1228,12 @@ export async function GET(req: NextRequest) {
                 pso.synced_payout_if_wins::text as synced_payout_if_wins,
                 pso.synced_at::text as synced_at,
                 pso.sync_status as sync_status,
+                pso.position_state as position_state,
+                pso.last_known_position_size::text as last_known_position_size,
+                pso.last_known_avg_price::text as last_known_avg_price,
+                pso.last_known_current_value::text as last_known_current_value,
+                pso.last_known_payout_if_wins::text as last_known_payout_if_wins,
+                pso.last_nonzero_at::text as last_nonzero_at,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
@@ -1272,6 +1296,12 @@ export async function GET(req: NextRequest) {
                 pso.synced_payout_if_wins::text as synced_payout_if_wins,
                 pso.synced_at::text as synced_at,
                 pso.sync_status as sync_status,
+                pso.position_state as position_state,
+                pso.last_known_position_size::text as last_known_position_size,
+                pso.last_known_avg_price::text as last_known_avg_price,
+                pso.last_known_current_value::text as last_known_current_value,
+                pso.last_known_payout_if_wins::text as last_known_payout_if_wins,
+                pso.last_nonzero_at::text as last_nonzero_at,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
@@ -1334,6 +1364,12 @@ export async function GET(req: NextRequest) {
                 pso.synced_payout_if_wins::text as synced_payout_if_wins,
                 pso.synced_at::text as synced_at,
                 pso.sync_status as sync_status,
+                pso.position_state as position_state,
+                pso.last_known_position_size::text as last_known_position_size,
+                pso.last_known_avg_price::text as last_known_avg_price,
+                pso.last_known_current_value::text as last_known_current_value,
+                pso.last_known_payout_if_wins::text as last_known_payout_if_wins,
+                pso.last_nonzero_at::text as last_nonzero_at,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
@@ -1413,6 +1449,12 @@ export async function GET(req: NextRequest) {
                 pso.synced_payout_if_wins::text as synced_payout_if_wins,
                 pso.synced_at::text as synced_at,
                 pso.sync_status as sync_status,
+                pso.position_state as position_state,
+                pso.last_known_position_size::text as last_known_position_size,
+                pso.last_known_avg_price::text as last_known_avg_price,
+                pso.last_known_current_value::text as last_known_current_value,
+                pso.last_known_payout_if_wins::text as last_known_payout_if_wins,
+                pso.last_nonzero_at::text as last_nonzero_at,
                 ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
                   ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
               FROM deduped d
@@ -1459,6 +1501,16 @@ export async function GET(req: NextRequest) {
             ? syncedPositionSize * syncedAvgPrice
             : null;
 
+          // Phase 10.1: Safe state model - last known values (preserved when sync returns empty)
+          const lastKnownPositionSize = parseNumeric(row.last_known_position_size);
+          const lastKnownAvgPrice = parseNumeric(row.last_known_avg_price);
+          const lastKnownCurrentValue = parseNumeric(row.last_known_current_value);
+          const lastKnownPayoutIfWins = parseNumeric(row.last_known_payout_if_wins);
+          // Compute last known cost = lastKnownPositionSize × lastKnownAvgPrice
+          const lastKnownPositionCost = (lastKnownPositionSize !== null && lastKnownAvgPrice !== null)
+            ? lastKnownPositionSize * lastKnownAvgPrice
+            : null;
+
           group.wallets.push({
             wallet: row.wallet,
             traderName: row.trader_name || row.trader_pseudonym || 'Anonymous',
@@ -1495,6 +1547,17 @@ export async function GET(req: NextRequest) {
             syncedPayoutIfWinsFormatted: syncedPayoutIfWins !== null ? formatMoney(syncedPayoutIfWins) : '—',
             syncedAt: row.synced_at ?? null,
             syncStatus: row.sync_status ?? null,
+            // Phase 10.1: Safe state model
+            positionState: row.position_state ?? null,
+            lastKnownPositionSize: lastKnownPositionSize,
+            lastKnownAvgPrice: lastKnownAvgPrice,
+            lastKnownCurrentValue: lastKnownCurrentValue,
+            lastKnownPayoutIfWins: lastKnownPayoutIfWins,
+            lastKnownPositionCost: lastKnownPositionCost,
+            lastKnownPositionCostFormatted: lastKnownPositionCost !== null ? formatMoney(lastKnownPositionCost) : '—',
+            lastKnownCurrentValueFormatted: lastKnownCurrentValue !== null ? formatMoney(lastKnownCurrentValue) : '—',
+            lastKnownPayoutIfWinsFormatted: lastKnownPayoutIfWins !== null ? formatMoney(lastKnownPayoutIfWins) : '—',
+            lastNonzeroAt: row.last_nonzero_at ?? null,
           });
         }
       }

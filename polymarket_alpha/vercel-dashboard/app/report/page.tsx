@@ -95,6 +95,17 @@ interface ConvergenceWallet {
   syncedPayoutIfWinsFormatted: string
   syncedAt: string | null
   syncStatus: string | null // 'synced' | 'not_found' | null
+  // Phase 10.1: Safe state model (preserves last-known values when sync returns empty)
+  positionState: string | null // 'open' | 'not_found_in_sync' | 'closed_confirmed' | 'redeemed_confirmed' | 'unknown'
+  lastKnownPositionSize: number | null
+  lastKnownAvgPrice: number | null
+  lastKnownCurrentValue: number | null
+  lastKnownPayoutIfWins: number | null
+  lastKnownPositionCost: number | null
+  lastKnownPositionCostFormatted: string
+  lastKnownCurrentValueFormatted: string
+  lastKnownPayoutIfWinsFormatted: string
+  lastNonzeroAt: string | null
 }
 
 interface ConvergenceGroup {
@@ -396,25 +407,69 @@ function ConvergenceWalletPayoutIfWins({ wallet }: { wallet: ConvergenceWallet }
 }
 
 // Phase 10: Synced payout display with "synced X ago" indicator
-// Shows synced data when available, falls back to snapshot data
+// Phase 10.1: Safe state model - show last-known values when position not found
+// Phase 10.2: Hardening - show "last checked" time for not_found states
 function SyncedPayoutDisplay({ wallet }: { wallet: ConvergenceWallet }) {
-  // If we have synced data, show it with indicator
-  if (wallet.syncedPayoutIfWins !== null && wallet.syncedAt) {
+  const positionState = wallet.positionState
+
+  // If position is open and we have synced data, show it normally
+  if (positionState === 'open' && wallet.syncedPayoutIfWins !== null && wallet.syncedAt) {
     const syncAge = formatTimeAgo(wallet.syncedAt)
-    const isClosed = wallet.syncStatus === 'not_found'
-
-    if (isClosed) {
-      return (
-        <span className="text-gray-500" title="Position closed (not found in API)">
-          $0 <span className="text-xs text-gray-600">(closed)</span>
-        </span>
-      )
-    }
-
     return (
       <span className="whitespace-nowrap" title={`Synced ${syncAge}`}>
         <span className="text-emerald-400 font-medium">{wallet.syncedPayoutIfWinsFormatted}</span>
         <span className="ml-1 text-xs text-emerald-500/60">⟳ {syncAge}</span>
+      </span>
+    )
+  }
+
+  // If position is not found in sync but we have last-known values, show them with status pill
+  if (positionState === 'not_found_in_sync' && wallet.lastKnownPayoutIfWins !== null && wallet.lastNonzeroAt) {
+    const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
+    const lastCheckedAge = wallet.syncedAt ? formatTimeAgo(wallet.syncedAt) : null
+    const tooltipText = lastCheckedAge
+      ? `Last known value as of ${lastKnownAge}. Last checked ${lastCheckedAge}. Position not found in API (may be closed/redeemed).`
+      : `Last known value as of ${lastKnownAge}. Position not found in API (may be closed/redeemed).`
+    return (
+      <span className="whitespace-nowrap" title={tooltipText}>
+        <span className="text-amber-400">{wallet.lastKnownPayoutIfWinsFormatted}</span>
+        <span className="ml-1 text-xs px-1 py-0.5 bg-amber-500/20 text-amber-400 rounded">Not found</span>
+        {lastCheckedAge && <span className="ml-1 text-xs text-gray-500">⟳ {lastCheckedAge}</span>}
+      </span>
+    )
+  }
+
+  // If position is confirmed closed/redeemed and we have last-known values
+  if ((positionState === 'closed_confirmed' || positionState === 'redeemed_confirmed') && wallet.lastKnownPayoutIfWins !== null && wallet.lastNonzeroAt) {
+    const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
+    const stateLabel = positionState === 'redeemed_confirmed' ? 'Redeemed' : 'Closed'
+    return (
+      <span className="whitespace-nowrap" title={`${stateLabel} position. Last known value as of ${lastKnownAge}.`}>
+        <span className="text-gray-400">{wallet.lastKnownPayoutIfWinsFormatted}</span>
+        <span className="ml-1 text-xs px-1 py-0.5 bg-gray-600/30 text-gray-400 rounded">{stateLabel}</span>
+      </span>
+    )
+  }
+
+  // Legacy fallback: sync_status = 'not_found' without positionState (pre-migration data)
+  if (wallet.syncStatus === 'not_found' && wallet.syncedAt) {
+    // Show last-known if available, otherwise show "—"
+    if (wallet.lastKnownPayoutIfWins !== null && wallet.lastNonzeroAt) {
+      const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
+      const lastCheckedAge = formatTimeAgo(wallet.syncedAt)
+      return (
+        <span className="whitespace-nowrap" title={`Last known value as of ${lastKnownAge}. Last checked ${lastCheckedAge}. Position not found in API.`}>
+          <span className="text-amber-400">{wallet.lastKnownPayoutIfWinsFormatted}</span>
+          <span className="ml-1 text-xs px-1 py-0.5 bg-amber-500/20 text-amber-400 rounded">Not found</span>
+          <span className="ml-1 text-xs text-gray-500">⟳ {lastCheckedAge}</span>
+        </span>
+      )
+    }
+    // No last-known data available
+    const lastCheckedAge = formatTimeAgo(wallet.syncedAt)
+    return (
+      <span className="text-gray-500" title={`Position not found in API. Last checked ${lastCheckedAge}. No historical data available.`}>
+        — <span className="text-xs text-gray-600">(not found {lastCheckedAge})</span>
       </span>
     )
   }
@@ -447,27 +502,77 @@ function ConvergencePositionCostValue({ wallet }: { wallet: ConvergenceWallet })
 }
 
 // Phase 10: Synced Position Cost / Value display with "synced X ago" indicator
-// Shows synced data when available, falls back to snapshot data
+// Phase 10.1: Safe state model - show last-known values when position not found
+// Phase 10.2: Hardening - show "last checked" time for not_found states
 function SyncedPositionCostValue({ wallet }: { wallet: ConvergenceWallet }) {
-  // If we have synced data, show it with indicator
-  if (wallet.syncedPositionCost !== null && wallet.syncedAt) {
+  const positionState = wallet.positionState
+
+  // If position is open and we have synced data, show it normally
+  if (positionState === 'open' && wallet.syncedPositionCost !== null && wallet.syncedAt) {
     const syncAge = formatTimeAgo(wallet.syncedAt)
-    const isClosed = wallet.syncStatus === 'not_found'
-
-    if (isClosed) {
-      return (
-        <span className="text-gray-500" title="Position closed (not found in API)">
-          $0 / $0 <span className="text-xs text-gray-600">(closed)</span>
-        </span>
-      )
-    }
-
     return (
       <span className="whitespace-nowrap" title={`Synced ${syncAge}`}>
         <span className="text-emerald-400">{wallet.syncedPositionCostFormatted}</span>
         <span className="text-poly-muted/50"> / </span>
         <span className="text-emerald-300 font-medium">{wallet.syncedCurrentValueFormatted}</span>
         <span className="ml-1 text-xs text-emerald-500/60">⟳ {syncAge}</span>
+      </span>
+    )
+  }
+
+  // If position is not found in sync but we have last-known values, show them with status pill
+  if (positionState === 'not_found_in_sync' && wallet.lastKnownPositionCost !== null && wallet.lastNonzeroAt) {
+    const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
+    const lastCheckedAge = wallet.syncedAt ? formatTimeAgo(wallet.syncedAt) : null
+    const tooltipText = lastCheckedAge
+      ? `Last known value as of ${lastKnownAge}. Last checked ${lastCheckedAge}. Position not found in API (may be closed/redeemed).`
+      : `Last known value as of ${lastKnownAge}. Position not found in API (may be closed/redeemed).`
+    return (
+      <span className="whitespace-nowrap" title={tooltipText}>
+        <span className="text-amber-400">{wallet.lastKnownPositionCostFormatted}</span>
+        <span className="text-poly-muted/50"> / </span>
+        <span className="text-amber-300">{wallet.lastKnownCurrentValueFormatted}</span>
+        <span className="ml-1 text-xs px-1 py-0.5 bg-amber-500/20 text-amber-400 rounded">Not found</span>
+        {lastCheckedAge && <span className="ml-1 text-xs text-gray-500">⟳ {lastCheckedAge}</span>}
+      </span>
+    )
+  }
+
+  // If position is confirmed closed/redeemed and we have last-known values
+  if ((positionState === 'closed_confirmed' || positionState === 'redeemed_confirmed') && wallet.lastKnownPositionCost !== null && wallet.lastNonzeroAt) {
+    const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
+    const stateLabel = positionState === 'redeemed_confirmed' ? 'Redeemed' : 'Closed'
+    return (
+      <span className="whitespace-nowrap" title={`${stateLabel} position. Last known value as of ${lastKnownAge}.`}>
+        <span className="text-gray-400">{wallet.lastKnownPositionCostFormatted}</span>
+        <span className="text-poly-muted/50"> / </span>
+        <span className="text-gray-400">{wallet.lastKnownCurrentValueFormatted}</span>
+        <span className="ml-1 text-xs px-1 py-0.5 bg-gray-600/30 text-gray-400 rounded">{stateLabel}</span>
+      </span>
+    )
+  }
+
+  // Legacy fallback: sync_status = 'not_found' without positionState (pre-migration data)
+  if (wallet.syncStatus === 'not_found' && wallet.syncedAt) {
+    // Show last-known if available, otherwise show "—"
+    if (wallet.lastKnownPositionCost !== null && wallet.lastNonzeroAt) {
+      const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
+      const lastCheckedAge = formatTimeAgo(wallet.syncedAt)
+      return (
+        <span className="whitespace-nowrap" title={`Last known value as of ${lastKnownAge}. Last checked ${lastCheckedAge}. Position not found in API.`}>
+          <span className="text-amber-400">{wallet.lastKnownPositionCostFormatted}</span>
+          <span className="text-poly-muted/50"> / </span>
+          <span className="text-amber-300">{wallet.lastKnownCurrentValueFormatted}</span>
+          <span className="ml-1 text-xs px-1 py-0.5 bg-amber-500/20 text-amber-400 rounded">Not found</span>
+          <span className="ml-1 text-xs text-gray-500">⟳ {lastCheckedAge}</span>
+        </span>
+      )
+    }
+    // No last-known data available
+    const lastCheckedAge = formatTimeAgo(wallet.syncedAt)
+    return (
+      <span className="text-gray-500" title={`Position not found in API. Last checked ${lastCheckedAge}. No historical data available.`}>
+        — / — <span className="text-xs text-gray-600">(not found {lastCheckedAge})</span>
       </span>
     )
   }

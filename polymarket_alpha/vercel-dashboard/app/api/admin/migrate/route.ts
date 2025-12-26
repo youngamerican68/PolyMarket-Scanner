@@ -481,6 +481,185 @@ export async function POST(request: Request) {
     await sql`CREATE INDEX IF NOT EXISTS idx_wallet_sync_state_last_synced ON wallet_sync_state (last_synced_at DESC)`;
     console.log('[migrate] Created wallet_sync_state index');
 
+    // =========================================================================
+    // Phase 10.1: Safe State Model for Position Sync Overlay
+    // Fixes bug where sync-empty overwrites last-known values with zeros
+    // =========================================================================
+
+    // Add position_state column
+    try {
+      await sql`ALTER TABLE position_sync_overlay ADD COLUMN position_state TEXT NOT NULL DEFAULT 'unknown'`;
+      console.log('[migrate] Added position_state column to position_sync_overlay');
+    } catch (err) {
+      console.log('[migrate] position_state column already exists or failed:', String(err).slice(0, 80));
+    }
+
+    // Add last_known_* columns
+    try {
+      await sql`ALTER TABLE position_sync_overlay ADD COLUMN last_known_position_size NUMERIC`;
+      console.log('[migrate] Added last_known_position_size column');
+    } catch (err) {
+      console.log('[migrate] last_known_position_size column already exists');
+    }
+
+    try {
+      await sql`ALTER TABLE position_sync_overlay ADD COLUMN last_known_avg_price NUMERIC`;
+      console.log('[migrate] Added last_known_avg_price column');
+    } catch (err) {
+      console.log('[migrate] last_known_avg_price column already exists');
+    }
+
+    try {
+      await sql`ALTER TABLE position_sync_overlay ADD COLUMN last_known_current_value NUMERIC`;
+      console.log('[migrate] Added last_known_current_value column');
+    } catch (err) {
+      console.log('[migrate] last_known_current_value column already exists');
+    }
+
+    try {
+      await sql`ALTER TABLE position_sync_overlay ADD COLUMN last_known_payout_if_wins NUMERIC`;
+      console.log('[migrate] Added last_known_payout_if_wins column');
+    } catch (err) {
+      console.log('[migrate] last_known_payout_if_wins column already exists');
+    }
+
+    try {
+      await sql`ALTER TABLE position_sync_overlay ADD COLUMN last_nonzero_at TIMESTAMPTZ`;
+      console.log('[migrate] Added last_nonzero_at column');
+    } catch (err) {
+      console.log('[migrate] last_nonzero_at column already exists');
+    }
+
+    // Add CHECK constraint for valid position states
+    try {
+      await sql`ALTER TABLE position_sync_overlay ADD CONSTRAINT chk_position_state CHECK (position_state IN ('open', 'not_found_in_sync', 'closed_confirmed', 'redeemed_confirmed', 'unknown'))`;
+      console.log('[migrate] Added position_state constraint');
+    } catch (err) {
+      console.log('[migrate] position_state constraint already exists');
+    }
+
+    // Backfill existing rows
+    try {
+      const backfillResult = await sql`
+        UPDATE position_sync_overlay
+        SET
+          position_state = CASE
+            WHEN sync_status = 'synced' AND synced_position_size IS NOT NULL AND synced_position_size > 0 THEN 'open'
+            WHEN sync_status = 'not_found' THEN 'not_found_in_sync'
+            ELSE 'unknown'
+          END,
+          last_known_position_size = CASE
+            WHEN synced_position_size IS NOT NULL AND synced_position_size > 0 THEN synced_position_size
+            ELSE last_known_position_size
+          END,
+          last_known_avg_price = CASE
+            WHEN synced_avg_price IS NOT NULL THEN synced_avg_price
+            ELSE last_known_avg_price
+          END,
+          last_known_current_value = CASE
+            WHEN synced_current_value IS NOT NULL THEN synced_current_value
+            ELSE last_known_current_value
+          END,
+          last_known_payout_if_wins = CASE
+            WHEN synced_payout_if_wins IS NOT NULL AND synced_payout_if_wins > 0 THEN synced_payout_if_wins
+            ELSE last_known_payout_if_wins
+          END,
+          last_nonzero_at = CASE
+            WHEN synced_position_size IS NOT NULL AND synced_position_size > 0 THEN synced_at
+            ELSE last_nonzero_at
+          END
+        WHERE position_state = 'unknown' OR last_known_position_size IS NULL
+      `;
+      if (backfillResult.rowCount && backfillResult.rowCount > 0) {
+        console.log(`[migrate] Backfilled ${backfillResult.rowCount} position_sync_overlay rows`);
+      }
+    } catch (err) {
+      console.log('[migrate] Backfill skipped:', String(err).slice(0, 80));
+    }
+
+    // Create indexes for position_state queries
+    await sql`CREATE INDEX IF NOT EXISTS idx_position_sync_overlay_state ON position_sync_overlay (position_state)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_position_sync_overlay_not_found ON position_sync_overlay (position_state, last_nonzero_at DESC) WHERE position_state = 'not_found_in_sync'`;
+    console.log('[migrate] Created position_sync_overlay safe state indexes');
+
+    // =========================================================================
+    // Phase 10.2: Hardening for Safe State Model
+    // Fixes: robust backfill, CHECK constraint for sync_status, data integrity
+    // =========================================================================
+
+    // Add CHECK constraint for sync_status
+    try {
+      await sql`ALTER TABLE position_sync_overlay ADD CONSTRAINT chk_sync_status CHECK (sync_status IN ('synced', 'not_found', 'error'))`;
+      console.log('[migrate] Added sync_status constraint');
+    } catch (err) {
+      console.log('[migrate] sync_status constraint already exists');
+    }
+
+    // Robust backfill: populate last_known_* from synced_* where last_known_* is NULL
+    try {
+      const backfill1 = await sql`
+        UPDATE position_sync_overlay
+        SET
+          last_known_position_size = synced_position_size,
+          last_known_avg_price = synced_avg_price,
+          last_known_current_value = synced_current_value,
+          last_known_payout_if_wins = synced_payout_if_wins,
+          last_nonzero_at = COALESCE(last_nonzero_at, synced_at)
+        WHERE
+          last_known_position_size IS NULL
+          AND synced_position_size IS NOT NULL
+          AND synced_position_size > 0
+      `;
+      if (backfill1.rowCount && backfill1.rowCount > 0) {
+        console.log(`[migrate] Hardening backfill 1: populated ${backfill1.rowCount} rows with last_known values`);
+      }
+    } catch (err) {
+      console.log('[migrate] Hardening backfill 1 skipped:', String(err).slice(0, 80));
+    }
+
+    // Ensure open positions have last_known set
+    try {
+      const backfill2 = await sql`
+        UPDATE position_sync_overlay
+        SET
+          last_known_position_size = synced_position_size,
+          last_known_avg_price = synced_avg_price,
+          last_known_current_value = synced_current_value,
+          last_known_payout_if_wins = synced_payout_if_wins,
+          last_nonzero_at = synced_at
+        WHERE
+          position_state = 'open'
+          AND last_known_position_size IS NULL
+          AND synced_position_size IS NOT NULL
+      `;
+      if (backfill2.rowCount && backfill2.rowCount > 0) {
+        console.log(`[migrate] Hardening backfill 2: fixed ${backfill2.rowCount} open positions with missing last_known`);
+      }
+    } catch (err) {
+      console.log('[migrate] Hardening backfill 2 skipped:', String(err).slice(0, 80));
+    }
+
+    // Ensure position_state is consistent with sync_status
+    try {
+      await sql`
+        UPDATE position_sync_overlay
+        SET position_state = 'open'
+        WHERE sync_status = 'synced'
+          AND synced_position_size IS NOT NULL
+          AND synced_position_size > 0
+          AND position_state NOT IN ('open', 'closed_confirmed', 'redeemed_confirmed')
+      `;
+      await sql`
+        UPDATE position_sync_overlay
+        SET position_state = 'not_found_in_sync'
+        WHERE sync_status = 'not_found'
+          AND position_state NOT IN ('not_found_in_sync', 'closed_confirmed', 'redeemed_confirmed')
+      `;
+      console.log('[migrate] Hardening: ensured position_state consistency');
+    } catch (err) {
+      console.log('[migrate] Hardening state consistency skipped:', String(err).slice(0, 80));
+    }
+
     // Post-migration: run ANALYZE on touched tables for query planner
     try {
       await sql`ANALYZE outcome_price_cache`;
@@ -536,6 +715,8 @@ export async function POST(request: Request) {
         'idx_position_sync_overlay_wallet',
         'idx_position_sync_overlay_synced_at',
         'idx_position_sync_overlay_condition',
+        'idx_position_sync_overlay_state',
+        'idx_position_sync_overlay_not_found',
         'idx_wallet_sync_state_last_synced',
       ],
       constraints: [
@@ -556,6 +737,12 @@ export async function POST(request: Request) {
         'market_final_pnl.is_estimated',
         'market_final_pnl.estimate_source',
         'market_final_pnl.estimate_as_of',
+        'position_sync_overlay.position_state',
+        'position_sync_overlay.last_known_position_size',
+        'position_sync_overlay.last_known_avg_price',
+        'position_sync_overlay.last_known_current_value',
+        'position_sync_overlay.last_known_payout_if_wins',
+        'position_sync_overlay.last_nonzero_at',
       ],
     }, { headers: NO_CACHE_HEADERS });
   } catch (err) {
