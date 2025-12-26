@@ -1038,6 +1038,11 @@ export async function GET(req: NextRequest) {
     // ========================================================================
     // Query 1c: Fetch fills for positions on this page (for row expansion)
     // ========================================================================
+
+    // Helper: consistent position key format (matches positionKey set above)
+    const makePositionKey = (wallet: string, conditionId: string, outcome: string) =>
+      `${wallet}:${conditionId}:${outcome}`;
+
     type FillRow = {
       id: string;
       wallet: string;
@@ -1049,16 +1054,27 @@ export async function GET(req: NextRequest) {
       fill_value_usd: string | null;
     };
 
-    // Only query fills if we have positions to expand
-    if (formattedPositions.length > 0) {
-      // Build position keys as JSON array for the IN clause
+    // Only fetch fills for expandable positions (fillCount > 1)
+    // Single-fill positions don't need expansion data
+    const expandablePositions = formattedPositions.filter(p => p.fillCount > 1);
+
+    if (expandablePositions.length > 0) {
+      // Build JSON array of objects for recordset join (index-friendly)
       const positionKeysJson = JSON.stringify(
-        formattedPositions.map(p => `${p.wallet}|${p.conditionId}|${p.outcome}`)
+        expandablePositions.map(p => ({
+          wallet: p.wallet,
+          condition_id: p.conditionId,
+          outcome: p.outcome
+        }))
       );
 
-      // Query all fills for these positions within the window
-      // Use JSON array comparison since Vercel Postgres doesn't support native array params
+      // Query fills using JSON recordset join instead of string concatenation
+      // This allows Postgres to use indexes on (wallet, condition_id, outcome)
       const fillsResult = await sql<FillRow>`
+        WITH keys AS (
+          SELECT * FROM jsonb_to_recordset(${positionKeysJson}::jsonb)
+            AS k(wallet text, condition_id text, outcome text)
+        )
         SELECT
           ae.id,
           ae.wallet,
@@ -1069,20 +1085,21 @@ export async function GET(req: NextRequest) {
           ae.fill_size::text as fill_size,
           ae.fill_value_usd::text as fill_value_usd
         FROM alert_events ae
+        INNER JOIN keys k
+          ON ae.wallet = k.wallet
+          AND ae.condition_id = k.condition_id
+          AND ae.outcome = k.outcome
         WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
           AND ae.fill_price <= ${maxOdds}
           AND ae.position_current_value IS NOT NULL
           AND ae.position_current_value >= ${minPosition}
-          AND (ae.wallet || '|' || ae.condition_id || '|' || ae.outcome) IN (
-            SELECT jsonb_array_elements_text(${positionKeysJson}::jsonb)
-          )
-        ORDER BY ae.fill_timestamp DESC
+        ORDER BY ae.fill_timestamp DESC, ae.id DESC
       `;
 
-      // Group fills by position key
+      // Group fills by position key using consistent helper
       const fillsByPosition = new Map<string, PositionFill[]>();
       for (const fill of fillsResult.rows) {
-        const key = `${fill.wallet}:${fill.condition_id}:${fill.outcome}`;
+        const key = makePositionKey(fill.wallet, fill.condition_id, fill.outcome);
         const fillPrice = parseNumeric(fill.fill_price);
         const fillSize = parseNumeric(fill.fill_size);
         const fillValue = parseNumeric(fill.fill_value_usd);
@@ -1104,8 +1121,8 @@ export async function GET(req: NextRequest) {
         fillsByPosition.get(key)!.push(formattedFill);
       }
 
-      // Attach fills to positions
-      for (const position of formattedPositions) {
+      // Attach fills to positions (positionKey uses same format as makePositionKey)
+      for (const position of expandablePositions) {
         const fills = fillsByPosition.get(position.positionKey);
         if (fills) {
           position.fills = fills;
