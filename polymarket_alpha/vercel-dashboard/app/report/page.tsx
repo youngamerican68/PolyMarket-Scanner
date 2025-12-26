@@ -974,8 +974,9 @@ export default function ReportPage() {
                           <tr>
                             <th className="text-left p-3 text-poly-muted font-medium">Wallet</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade (not total position)">Last Fill Price</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Current market price for this outcome">Current Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
-                            <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis / Current value (no live price available)">Position Cost / Value</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis / Current value">Position Cost / Value</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Total payout if outcome wins ($1 per share)">Payout if Wins</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
@@ -995,6 +996,7 @@ export default function ReportPage() {
                                 {w.isWhale && <span className="ml-1 text-purple-400">🐋</span>}
                               </td>
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
+                              <td className="p-3 text-right text-blue-400">{w.currentPrice !== null ? formatOdds(w.currentPrice) : '—'}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
                               <td className="p-3 text-right"><SyncedPositionCostValue wallet={w} /></td>
                               <td className="p-3 text-right font-medium"><SyncedPayoutDisplay wallet={w} /></td>
@@ -1083,8 +1085,9 @@ export default function ReportPage() {
                           <tr>
                             <th className="text-left p-3 text-poly-muted font-medium">Wallet</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade (not total position)">Last Fill Price</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Current market price for this outcome">Current Price</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of full position">Pos Avg Entry</th>
-                            <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis / Current value (no live price available)">Position Cost / Value</th>
+                            <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis / Current value">Position Cost / Value</th>
                             <th className="text-right p-3 text-poly-muted font-medium" title="Total payout if outcome wins ($1 per share)">Payout if Wins</th>
                             <th className="text-right p-3 text-poly-muted font-medium">Time</th>
                           </tr>
@@ -1104,6 +1107,7 @@ export default function ReportPage() {
                                 {w.isWhale && <span className="ml-1 text-purple-400">🐋</span>}
                               </td>
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
+                              <td className="p-3 text-right text-blue-400">{w.currentPrice !== null ? formatOdds(w.currentPrice) : '—'}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
                               <td className="p-3 text-right"><SyncedPositionCostValue wallet={w} /></td>
                               <td className="p-3 text-right font-medium"><SyncedPayoutDisplay wallet={w} /></td>
