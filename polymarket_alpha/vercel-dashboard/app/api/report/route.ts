@@ -1059,75 +1059,81 @@ export async function GET(req: NextRequest) {
     const expandablePositions = formattedPositions.filter(p => p.fillCount > 1);
 
     if (expandablePositions.length > 0) {
-      // Build JSON array of objects for recordset join (index-friendly)
-      const positionKeysJson = JSON.stringify(
-        expandablePositions.map(p => ({
-          wallet: p.wallet,
-          condition_id: p.conditionId,
-          outcome: p.outcome
-        }))
-      );
+      try {
+        // Build JSON array of objects for recordset join (index-friendly)
+        const positionKeysJson = JSON.stringify(
+          expandablePositions.map(p => ({
+            wallet: p.wallet,
+            condition_id: p.conditionId,
+            outcome: p.outcome
+          }))
+        );
 
-      // Query fills using JSON recordset join instead of string concatenation
-      // This allows Postgres to use indexes on (wallet, condition_id, outcome)
-      const fillsResult = await sql<FillRow>`
-        WITH keys AS (
-          SELECT DISTINCT wallet, condition_id, outcome
-          FROM jsonb_to_recordset(${positionKeysJson}::jsonb)
-            AS k(wallet text, condition_id text, outcome text)
-        )
-        SELECT
-          ae.id,
-          ae.wallet,
-          ae.condition_id,
-          ae.outcome,
-          ae.fill_timestamp,
-          ae.fill_price::text as fill_price,
-          ae.fill_size::text as fill_size,
-          ae.fill_value_usd::text as fill_value_usd
-        FROM alert_events ae
-        INNER JOIN keys k
-          ON ae.wallet = k.wallet
-          AND ae.condition_id = k.condition_id
-          AND ae.outcome = k.outcome
-        WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
-          AND ae.fill_price <= ${maxOdds}
-          AND ae.position_current_value IS NOT NULL
-          AND ae.position_current_value >= ${minPosition}
-        ORDER BY ae.fill_timestamp DESC, ae.id DESC
-      `;
+        // Query fills using JSON recordset join instead of string concatenation
+        // This allows Postgres to use indexes on (wallet, condition_id, outcome)
+        const fillsResult = await sql<FillRow>`
+          WITH keys AS (
+            SELECT DISTINCT wallet, condition_id, outcome
+            FROM jsonb_to_recordset(${positionKeysJson}::jsonb)
+              AS k(wallet text, condition_id text, outcome text)
+          )
+          SELECT
+            ae.id,
+            ae.wallet,
+            ae.condition_id,
+            ae.outcome,
+            ae.fill_timestamp,
+            ae.fill_price::text as fill_price,
+            ae.fill_size::text as fill_size,
+            ae.fill_value_usd::text as fill_value_usd
+          FROM alert_events ae
+          INNER JOIN keys k
+            ON ae.wallet = k.wallet
+            AND ae.condition_id = k.condition_id
+            AND ae.outcome = k.outcome
+          WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
+            AND ae.fill_price <= ${maxOdds}
+            AND ae.position_current_value IS NOT NULL
+            AND ae.position_current_value >= ${minPosition}
+          ORDER BY ae.fill_timestamp DESC, ae.id DESC
+        `;
 
-      // Group fills by position key using consistent helper
-      const fillsByPosition = new Map<string, PositionFill[]>();
-      for (const fill of fillsResult.rows) {
-        const key = makePositionKey(fill.wallet, fill.condition_id, fill.outcome);
-        const fillPrice = parseNumeric(fill.fill_price);
-        const fillSize = parseNumeric(fill.fill_size);
-        const fillValue = parseNumeric(fill.fill_value_usd);
+        // Group fills by position key using consistent helper
+        const fillsByPosition = new Map<string, PositionFill[]>();
+        for (const fill of fillsResult.rows) {
+          const key = makePositionKey(fill.wallet, fill.condition_id, fill.outcome);
+          const fillPrice = parseNumeric(fill.fill_price);
+          const fillSize = parseNumeric(fill.fill_size);
+          const fillValue = parseNumeric(fill.fill_value_usd);
 
-        const formattedFill: PositionFill = {
-          fillId: fill.id,
-          fillTimestamp: fill.fill_timestamp,
-          fillPrice,
-          fillPriceFormatted: formatOdds(fillPrice),
-          fillSize,
-          fillSizeFormatted: fillSize !== null ? fillSize.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—',
-          fillValue,
-          fillValueFormatted: formatMoney(fillValue),
-        };
+          const formattedFill: PositionFill = {
+            fillId: fill.id,
+            fillTimestamp: fill.fill_timestamp,
+            fillPrice,
+            fillPriceFormatted: formatOdds(fillPrice),
+            fillSize,
+            fillSizeFormatted: fillSize !== null ? fillSize.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—',
+            fillValue,
+            fillValueFormatted: formatMoney(fillValue),
+          };
 
-        if (!fillsByPosition.has(key)) {
-          fillsByPosition.set(key, []);
+          if (!fillsByPosition.has(key)) {
+            fillsByPosition.set(key, []);
+          }
+          fillsByPosition.get(key)!.push(formattedFill);
         }
-        fillsByPosition.get(key)!.push(formattedFill);
-      }
 
-      // Attach fills to positions (positionKey uses same format as makePositionKey)
-      for (const position of expandablePositions) {
-        const fills = fillsByPosition.get(position.positionKey);
-        if (fills) {
-          position.fills = fills;
+        // Attach fills to positions (positionKey uses same format as makePositionKey)
+        for (const position of expandablePositions) {
+          const fills = fillsByPosition.get(position.positionKey);
+          if (fills) {
+            position.fills = fills;
+          }
         }
+      } catch (fillsError) {
+        // Log error but don't break the report - fills are optional for expansion
+        console.error('Query 1c (fills) failed:', fillsError);
+        // Positions will have empty fills arrays, expansion won't work but report still loads
       }
     }
 
