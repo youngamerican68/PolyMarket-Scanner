@@ -931,6 +931,10 @@ export async function GET(req: NextRequest) {
       LIMIT ${pageSize} OFFSET ${offset}
     `;
 
+    // Helper: consistent position key format (used for positionKey and fills grouping)
+    const makePositionKey = (wallet: string, conditionId: string, outcome: string) =>
+      `${wallet}:${conditionId}:${outcome}`;
+
     // Format positions
     const formattedPositions: FormattedPosition[] = positionsResult.rows.map((row) => {
       const lastFillPrice = parseNumeric(row.last_fill_price);
@@ -971,7 +975,7 @@ export async function GET(req: NextRequest) {
         : null;
 
       return {
-        positionKey: `${row.wallet}:${row.condition_id}:${row.outcome}`,
+        positionKey: makePositionKey(row.wallet, row.condition_id, row.outcome),
         wallet: row.wallet,
         conditionId: row.condition_id,
         outcome: row.outcome,
@@ -1039,10 +1043,6 @@ export async function GET(req: NextRequest) {
     // Query 1c: Fetch fills for positions on this page (for row expansion)
     // ========================================================================
 
-    // Helper: consistent position key format (matches positionKey set above)
-    const makePositionKey = (wallet: string, conditionId: string, outcome: string) =>
-      `${wallet}:${conditionId}:${outcome}`;
-
     type FillRow = {
       id: string;
       wallet: string;
@@ -1072,7 +1072,8 @@ export async function GET(req: NextRequest) {
       // This allows Postgres to use indexes on (wallet, condition_id, outcome)
       const fillsResult = await sql<FillRow>`
         WITH keys AS (
-          SELECT * FROM jsonb_to_recordset(${positionKeysJson}::jsonb)
+          SELECT DISTINCT wallet, condition_id, outcome
+          FROM jsonb_to_recordset(${positionKeysJson}::jsonb)
             AS k(wallet text, condition_id text, outcome text)
         )
         SELECT
