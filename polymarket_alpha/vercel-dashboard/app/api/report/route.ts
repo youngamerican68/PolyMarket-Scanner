@@ -284,6 +284,18 @@ interface FormattedAlert {
 }
 
 // Phase 11: Aggregated position (one per wallet+market+outcome)
+// Individual fill within a position (for row expansion)
+interface PositionFill {
+  fillId: string;
+  fillTimestamp: string;
+  fillPrice: number | null;
+  fillPriceFormatted: string;
+  fillSize: number | null;
+  fillSizeFormatted: string;
+  fillValue: number | null;
+  fillValueFormatted: string;
+}
+
 interface FormattedPosition {
   // Position key (composite ID for React keys)
   positionKey: string;
@@ -355,6 +367,8 @@ interface FormattedPosition {
   lastKnownCurrentValueFormatted: string;
   lastKnownPayoutIfWinsFormatted: string;
   lastNonzeroAt: string | null;
+  // Underlying fills for row expansion
+  fills: PositionFill[];
 }
 
 interface WalletDetail {
@@ -1017,8 +1031,87 @@ export async function GET(req: NextRequest) {
         lastKnownCurrentValueFormatted: lastKnownCurrentValue !== null ? formatMoney(lastKnownCurrentValue) : '—',
         lastKnownPayoutIfWinsFormatted: lastKnownPayoutIfWins !== null ? formatMoney(lastKnownPayoutIfWins) : '—',
         lastNonzeroAt: row.last_nonzero_at ?? null,
+        fills: [], // Will be populated below
       };
     });
+
+    // ========================================================================
+    // Query 1c: Fetch fills for positions on this page (for row expansion)
+    // ========================================================================
+    type FillRow = {
+      id: string;
+      wallet: string;
+      condition_id: string;
+      outcome: string;
+      fill_timestamp: string;
+      fill_price: string | null;
+      fill_size: string | null;
+      fill_value_usd: string | null;
+    };
+
+    // Only query fills if we have positions to expand
+    if (formattedPositions.length > 0) {
+      // Build position keys as JSON array for the IN clause
+      const positionKeysJson = JSON.stringify(
+        formattedPositions.map(p => `${p.wallet}|${p.conditionId}|${p.outcome}`)
+      );
+
+      // Query all fills for these positions within the window
+      // Use JSON array comparison since Vercel Postgres doesn't support native array params
+      const fillsResult = await sql<FillRow>`
+        SELECT
+          ae.id,
+          ae.wallet,
+          ae.condition_id,
+          ae.outcome,
+          ae.fill_timestamp,
+          ae.fill_price::text as fill_price,
+          ae.fill_size::text as fill_size,
+          ae.fill_value_usd::text as fill_value_usd
+        FROM alert_events ae
+        WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
+          AND ae.fill_price <= ${maxOdds}
+          AND ae.position_current_value IS NOT NULL
+          AND ae.position_current_value >= ${minPosition}
+          AND (ae.wallet || '|' || ae.condition_id || '|' || ae.outcome) IN (
+            SELECT jsonb_array_elements_text(${positionKeysJson}::jsonb)
+          )
+        ORDER BY ae.fill_timestamp DESC
+      `;
+
+      // Group fills by position key
+      const fillsByPosition = new Map<string, PositionFill[]>();
+      for (const fill of fillsResult.rows) {
+        const key = `${fill.wallet}:${fill.condition_id}:${fill.outcome}`;
+        const fillPrice = parseNumeric(fill.fill_price);
+        const fillSize = parseNumeric(fill.fill_size);
+        const fillValue = parseNumeric(fill.fill_value_usd);
+
+        const formattedFill: PositionFill = {
+          fillId: fill.id,
+          fillTimestamp: fill.fill_timestamp,
+          fillPrice,
+          fillPriceFormatted: formatOdds(fillPrice),
+          fillSize,
+          fillSizeFormatted: fillSize !== null ? fillSize.toLocaleString('en-US', { maximumFractionDigits: 0 }) : '—',
+          fillValue,
+          fillValueFormatted: formatMoney(fillValue),
+        };
+
+        if (!fillsByPosition.has(key)) {
+          fillsByPosition.set(key, []);
+        }
+        fillsByPosition.get(key)!.push(formattedFill);
+      }
+
+      // Attach fills to positions
+      for (const position of formattedPositions) {
+        const fills = fillsByPosition.get(position.positionKey);
+        if (fills) {
+          position.fills = fills;
+        }
+      }
+    }
 
     // ========================================================================
     // Query 2: Summary statistics (also gives us totalAlerts for pagination)

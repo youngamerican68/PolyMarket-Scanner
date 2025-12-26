@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 
 // Price status type
@@ -53,6 +53,18 @@ interface AlertRow {
   finalPnlIsEstimated: boolean | null
   finalPnlEstimateSource: string | null
   finalPnlEstimateAsOf: string | null
+}
+
+// Individual fill within a position (for row expansion)
+interface PositionFill {
+  fillId: string
+  fillTimestamp: string
+  fillPrice: number | null
+  fillPriceFormatted: string
+  fillSize: number | null
+  fillSizeFormatted: string
+  fillValue: number | null
+  fillValueFormatted: string
 }
 
 // Phase 11: Aggregated position row (one per wallet+market+outcome)
@@ -124,6 +136,8 @@ interface PositionRow {
   lastKnownCurrentValueFormatted: string
   lastKnownPayoutIfWinsFormatted: string
   lastNonzeroAt: string | null
+  // Underlying fills for row expansion
+  fills: PositionFill[]
 }
 
 interface ConvergenceWallet {
@@ -722,6 +736,9 @@ export default function ReportPage() {
 
   // Convergence expanded state
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set())
+
+  // Positions expanded state (for viewing underlying fills)
+  const [expandedPositions, setExpandedPositions] = useState<Set<string>>(new Set())
 
   // Phase 10: Refresh positions on-demand
   const refreshPositions = useCallback(async () => {
@@ -1438,65 +1455,123 @@ export default function ReportPage() {
                       </tr>
                     )
                   }
-                  return displayPositions.slice(0, 50).map((position) => (
-                    <tr key={position.positionKey} className="border-t border-poly-border hover:bg-poly-border/30">
-                      <td className="p-3">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate max-w-xs">
-                            <a
-                              href={`https://polymarket.com/event/${position.eventSlug}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-poly-blue hover:underline"
-                            >
-                              {(position.title || 'Unknown Market').slice(0, 40)}
-                            </a>
-                            <span className="text-poly-muted ml-2">({position.outcome})</span>
-                          </span>
-                          {position.marketResolved && (
-                            <span className="text-xs px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded">
-                              Resolved
+                  return displayPositions.slice(0, 50).map((position) => {
+                    const isExpanded = expandedPositions.has(position.positionKey)
+                    const hasMultipleFills = position.fillCount > 1
+                    const toggleExpand = () => {
+                      setExpandedPositions(prev => {
+                        const next = new Set(prev)
+                        if (next.has(position.positionKey)) {
+                          next.delete(position.positionKey)
+                        } else {
+                          next.add(position.positionKey)
+                        }
+                        return next
+                      })
+                    }
+
+                    return (
+                      <React.Fragment key={position.positionKey}>
+                        <tr
+                          className={`border-t border-poly-border ${hasMultipleFills ? 'cursor-pointer' : ''} hover:bg-poly-border/30 ${isExpanded ? 'bg-poly-border/20' : ''}`}
+                          onClick={hasMultipleFills ? toggleExpand : undefined}
+                        >
+                          <td className="p-3">
+                            <div className="flex items-center gap-2">
+                              {/* Expand/collapse indicator */}
+                              {hasMultipleFills ? (
+                                <span className="text-poly-muted text-xs w-4">{isExpanded ? '▼' : '▶'}</span>
+                              ) : (
+                                <span className="w-4" />
+                              )}
+                              <span className="truncate max-w-xs">
+                                <a
+                                  href={`https://polymarket.com/event/${position.eventSlug}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-poly-blue hover:underline"
+                                  onClick={(e) => e.stopPropagation()}
+                                >
+                                  {(position.title || 'Unknown Market').slice(0, 40)}
+                                </a>
+                                <span className="text-poly-muted ml-2">({position.outcome})</span>
+                              </span>
+                              {position.marketResolved && (
+                                <span className="text-xs px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded">
+                                  Resolved
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-3">
+                            <div className="flex items-center gap-1">
+                              <a
+                                href={`https://polymarket.com/profile/${position.wallet}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-poly-blue hover:underline"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {position.traderName || 'Anonymous'}
+                              </a>
+                              {position.isWhale && <span className="text-purple-400">🐋</span>}
+                              {hasMultipleFills && (
+                                <span className="text-xs px-1.5 py-0.5 bg-poly-border text-poly-muted rounded" title={`${position.fillCount} fills in this window - click to expand`}>
+                                  ×{position.fillCount}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="p-3 text-right text-poly-yellow">{position.lastFillPriceFormatted}</td>
+                          <td className="p-3 text-right">
+                            <span className={position.priceStatus === 'stale' ? 'text-orange-400' : 'text-white'}>
+                              {position.currentPriceFormatted}
                             </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="p-3">
-                        <div className="flex items-center gap-1">
-                          <a
-                            href={`https://polymarket.com/profile/${position.wallet}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-poly-blue hover:underline"
-                          >
-                            {position.traderName || 'Anonymous'}
-                          </a>
-                          {position.isWhale && <span className="text-purple-400">🐋</span>}
-                          {position.fillCount > 1 && (
-                            <span className="text-xs px-1.5 py-0.5 bg-poly-border text-poly-muted rounded" title={`${position.fillCount} fills in this window`}>
-                              ×{position.fillCount}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="p-3 text-right text-poly-yellow">{position.lastFillPriceFormatted}</td>
-                      <td className="p-3 text-right">
-                        <span className={position.priceStatus === 'stale' ? 'text-orange-400' : 'text-white'}>
-                          {position.currentPriceFormatted}
-                        </span>
-                      </td>
-                      <td className="p-3 text-right text-poly-green">{position.lastFillValueFormatted}</td>
-                      <td className="p-3 text-right">
-                        <span className="text-poly-muted">{position.positionCostFormatted}</span>
-                        <span className="text-poly-muted/50"> / </span>
-                        <span className="text-white font-medium">{position.positionValueFormatted}</span>
-                      </td>
-                      <td className="p-3 text-right text-poly-muted">{position.positionAvgPriceFormatted}</td>
-                      <td className="p-3 text-right font-medium text-white">{position.totalPayoutIfWinsFormatted}</td>
-                      <td className="p-3 text-right text-poly-muted text-xs whitespace-nowrap">
-                        {formatTimeAgo(position.lastFillTimestamp)}
-                      </td>
-                    </tr>
-                  ))
+                          </td>
+                          <td className="p-3 text-right text-poly-green">{position.lastFillValueFormatted}</td>
+                          <td className="p-3 text-right">
+                            <span className="text-poly-muted">{position.positionCostFormatted}</span>
+                            <span className="text-poly-muted/50"> / </span>
+                            <span className="text-white font-medium">{position.positionValueFormatted}</span>
+                          </td>
+                          <td className="p-3 text-right text-poly-muted">{position.positionAvgPriceFormatted}</td>
+                          <td className="p-3 text-right font-medium text-white">{position.totalPayoutIfWinsFormatted}</td>
+                          <td className="p-3 text-right text-poly-muted text-xs whitespace-nowrap">
+                            {formatTimeAgo(position.lastFillTimestamp)}
+                          </td>
+                        </tr>
+                        {/* Expanded fills sub-table */}
+                        {isExpanded && position.fills && position.fills.length > 0 && (
+                          <tr className="bg-poly-bg/50">
+                            <td colSpan={9} className="p-0">
+                              <div className="ml-8 mr-4 my-2 rounded border border-poly-border/50 overflow-hidden">
+                                <table className="w-full text-sm">
+                                  <thead className="bg-poly-border/30 text-xs">
+                                    <tr>
+                                      <th className="text-left p-2 text-poly-muted font-medium">Fill Time</th>
+                                      <th className="text-right p-2 text-poly-muted font-medium">Fill Price</th>
+                                      <th className="text-right p-2 text-poly-muted font-medium">Shares</th>
+                                      <th className="text-right p-2 text-poly-muted font-medium">Value</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {position.fills.map((fill) => (
+                                      <tr key={fill.fillId} className="border-t border-poly-border/30 hover:bg-poly-border/20">
+                                        <td className="p-2 text-poly-muted text-xs">{formatTimeAgo(fill.fillTimestamp)}</td>
+                                        <td className="p-2 text-right text-poly-yellow">{fill.fillPriceFormatted}</td>
+                                        <td className="p-2 text-right text-white">{fill.fillSizeFormatted}</td>
+                                        <td className="p-2 text-right text-poly-green">{fill.fillValueFormatted}</td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </React.Fragment>
+                    )
+                  })
                 })()}
               </tbody>
             </table>
