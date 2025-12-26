@@ -1225,7 +1225,7 @@ export async function GET(req: NextRequest) {
 
     const totalPositionsResult = await sql<{ count: number }>`
       WITH position_keys AS (
-        SELECT DISTINCT wallet, condition_id, outcome
+        SELECT DISTINCT ae.wallet, ae.condition_id, ae.outcome
         FROM alert_events ae
         LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
         WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
