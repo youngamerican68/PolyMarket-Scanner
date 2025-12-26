@@ -116,6 +116,64 @@ type AlertRow = {
   final_pnl_estimate_as_of: string | null;
 };
 
+// Phase 11: Position-aggregated row (one per wallet+market+outcome)
+// Replaces AlertRow for the main table to eliminate duplicate fills
+type PositionRow = {
+  // Position key
+  wallet: string;
+  condition_id: string;
+  outcome: string;
+  // Market info
+  title: string | null;
+  slug: string | null;
+  event_slug: string | null;
+  outcome_index: number | null;
+  // Trader info
+  trader_name: string | null;
+  trader_pseudonym: string | null;
+  is_whale: boolean;
+  whale_label: string | null;
+  whale_tier: string | null;
+  whale_category: string | null;
+  // Most recent fill info (from alert_events)
+  last_fill_price: string | null;
+  last_fill_value: string | null;
+  last_fill_timestamp: string;
+  fill_count: number;
+  // Position snapshot (from alert_events - latest fill's position data)
+  position_size: string | null;
+  position_avg_price: string | null;
+  position_current_value: string | null;
+  // Cached current price
+  cached_price: string | null;
+  price_fetched_at: string | null;
+  // Market resolution
+  market_resolved: boolean | null;
+  market_closed: boolean | null;
+  winning_outcome: string | null;
+  market_finalized_at: string | null;
+  // Final P&L
+  final_pnl: string | null;
+  final_position_found: boolean | null;
+  final_pnl_is_estimated: boolean | null;
+  final_pnl_estimate_source: string | null;
+  final_pnl_estimate_as_of: string | null;
+  // Position sync overlay (Phase 10)
+  synced_position_size: string | null;
+  synced_avg_price: string | null;
+  synced_current_value: string | null;
+  synced_payout_if_wins: string | null;
+  synced_at: string | null;
+  sync_status: string | null;
+  // Safe state model (Phase 10.1)
+  position_state: string | null;
+  last_known_position_size: string | null;
+  last_known_avg_price: string | null;
+  last_known_current_value: string | null;
+  last_known_payout_if_wins: string | null;
+  last_nonzero_at: string | null;
+};
+
 type SummaryRow = {
   total: number;
   whale_count: number;
@@ -223,6 +281,80 @@ interface FormattedAlert {
   finalPnlIsEstimated: boolean | null;
   finalPnlEstimateSource: string | null;
   finalPnlEstimateAsOf: string | null;
+}
+
+// Phase 11: Aggregated position (one per wallet+market+outcome)
+interface FormattedPosition {
+  // Position key (composite ID for React keys)
+  positionKey: string;
+  wallet: string;
+  conditionId: string;
+  outcome: string;
+  // Market info
+  title: string;
+  slug: string | null;
+  eventSlug: string | null;
+  // Trader info
+  traderName: string;
+  isWhale: boolean;
+  whaleLabel: string | null;
+  whaleTier: string | null;
+  whaleCategory: string | null;
+  // Most recent fill (for "Last Fill Price/Value/Time" columns)
+  lastFillPrice: number | null;
+  lastFillPriceFormatted: string;
+  lastFillValue: number | null;
+  lastFillValueFormatted: string;
+  lastFillTimestamp: string;
+  fillCount: number;
+  // Position snapshot (aggregated)
+  positionSize: number | null;
+  positionAvgPrice: number | null;
+  positionAvgPriceFormatted: string;
+  positionCost: number | null;
+  positionCostFormatted: string;
+  positionValue: number | null;
+  positionValueFormatted: string;
+  totalPayoutIfWins: number | null;
+  totalPayoutIfWinsFormatted: string;
+  // Current price
+  currentPrice: number | null;
+  currentPriceFormatted: string;
+  priceStatus: PriceStatus;
+  priceFetchedAt: string | null;
+  // Market resolution
+  marketResolved: boolean;
+  marketClosed: boolean;
+  winningOutcome: string | null;
+  marketFinalizedAt: string | null;
+  // Final P&L
+  finalPnl: number | null;
+  finalPositionFound: boolean | null;
+  finalPnlIsEstimated: boolean | null;
+  finalPnlEstimateSource: string | null;
+  finalPnlEstimateAsOf: string | null;
+  // Position sync overlay (Phase 10)
+  syncedPositionSize: number | null;
+  syncedAvgPrice: number | null;
+  syncedCurrentValue: number | null;
+  syncedPayoutIfWins: number | null;
+  syncedPositionCost: number | null;
+  syncedPositionCostFormatted: string;
+  syncedCurrentValueFormatted: string;
+  syncedPayoutIfWinsFormatted: string;
+  syncedAt: string | null;
+  syncStatus: string | null;
+  // Safe state model (Phase 10.1)
+  positionState: string | null;
+  lastKnownPositionSize: number | null;
+  lastKnownAvgPrice: number | null;
+  lastKnownCurrentValue: number | null;
+  lastKnownPayoutIfWins: number | null;
+  lastKnownPositionCost: number | null;
+  lastKnownPositionCostFormatted: string;
+  lastKnownCurrentValueFormatted: string;
+  lastKnownPayoutIfWinsFormatted: string;
+  lastNonzeroAt: string | null;
 }
 
 interface WalletDetail {
@@ -667,6 +799,228 @@ export async function GET(req: NextRequest) {
     });
 
     // ========================================================================
+    // Query 1b: Aggregated positions (Phase 11)
+    // One row per (wallet, condition_id, outcome) with fill count
+    // Uses 'none' filter mode only (default) - aggregation ignores whale/category filters
+    // for simplicity; the frontend filters the resulting positions
+    // ========================================================================
+
+    const positionsResult = await sql<PositionRow>`
+      WITH fill_counts AS (
+        SELECT wallet, condition_id, outcome, COUNT(*)::int as fill_count
+        FROM alert_events
+        WHERE fill_timestamp >= ${alertCutoff}::timestamptz
+          AND fill_price <= ${maxOdds}
+          AND position_current_value IS NOT NULL
+          AND position_current_value >= ${minPosition}
+          AND (
+            ${excludeCategory}::text IS NULL
+            OR ${excludeCategory} != 'crypto'
+            OR (
+              whale_category IS DISTINCT FROM 'crypto'
+              AND title NOT ILIKE '%bitcoin%'
+              AND title NOT ILIKE '%btc%'
+              AND title NOT ILIKE '%ethereum%'
+              AND title NOT ILIKE '%eth %'
+              AND title NOT ILIKE '%solana%'
+              AND title NOT ILIKE '%sol %'
+              AND title NOT ILIKE '%crypto%'
+              AND title NOT ILIKE '%token%'
+              AND title NOT ILIKE '%market cap%'
+              AND title NOT ILIKE '%fdv%'
+              AND title NOT ILIKE '%defi%'
+            )
+          )
+        GROUP BY wallet, condition_id, outcome
+      ),
+      latest_fills AS (
+        SELECT DISTINCT ON (ae.wallet, ae.condition_id, ae.outcome)
+          ae.wallet, ae.condition_id, ae.outcome,
+          ae.title, ae.slug, ae.event_slug, ae.outcome_index,
+          ae.trader_name, ae.trader_pseudonym,
+          ae.is_whale, ae.whale_label, ae.whale_tier, ae.whale_category,
+          ae.fill_price as last_fill_price,
+          ae.fill_value_usd as last_fill_value,
+          ae.fill_timestamp as last_fill_timestamp,
+          ae.position_size, ae.position_avg_price, ae.position_current_value
+        FROM alert_events ae
+        WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
+          AND ae.fill_price <= ${maxOdds}
+          AND ae.position_current_value IS NOT NULL
+          AND ae.position_current_value >= ${minPosition}
+          AND (
+            ${excludeCategory}::text IS NULL
+            OR ${excludeCategory} != 'crypto'
+            OR (
+              ae.whale_category IS DISTINCT FROM 'crypto'
+              AND ae.title NOT ILIKE '%bitcoin%'
+              AND ae.title NOT ILIKE '%btc%'
+              AND ae.title NOT ILIKE '%ethereum%'
+              AND ae.title NOT ILIKE '%eth %'
+              AND ae.title NOT ILIKE '%solana%'
+              AND ae.title NOT ILIKE '%sol %'
+              AND ae.title NOT ILIKE '%crypto%'
+              AND ae.title NOT ILIKE '%token%'
+              AND ae.title NOT ILIKE '%market cap%'
+              AND ae.title NOT ILIKE '%fdv%'
+              AND ae.title NOT ILIKE '%defi%'
+            )
+          )
+        ORDER BY ae.wallet, ae.condition_id, ae.outcome, ae.fill_timestamp DESC
+      )
+      SELECT
+        lf.wallet, lf.condition_id, lf.outcome,
+        lf.title, lf.slug, lf.event_slug, lf.outcome_index,
+        lf.trader_name, lf.trader_pseudonym,
+        lf.is_whale, lf.whale_label, lf.whale_tier, lf.whale_category,
+        lf.last_fill_price::text as last_fill_price,
+        lf.last_fill_value::text as last_fill_value,
+        lf.last_fill_timestamp,
+        fc.fill_count,
+        lf.position_size::text as position_size,
+        lf.position_avg_price::text as position_avg_price,
+        lf.position_current_value::text as position_current_value,
+        opc.price::text as cached_price,
+        opc.fetched_at::text as price_fetched_at,
+        ms.market_resolved, ms.market_closed, ms.winning_outcome,
+        ms.finalized_at::text as market_finalized_at,
+        mfp.final_pnl::text as final_pnl,
+        mfp.position_found as final_position_found,
+        mfp.is_estimated as final_pnl_is_estimated,
+        mfp.estimate_source as final_pnl_estimate_source,
+        mfp.estimate_as_of::text as final_pnl_estimate_as_of,
+        pso.synced_position_size::text as synced_position_size,
+        pso.synced_avg_price::text as synced_avg_price,
+        pso.synced_current_value::text as synced_current_value,
+        pso.synced_payout_if_wins::text as synced_payout_if_wins,
+        pso.synced_at::text as synced_at,
+        pso.sync_status,
+        pso.position_state,
+        pso.last_known_position_size::text as last_known_position_size,
+        pso.last_known_avg_price::text as last_known_avg_price,
+        pso.last_known_current_value::text as last_known_current_value,
+        pso.last_known_payout_if_wins::text as last_known_payout_if_wins,
+        pso.last_nonzero_at::text as last_nonzero_at
+      FROM latest_fills lf
+      INNER JOIN fill_counts fc ON lf.wallet = fc.wallet AND lf.condition_id = fc.condition_id AND lf.outcome = fc.outcome
+      LEFT JOIN outcome_price_cache opc ON lf.condition_id = opc.condition_id AND lf.outcome = opc.outcome
+      LEFT JOIN market_status ms ON lf.condition_id = ms.condition_id
+      LEFT JOIN market_final_pnl mfp ON lf.condition_id = mfp.condition_id AND lf.wallet = mfp.wallet AND lf.outcome = mfp.outcome
+      LEFT JOIN position_sync_overlay pso ON lf.condition_id = pso.condition_id AND lf.wallet = pso.wallet AND lf.outcome = pso.outcome
+      WHERE (
+        CASE WHEN ${includeResolved}::boolean = TRUE
+          THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL AND TRIM(ms.winning_outcome) != ''
+          ELSE ms.market_resolved IS NOT TRUE OR ms.winning_outcome IS NULL OR TRIM(ms.winning_outcome) = ''
+        END
+      )
+      ORDER BY lf.last_fill_timestamp DESC
+      LIMIT ${pageSize} OFFSET ${offset}
+    `;
+
+    // Format positions
+    const formattedPositions: FormattedPosition[] = positionsResult.rows.map((row) => {
+      const lastFillPrice = parseNumeric(row.last_fill_price);
+      const lastFillValue = parseNumeric(row.last_fill_value);
+      const positionSize = parseNumeric(row.position_size);
+      const positionAvgPrice = parseNumeric(row.position_avg_price);
+      const cachedPrice = parseNumeric(row.cached_price);
+
+      // Cost = shares × avgEntry
+      const positionCost = (positionSize !== null && positionAvgPrice !== null)
+        ? positionSize * positionAvgPrice
+        : null;
+
+      // Value = shares × currentPrice
+      const positionValue = (positionSize !== null && cachedPrice !== null)
+        ? positionSize * cachedPrice
+        : null;
+
+      // Payout = shares (each share pays $1)
+      const totalPayoutIfWins = positionSize;
+
+      // Position sync overlay
+      const syncedPositionSize = parseNumeric(row.synced_position_size);
+      const syncedAvgPrice = parseNumeric(row.synced_avg_price);
+      const syncedCurrentValue = parseNumeric(row.synced_current_value);
+      const syncedPayoutIfWins = parseNumeric(row.synced_payout_if_wins);
+      const syncedPositionCost = (syncedPositionSize !== null && syncedAvgPrice !== null)
+        ? syncedPositionSize * syncedAvgPrice
+        : null;
+
+      // Safe state model
+      const lastKnownPositionSize = parseNumeric(row.last_known_position_size);
+      const lastKnownAvgPrice = parseNumeric(row.last_known_avg_price);
+      const lastKnownCurrentValue = parseNumeric(row.last_known_current_value);
+      const lastKnownPayoutIfWins = parseNumeric(row.last_known_payout_if_wins);
+      const lastKnownPositionCost = (lastKnownPositionSize !== null && lastKnownAvgPrice !== null)
+        ? lastKnownPositionSize * lastKnownAvgPrice
+        : null;
+
+      return {
+        positionKey: `${row.wallet}:${row.condition_id}:${row.outcome}`,
+        wallet: row.wallet,
+        conditionId: row.condition_id,
+        outcome: row.outcome,
+        title: row.title || row.slug || row.event_slug || row.condition_id,
+        slug: row.slug,
+        eventSlug: row.event_slug,
+        traderName: row.trader_name || row.trader_pseudonym || 'Anonymous',
+        isWhale: row.is_whale,
+        whaleLabel: row.whale_label,
+        whaleTier: row.whale_tier,
+        whaleCategory: row.whale_category,
+        lastFillPrice,
+        lastFillPriceFormatted: formatOdds(lastFillPrice),
+        lastFillValue,
+        lastFillValueFormatted: formatMoney(lastFillValue),
+        lastFillTimestamp: row.last_fill_timestamp,
+        fillCount: row.fill_count,
+        positionSize,
+        positionAvgPrice,
+        positionAvgPriceFormatted: formatOdds(positionAvgPrice),
+        positionCost,
+        positionCostFormatted: positionCost !== null ? formatMoney(positionCost) : '—',
+        positionValue,
+        positionValueFormatted: positionValue !== null ? formatMoney(positionValue) : '—',
+        totalPayoutIfWins,
+        totalPayoutIfWinsFormatted: totalPayoutIfWins !== null ? formatMoney(totalPayoutIfWins) : '—',
+        currentPrice: cachedPrice,
+        currentPriceFormatted: cachedPrice !== null ? formatOdds(cachedPrice) : 'N/A',
+        priceStatus: getPriceStatus(row.price_fetched_at),
+        priceFetchedAt: row.price_fetched_at,
+        marketResolved: row.market_resolved ?? false,
+        marketClosed: row.market_closed ?? false,
+        winningOutcome: row.winning_outcome ?? null,
+        marketFinalizedAt: row.market_finalized_at ?? null,
+        finalPnl: row.final_pnl !== null ? parseFloat(row.final_pnl) : null,
+        finalPositionFound: row.final_position_found ?? null,
+        finalPnlIsEstimated: row.final_pnl_is_estimated ?? null,
+        finalPnlEstimateSource: row.final_pnl_estimate_source ?? null,
+        finalPnlEstimateAsOf: row.final_pnl_estimate_as_of ?? null,
+        syncedPositionSize,
+        syncedAvgPrice,
+        syncedCurrentValue,
+        syncedPayoutIfWins,
+        syncedPositionCost,
+        syncedPositionCostFormatted: syncedPositionCost !== null ? formatMoney(syncedPositionCost) : '—',
+        syncedCurrentValueFormatted: syncedCurrentValue !== null ? formatMoney(syncedCurrentValue) : '—',
+        syncedPayoutIfWinsFormatted: syncedPayoutIfWins !== null ? formatMoney(syncedPayoutIfWins) : '—',
+        syncedAt: row.synced_at ?? null,
+        syncStatus: row.sync_status ?? null,
+        positionState: row.position_state ?? null,
+        lastKnownPositionSize,
+        lastKnownAvgPrice,
+        lastKnownCurrentValue,
+        lastKnownPayoutIfWins,
+        lastKnownPositionCost,
+        lastKnownPositionCostFormatted: lastKnownPositionCost !== null ? formatMoney(lastKnownPositionCost) : '—',
+        lastKnownCurrentValueFormatted: lastKnownCurrentValue !== null ? formatMoney(lastKnownCurrentValue) : '—',
+        lastKnownPayoutIfWinsFormatted: lastKnownPayoutIfWins !== null ? formatMoney(lastKnownPayoutIfWins) : '—',
+        lastNonzeroAt: row.last_nonzero_at ?? null,
+      };
+    });
+
+    // ========================================================================
     // Query 2: Summary statistics (also gives us totalAlerts for pagination)
     // ========================================================================
 
@@ -746,6 +1100,50 @@ export async function GET(req: NextRequest) {
 
     const summary = summaryResult.rows[0] || { total: 0, whale_count: 0, unique_wallets: 0 };
     const totalAlerts = summary.total;
+
+    // ========================================================================
+    // Query 2b: Total positions count (for pagination)
+    // Uses same filters as Query 1b (excludeCategory only, no whale/category filters)
+    // ========================================================================
+
+    const totalPositionsResult = await sql<{ count: number }>`
+      WITH position_keys AS (
+        SELECT DISTINCT wallet, condition_id, outcome
+        FROM alert_events ae
+        LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
+        WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
+          AND ae.fill_price <= ${maxOdds}
+          AND ae.position_current_value IS NOT NULL
+          AND ae.position_current_value >= ${minPosition}
+          AND (
+            ${excludeCategory}::text IS NULL
+            OR ${excludeCategory} != 'crypto'
+            OR (
+              ae.whale_category IS DISTINCT FROM 'crypto'
+              AND ae.title NOT ILIKE '%bitcoin%'
+              AND ae.title NOT ILIKE '%btc%'
+              AND ae.title NOT ILIKE '%ethereum%'
+              AND ae.title NOT ILIKE '%eth %'
+              AND ae.title NOT ILIKE '%solana%'
+              AND ae.title NOT ILIKE '%sol %'
+              AND ae.title NOT ILIKE '%crypto%'
+              AND ae.title NOT ILIKE '%token%'
+              AND ae.title NOT ILIKE '%market cap%'
+              AND ae.title NOT ILIKE '%fdv%'
+              AND ae.title NOT ILIKE '%defi%'
+            )
+          )
+          AND (
+            CASE WHEN ${includeResolved}::boolean = TRUE
+              THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL AND TRIM(ms.winning_outcome) != ''
+              ELSE ms.market_resolved IS NOT TRUE OR ms.winning_outcome IS NULL OR TRIM(ms.winning_outcome) = ''
+            END
+          )
+      )
+      SELECT COUNT(*)::int as count FROM position_keys
+    `;
+
+    const totalPositions = totalPositionsResult.rows[0]?.count ?? 0;
 
     // ========================================================================
     // Query 3: Convergence detection
@@ -1665,6 +2063,9 @@ export async function GET(req: NextRequest) {
         maxGroups,
         maxWalletsPerGroup,
         totalAlerts,
+        // Phase 11: Position aggregation
+        totalPositions,
+        totalPositionPages: Math.ceil(totalPositions / pageSize),
         whaleAlerts: summary.whale_count,
         uniqueWallets: summary.unique_wallets,
         page,
@@ -1674,6 +2075,8 @@ export async function GET(req: NextRequest) {
         positionSyncEnabled: POSITION_SYNC_ENABLED,
       },
       alertsPage: formattedAlerts,
+      // Phase 11: Aggregated positions (one per wallet+market+outcome)
+      positionsPage: formattedPositions,
       convergence: {
         windowHours: convergenceWindowHours,
         thresholds,

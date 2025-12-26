@@ -55,6 +55,77 @@ interface AlertRow {
   finalPnlEstimateAsOf: string | null
 }
 
+// Phase 11: Aggregated position row (one per wallet+market+outcome)
+interface PositionRow {
+  positionKey: string
+  wallet: string
+  conditionId: string
+  outcome: string
+  title: string
+  slug: string | null
+  eventSlug: string | null
+  traderName: string
+  isWhale: boolean
+  whaleLabel: string | null
+  whaleTier: string | null
+  whaleCategory: string | null
+  // Most recent fill
+  lastFillPrice: number | null
+  lastFillPriceFormatted: string
+  lastFillValue: number | null
+  lastFillValueFormatted: string
+  lastFillTimestamp: string
+  fillCount: number
+  // Position snapshot
+  positionSize: number | null
+  positionAvgPrice: number | null
+  positionAvgPriceFormatted: string
+  positionCost: number | null
+  positionCostFormatted: string
+  positionValue: number | null
+  positionValueFormatted: string
+  totalPayoutIfWins: number | null
+  totalPayoutIfWinsFormatted: string
+  // Current price
+  currentPrice: number | null
+  currentPriceFormatted: string
+  priceStatus: PriceStatus
+  priceFetchedAt: string | null
+  // Market resolution
+  marketResolved: boolean
+  marketClosed: boolean
+  winningOutcome: string | null
+  marketFinalizedAt: string | null
+  // Final P&L
+  finalPnl: number | null
+  finalPositionFound: boolean | null
+  finalPnlIsEstimated: boolean | null
+  finalPnlEstimateSource: string | null
+  finalPnlEstimateAsOf: string | null
+  // Position sync overlay (Phase 10)
+  syncedPositionSize: number | null
+  syncedAvgPrice: number | null
+  syncedCurrentValue: number | null
+  syncedPayoutIfWins: number | null
+  syncedPositionCost: number | null
+  syncedPositionCostFormatted: string
+  syncedCurrentValueFormatted: string
+  syncedPayoutIfWinsFormatted: string
+  syncedAt: string | null
+  syncStatus: string | null
+  // Safe state model (Phase 10.1)
+  positionState: string | null
+  lastKnownPositionSize: number | null
+  lastKnownAvgPrice: number | null
+  lastKnownCurrentValue: number | null
+  lastKnownPayoutIfWins: number | null
+  lastKnownPositionCost: number | null
+  lastKnownPositionCostFormatted: string
+  lastKnownCurrentValueFormatted: string
+  lastKnownPayoutIfWinsFormatted: string
+  lastNonzeroAt: string | null
+}
+
 interface ConvergenceWallet {
   wallet: string
   traderName: string
@@ -143,6 +214,9 @@ interface ReportMeta {
   minPosition: number
   maxOdds: number
   totalAlerts: number
+  // Phase 11: Position aggregation
+  totalPositions: number
+  totalPositionPages: number
   whaleAlerts: number
   uniqueWallets: number
   page: number
@@ -203,6 +277,8 @@ interface ReportData {
   serverNow: string
   meta: ReportMeta
   alertsPage: AlertRow[]
+  // Phase 11: Aggregated positions (one per wallet+market+outcome)
+  positionsPage: PositionRow[]
   convergence: {
     totalGroups: number
     groups: ConvergenceGroup[]
@@ -829,9 +905,12 @@ export default function ReportPage() {
 
   if (!report) return null
 
-  const { meta, alertsPage, convergence, largeSingleBets } = report
+  const { meta, alertsPage, positionsPage, convergence, largeSingleBets } = report
   const whaleAlerts = alertsPage.filter(a => a.isWhale)
   const regularAlerts = alertsPage.filter(a => !a.isWhale)
+  // Phase 11: Filter positions for whale/non-whale display
+  const whalePositions = positionsPage.filter(p => p.isWhale)
+  const regularPositions = positionsPage.filter(p => !p.isWhale)
 
   return (
     <div className="space-y-6">
@@ -1312,10 +1391,10 @@ export default function ReportPage() {
         </section>
       )}
 
-      {/* All Trades Table */}
+      {/* All Positions Table (Phase 11: Aggregated by wallet+market+outcome) */}
       <section className="space-y-4">
         <h2 className="text-xl font-bold">
-          {whalesOnly ? 'All Whale Trades' : 'All Longshot Trades'}
+          {whalesOnly ? 'All Whale Positions' : 'All Longshot Positions'}
         </h2>
         <div className="bg-poly-card rounded-lg border border-poly-border overflow-hidden">
           <div className="overflow-x-auto">
@@ -1324,13 +1403,13 @@ export default function ReportPage() {
                 <tr>
                   <th className="text-left p-3 text-poly-muted font-medium">Market</th>
                   <th className="text-left p-3 text-poly-muted font-medium">Trader</th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="Price of this specific trade (not total position)">
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Price of most recent fill">
                     Last Fill Price
                   </th>
                   <th className="text-right p-3 text-poly-muted font-medium" title="Current market price (cached, refreshes every 10min)">
                     Current Price
                   </th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="USD value of this specific trade (not total position)">
+                  <th className="text-right p-3 text-poly-muted font-medium" title="USD value of most recent fill">
                     Last Fill Value
                   </th>
                   <th className="text-right p-3 text-poly-muted font-medium" title="Cost basis (shares × avg entry) / Current value (shares × current price)">
@@ -1349,53 +1428,72 @@ export default function ReportPage() {
               </thead>
               <tbody>
                 {(() => {
-                  const displayAlerts = whalesOnly ? alertsPage : regularAlerts.length > 0 ? regularAlerts : alertsPage
-                  if (displayAlerts.length === 0) {
+                  const displayPositions = whalesOnly ? whalePositions : regularPositions.length > 0 ? regularPositions : positionsPage
+                  if (displayPositions.length === 0) {
                     return (
                       <tr>
                         <td className="p-4 text-center text-poly-muted" colSpan={9}>
-                          No alerts found matching filters.
+                          No positions found matching filters.
                         </td>
                       </tr>
                     )
                   }
-                  return displayAlerts.slice(0, 50).map((alert) => (
-                    <tr key={alert.id} className="border-t border-poly-border hover:bg-poly-border/30">
+                  return displayPositions.slice(0, 50).map((position) => (
+                    <tr key={position.positionKey} className="border-t border-poly-border hover:bg-poly-border/30">
                       <td className="p-3">
                         <div className="flex items-center gap-2">
                           <span className="truncate max-w-xs">
                             <a
-                              href={`https://polymarket.com/event/${alert.eventSlug}`}
+                              href={`https://polymarket.com/event/${position.eventSlug}`}
                               target="_blank"
                               rel="noopener noreferrer"
                               className="text-poly-blue hover:underline"
                             >
-                              {(alert.title || 'Unknown Market').slice(0, 40)}
+                              {(position.title || 'Unknown Market').slice(0, 40)}
                             </a>
-                            <span className="text-poly-muted ml-2">({alert.outcome})</span>
+                            <span className="text-poly-muted ml-2">({position.outcome})</span>
                           </span>
-                          <ResolvedBadge alert={alert} />
+                          {position.marketResolved && (
+                            <span className="text-xs px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded">
+                              Resolved
+                            </span>
+                          )}
                         </div>
                       </td>
                       <td className="p-3">
-                        <a
-                          href={`https://polymarket.com/profile/${alert.wallet}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-poly-blue hover:underline"
-                        >
-                          {alert.traderName || alert.traderPseudonym || 'Anonymous'}
-                        </a>
-                        {alert.isWhale && <span className="ml-1 text-purple-400">🐋</span>}
+                        <div className="flex items-center gap-1">
+                          <a
+                            href={`https://polymarket.com/profile/${position.wallet}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-poly-blue hover:underline"
+                          >
+                            {position.traderName || 'Anonymous'}
+                          </a>
+                          {position.isWhale && <span className="text-purple-400">🐋</span>}
+                          {position.fillCount > 1 && (
+                            <span className="text-xs px-1.5 py-0.5 bg-poly-border text-poly-muted rounded" title={`${position.fillCount} fills in this window`}>
+                              ×{position.fillCount}
+                            </span>
+                          )}
+                        </div>
                       </td>
-                      <td className="p-3 text-right text-poly-yellow">{alert.fillPriceFormatted}</td>
-                      <td className="p-3 text-right"><PriceDisplay alert={alert} /></td>
-                      <td className="p-3 text-right text-poly-green">{alert.fillValueFormatted}</td>
-                      <td className="p-3 text-right"><PositionCostValue alert={alert} /></td>
-                      <td className="p-3 text-right text-poly-muted">{alert.positionAvgPriceFormatted}</td>
-                      <td className="p-3 text-right font-medium"><PayoutIfWinsCell alert={alert} /></td>
+                      <td className="p-3 text-right text-poly-yellow">{position.lastFillPriceFormatted}</td>
+                      <td className="p-3 text-right">
+                        <span className={position.priceStatus === 'stale' ? 'text-orange-400' : 'text-white'}>
+                          {position.currentPriceFormatted}
+                        </span>
+                      </td>
+                      <td className="p-3 text-right text-poly-green">{position.lastFillValueFormatted}</td>
+                      <td className="p-3 text-right">
+                        <span className="text-poly-muted">{position.positionCostFormatted}</span>
+                        <span className="text-poly-muted/50"> / </span>
+                        <span className="text-white font-medium">{position.positionValueFormatted}</span>
+                      </td>
+                      <td className="p-3 text-right text-poly-muted">{position.positionAvgPriceFormatted}</td>
+                      <td className="p-3 text-right font-medium text-white">{position.totalPayoutIfWinsFormatted}</td>
                       <td className="p-3 text-right text-poly-muted text-xs whitespace-nowrap">
-                        {formatTimeAgo(alert.fillTimestamp)}
+                        {formatTimeAgo(position.lastFillTimestamp)}
                       </td>
                     </tr>
                   ))
@@ -1405,7 +1503,7 @@ export default function ReportPage() {
           </div>
           <div className="px-3 py-2 border-t border-poly-border flex items-center justify-between">
             <span className="text-xs text-poly-muted">
-              Showing {alertsPage.length} of {meta.totalAlerts} alerts
+              Showing {positionsPage.length} of {meta.totalPositions} positions
             </span>
             <div className="flex items-center gap-2">
               <button
@@ -1423,18 +1521,18 @@ export default function ReportPage() {
                 ‹ Prev
               </button>
               <span className="text-sm px-2">
-                Page <span className="font-bold">{meta.page}</span> of <span className="font-bold">{meta.totalPages}</span>
+                Page <span className="font-bold">{meta.page}</span> of <span className="font-bold">{meta.totalPositionPages}</span>
               </span>
               <button
                 onClick={() => goToPage(meta.page + 1)}
-                disabled={meta.page >= meta.totalPages}
+                disabled={meta.page >= meta.totalPositionPages}
                 className="px-2 py-1 text-xs bg-poly-card border border-poly-border rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-poly-border"
               >
                 Next ›
               </button>
               <button
-                onClick={() => goToPage(meta.totalPages)}
-                disabled={meta.page >= meta.totalPages}
+                onClick={() => goToPage(meta.totalPositionPages)}
+                disabled={meta.page >= meta.totalPositionPages}
                 className="px-2 py-1 text-xs bg-poly-card border border-poly-border rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-poly-border"
               >
                 »»
