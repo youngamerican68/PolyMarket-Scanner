@@ -173,3 +173,67 @@ To monitor a new job:
 - Slack/webhook notifications (not implemented yet)
 - Per-job alert thresholds
 - Historical health dashboards
+
+---
+
+## Scheduled Job Triggers (GitHub Actions)
+
+All recurring jobs are triggered via GitHub Actions workflows, not Vercel crons.
+
+### Architecture
+
+- **Scheduler**: GitHub Actions (`.github/workflows/*.yml`)
+- **Endpoints**: Vercel-hosted Next.js API routes
+- **Method**: GET (all job endpoints accept GET requests)
+- **Auth**: Bearer token via `Authorization: Bearer $CRON_SECRET` header
+
+### Required GitHub Secrets
+
+Set these in GitHub → Settings → Secrets and variables → Actions:
+
+| Secret | Description |
+|--------|-------------|
+| `CRON_SECRET` | Bearer token for job endpoint auth (same as Vercel env var) |
+| `COLLECT_TRADES_URL` | `https://poly-market-scanner.vercel.app/api/collect-trades` |
+| `REFRESH_PRICES_URL` | `https://poly-market-scanner.vercel.app/api/jobs/refresh-prices` |
+| `REFRESH_BASELINES_URL` | `https://poly-market-scanner.vercel.app/api/jobs/refresh-baselines` |
+| `SYNC_POSITIONS_URL` | `https://poly-market-scanner.vercel.app/api/jobs/sync-positions` |
+
+**Note**: `collect-trades` is at `/api/collect-trades`, other jobs are under `/api/jobs/`.
+
+**Important**: Use the stable primary domain (`poly-market-scanner.vercel.app`), not deployment-specific URLs.
+
+### Workflows
+
+| Workflow | Schedule | Endpoint |
+|----------|----------|----------|
+| `collect-trades.yml` | Every 5 min | `/api/collect-trades` |
+| `refresh-prices.yml` | Every 10 min | `/api/jobs/refresh-prices` |
+| `sync-positions.yml` | Every 15 min | `/api/jobs/sync-positions` |
+| `refresh-baselines.yml` | Daily 2 AM UTC | `/api/jobs/refresh-baselines` |
+
+### Expected HTTP Status Codes
+
+| Status | Meaning |
+|--------|---------|
+| 200 | Success |
+| 204 | Success (no content) |
+| 401 | Missing or invalid `CRON_SECRET` |
+| 409 | Job already running (advisory lock prevents overlap) |
+| 405 | Wrong HTTP method (should be GET) |
+| 500 | Server error - check Vercel function logs |
+
+### Troubleshooting
+
+**405 Method Not Allowed:**
+- Ensure workflows use GET (no `-X POST`)
+
+**401 Unauthorized:**
+- Verify `CRON_SECRET` matches between GitHub secrets and Vercel env vars
+
+**Workflow not running on schedule:**
+- Scheduled workflows only run from the **default branch**
+- Verify fixes are merged to the default branch
+
+**Empty URL error:**
+- Add the missing URL secret in GitHub → Settings → Secrets and variables → Actions
