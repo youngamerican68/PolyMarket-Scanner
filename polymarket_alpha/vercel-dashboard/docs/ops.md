@@ -28,8 +28,10 @@ Minimal heartbeat monitoring to catch silent job failures. This supports future 
 
 | Job Name | Schedule | Stale After |
 |----------|----------|-------------|
-| `refresh-baselines` | Every 6 hours | 12 hours |
-| `generate-digest` | Daily (when implemented) | 48 hours |
+| `collect-trades` | Every 5 minutes | 10 minutes |
+| `refresh-prices` | Every 10 minutes | 20 minutes |
+| `sync-positions` | Every 15 minutes | 30 minutes |
+| `refresh-baselines` | Daily | 48 hours |
 
 ### Response Format
 
@@ -193,11 +195,22 @@ Set these in GitHub → Settings → Secrets and variables → Actions:
 
 | Secret | Description |
 |--------|-------------|
+| `POSTGRES_URL` | Neon connection string for job_runs logging (see below) |
 | `CRON_SECRET` | Bearer token for job endpoint auth (same as Vercel env var) |
 | `COLLECT_TRADES_URL` | `https://poly-market-scanner.vercel.app/api/collect-trades` |
 | `REFRESH_PRICES_URL` | `https://poly-market-scanner.vercel.app/api/jobs/refresh-prices` |
 | `REFRESH_BASELINES_URL` | `https://poly-market-scanner.vercel.app/api/jobs/refresh-baselines` |
 | `SYNC_POSITIONS_URL` | `https://poly-market-scanner.vercel.app/api/jobs/sync-positions` |
+
+#### Getting POSTGRES_URL from Neon
+
+1. Go to [Neon Console](https://console.neon.tech/)
+2. Select your project and branch (same one used by Vercel)
+3. Click **Connect** → Copy the connection string
+4. Ensure it includes `sslmode=require` (Neon requires SSL)
+5. Add as GitHub secret: `POSTGRES_URL`
+
+**Format:** `postgresql://user:password@host/database?sslmode=require`
 
 **Note**: `collect-trades` is at `/api/collect-trades`, other jobs are under `/api/jobs/`.
 
@@ -211,6 +224,14 @@ Set these in GitHub → Settings → Secrets and variables → Actions:
 | `refresh-prices.yml` | Every 10 min | `/api/jobs/refresh-prices` |
 | `sync-positions.yml` | Every 15 min | `/api/jobs/sync-positions` |
 | `refresh-baselines.yml` | Daily 2 AM UTC | `/api/jobs/refresh-baselines` |
+
+### Dependencies for GitHub Actions
+
+The `collect-trades` workflow logs job runs directly to Neon Postgres. Required packages (installed via `npm ci`):
+- `pg` - PostgreSQL client for direct DB access
+- `tsx` - TypeScript execution for the logger script
+
+These are already in `package.json`. The workflow runs `npm ci` before executing the logger.
 
 ### Expected HTTP Status Codes
 
@@ -238,3 +259,34 @@ Set these in GitHub → Settings → Secrets and variables → Actions:
 
 **Empty URL error:**
 - Add the missing URL secret in GitHub → Settings → Secrets and variables → Actions
+
+### Verifying Job Runs in Neon
+
+After a workflow runs, verify it was logged to `job_runs`:
+
+```sql
+-- View most recent 10 job runs (all jobs)
+SELECT job_name, status, started_at, finished_at, duration_ms,
+       metrics->>'source' as source
+FROM public.job_runs
+ORDER BY started_at DESC
+LIMIT 10;
+
+-- View last 5 collect-trades runs with GitHub context
+SELECT id, status, started_at, finished_at,
+       metrics->>'source' as source,
+       metrics->'gha'->>'workflow_run_id' as gha_run_id,
+       metrics->'gha'->>'git_sha' as git_sha
+FROM public.job_runs
+WHERE job_name = 'collect-trades'
+ORDER BY started_at DESC
+LIMIT 5;
+```
+
+The `metrics` JSONB column includes:
+- `source`: Either `"github-actions"` (GHA-logged) or absent (Vercel-logged)
+- `gha.git_sha`: Short commit hash (8 chars)
+- `gha.workflow_run_id`: GitHub Actions run ID
+- `gha.run_number`: Sequential run number
+- `gha.workflow`: Workflow name
+- `gha.actor`: GitHub user who triggered the run
