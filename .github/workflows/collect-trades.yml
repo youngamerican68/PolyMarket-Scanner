@@ -15,7 +15,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+    timeout-minutes: 3
     steps:
       - name: Trigger collect-trades
         env:
@@ -28,15 +28,27 @@ jobs:
             exit 1
           fi
 
+          # Fail fast if CRON_SECRET is missing
+          if [ -z "$CRON_SECRET" ]; then
+            echo "ERROR: CRON_SECRET is empty"
+            exit 1
+          fi
+
           # Log target host (without exposing full URL) for audit
-          echo "Target host: $(python3 -c "import os; from urllib.parse import urlparse; print(urlparse(os.environ.get('COLLECT_TRADES_URL','')).netloc)")"
+          echo "Target host: $(python3 -c 'import os; from urllib.parse import urlparse; print(urlparse(os.environ.get("COLLECT_TRADES_URL","")).netloc)')"
 
           # Make request and capture both status code and body
-          HTTP_RESPONSE=$(curl --silent --show-error --write-out "HTTPSTATUS:%{http_code}" \
+          CURL_EXIT=0
+          HTTP_RESPONSE=$(curl --silent --show-error --write-out "\nHTTPSTATUS:%{http_code}" \
             --max-time 30 \
             --retry 3 --retry-all-errors --retry-delay 2 \
             -X GET "$COLLECT_TRADES_URL" \
-            -H "Authorization: Bearer $CRON_SECRET")
+            -H "Authorization: Bearer $CRON_SECRET") || CURL_EXIT=$?
+
+          if [ "$CURL_EXIT" -ne 0 ]; then
+            echo "curl failed with exit code $CURL_EXIT"
+            exit 1
+          fi
 
           # Extract body and status code
           HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed -e 's/HTTPSTATUS\:.*//g')
