@@ -1,21 +1,3 @@
 {
-  "framework": "nextjs",
-  "crons": [
-    {
-      "path": "/api/jobs/sync-positions",
-      "schedule": "*/15 * * * *"
-    },
-    {
-      "path": "/api/jobs/refresh-prices",
-      "schedule": "*/10 * * * *"
-    },
-    {
-      "path": "/api/jobs/refresh-baselines",
-      "schedule": "0 12 * * *"
-    },
-    {
-      "path": "/api/collect-trades",
-      "schedule": "*/15 * * * *"
-    }
-  ]
+  "framework": "nextjs"
 }
