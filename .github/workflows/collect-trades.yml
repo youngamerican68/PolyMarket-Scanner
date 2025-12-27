@@ -22,16 +22,21 @@ jobs:
           COLLECT_TRADES_URL: ${{ secrets.COLLECT_TRADES_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
+          # Fail fast if URL secret is missing
+          if [ -z "$COLLECT_TRADES_URL" ]; then
+            echo "ERROR: COLLECT_TRADES_URL is empty"
+            exit 1
+          fi
+
           # Log target host (without exposing full URL) for audit
           echo "Target host: $(python3 -c "import os; from urllib.parse import urlparse; print(urlparse(os.environ.get('COLLECT_TRADES_URL','')).netloc)")"
 
           # Make request and capture both status code and body
-          HTTP_RESPONSE=$(curl --silent --write-out "HTTPSTATUS:%{http_code}" \
+          HTTP_RESPONSE=$(curl --silent --show-error --write-out "HTTPSTATUS:%{http_code}" \
             --max-time 30 \
             --retry 3 --retry-all-errors --retry-delay 2 \
-            -X POST "$COLLECT_TRADES_URL" \
-            -H "Authorization: Bearer $CRON_SECRET" \
-            -H "Content-Type: application/json")
+            -X GET "$COLLECT_TRADES_URL" \
+            -H "Authorization: Bearer $CRON_SECRET")
 
           # Extract body and status code
           HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed -e 's/HTTPSTATUS\:.*//g')

@@ -23,17 +23,22 @@ jobs:
           REFRESH_BASELINES_URL: ${{ secrets.REFRESH_BASELINES_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
+          # Fail fast if URL secret is missing
+          if [ -z "$REFRESH_BASELINES_URL" ]; then
+            echo "ERROR: REFRESH_BASELINES_URL is empty"
+            exit 1
+          fi
+
           # Log target host (without exposing full URL) for audit
           echo "Target host: $(python3 -c "import os; from urllib.parse import urlparse; print(urlparse(os.environ.get('REFRESH_BASELINES_URL','')).netloc)")"
 
           # Make request and capture both status code and body
-          HTTP_RESPONSE=$(curl --silent --write-out "HTTPSTATUS:%{http_code}" \
+          HTTP_RESPONSE=$(curl --silent --show-error --write-out "HTTPSTATUS:%{http_code}" \
             --max-time 300 \
             --retry 2 --retry-delay 10 \
-            -X POST "$REFRESH_BASELINES_URL" \
+            -X GET "$REFRESH_BASELINES_URL" \
             -H "Authorization: Bearer $CRON_SECRET" \
-            -H "Cache-Control: no-store" \
-            -H "Content-Type: application/json")
+            -H "Cache-Control: no-store")
 
           # Extract body and status code
           HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed -e 's/HTTPSTATUS\:.*//g')
