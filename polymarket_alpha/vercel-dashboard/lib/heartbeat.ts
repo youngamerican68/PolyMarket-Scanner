@@ -16,9 +16,12 @@ export interface JobConfig {
 // Jobs to monitor - add new jobs here as they're implemented
 // Only include jobs that exist in the codebase
 // Note: Heartbeat is informational only - it never gates job execution
+// Stale threshold = 2 * scheduleMinutes
 export const MONITORED_JOBS: JobConfig[] = [
+  { jobName: 'collect-trades', scheduleMinutes: 5 },       // every 5 min (stale after 10 min)
+  { jobName: 'refresh-prices', scheduleMinutes: 10 },      // every 10 min (stale after 20 min)
+  { jobName: 'sync-positions', scheduleMinutes: 15 },      // every 15 min (stale after 30 min)
   { jobName: 'refresh-baselines', scheduleMinutes: 1440 }, // daily (stale after 48h)
-  // 'generate-digest' will be added here once implemented (1440 = daily)
 ];
 
 // =========================================================================

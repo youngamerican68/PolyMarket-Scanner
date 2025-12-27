@@ -60,6 +60,10 @@ export async function POST(request: Request) {
   }
 
   const startTime = Date.now();
+  const startedAt = new Date().toISOString();
+  let jobStatus: 'success' | 'error' = 'success';
+  let jobError: string | null = null;
+
   const summary: IngestionSummary = {
     trades_fetched: 0,
     candidates_after_filter: 0,
@@ -472,7 +476,9 @@ export async function POST(request: Request) {
     });
   } catch (err) {
     console.error('[collect-trades] Fatal error:', err);
-    summary.errors.push(`Fatal: ${err instanceof Error ? err.message : String(err)}`);
+    jobStatus = 'error';
+    jobError = err instanceof Error ? err.message : String(err);
+    summary.errors.push(`Fatal: ${jobError}`);
 
     return NextResponse.json(
       {
@@ -483,6 +489,28 @@ export async function POST(request: Request) {
       },
       { status: 500 }
     );
+  } finally {
+    // Record job run to job_runs table (never crashes the handler)
+    const durationMs = Date.now() - startTime;
+    try {
+      const metrics = jobStatus === 'success'
+        ? { ...summary, durationMs }
+        : { error: jobError, durationMs, summary };
+
+      await sql`
+        INSERT INTO job_runs (job_name, status, started_at, finished_at, metrics)
+        VALUES (
+          'collect-trades',
+          ${jobStatus},
+          ${startedAt}::timestamptz,
+          NOW(),
+          ${JSON.stringify(metrics)}::jsonb
+        )
+      `;
+    } catch (logErr) {
+      // Non-fatal: log but don't crash the handler
+      console.error('[collect-trades] Failed to record job_runs:', logErr);
+    }
   }
 }
 
