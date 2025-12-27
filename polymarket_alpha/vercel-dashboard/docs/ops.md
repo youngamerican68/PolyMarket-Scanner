@@ -184,7 +184,7 @@ All recurring jobs are triggered via GitHub Actions workflows, not Vercel crons.
 
 - **Scheduler**: GitHub Actions (`.github/workflows/*.yml`)
 - **Endpoints**: Vercel-hosted Next.js API routes
-- **Method**: GET (all job endpoints accept GET requests)
+- **Method**: GET for `/api/jobs/*` endpoints; POST for `/api/collect-trades`
 - **Auth**: Bearer token via `Authorization: Bearer $CRON_SECRET` header
 
 ### Required GitHub Secrets
@@ -207,7 +207,7 @@ Set these in GitHub → Settings → Secrets and variables → Actions:
 
 | Workflow | Schedule | Endpoint |
 |----------|----------|----------|
-| `collect-trades.yml` | Every 5 min | `/api/collect-trades` |
+| `collect-trades.yml` | Every 5 min | `/api/collect-trades` (POST) |
 | `refresh-prices.yml` | Every 10 min | `/api/jobs/refresh-prices` |
 | `sync-positions.yml` | Every 15 min | `/api/jobs/sync-positions` |
 | `refresh-baselines.yml` | Daily 2 AM UTC | `/api/jobs/refresh-baselines` |
@@ -226,7 +226,8 @@ Set these in GitHub → Settings → Secrets and variables → Actions:
 ### Troubleshooting
 
 **405 Method Not Allowed:**
-- Ensure workflows use GET (no `-X POST`)
+- `/api/jobs/*` endpoints require GET
+- `/api/collect-trades` requires POST with `--data '{}'`
 
 **401 Unauthorized:**
 - Verify `CRON_SECRET` matches between GitHub secrets and Vercel env vars

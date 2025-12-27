@@ -42,8 +42,10 @@ jobs:
           HTTP_RESPONSE=$(curl --silent --show-error --write-out "\nHTTPSTATUS:%{http_code}" \
             --max-time 30 \
             --retry 3 --retry-all-errors --retry-delay 2 \
-            -X GET "$COLLECT_TRADES_URL" \
-            -H "Authorization: Bearer $CRON_SECRET") || CURL_EXIT=$?
+            -X POST "$COLLECT_TRADES_URL" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            -H "Content-Type: application/json" \
+            --data '{}') || CURL_EXIT=$?
 
           if [ "$CURL_EXIT" -ne 0 ]; then
             echo "curl failed with exit code $CURL_EXIT"
