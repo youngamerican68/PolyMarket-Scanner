@@ -22,6 +22,9 @@ jobs:
           REFRESH_PRICES_URL: ${{ secrets.REFRESH_PRICES_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
+          # Log target host (without exposing full URL) for audit
+          echo "Target host: $(python3 -c "import os; from urllib.parse import urlparse; print(urlparse(os.environ.get('REFRESH_PRICES_URL','')).netloc)")"
+
           # Make request and capture both status code and body
           HTTP_RESPONSE=$(curl --silent --write-out "HTTPSTATUS:%{http_code}" \
             --max-time 120 \
