@@ -509,6 +509,7 @@ function getFilterMode(whalesOnly: boolean, category: string | null): FilterMode
 
 export async function GET(req: NextRequest) {
   const serverNow = new Date().toISOString();
+  const requestStartTime = Date.now();
 
   try {
     const { searchParams } = new URL(req.url);
@@ -819,35 +820,11 @@ export async function GET(req: NextRequest) {
     // for simplicity; the frontend filters the resulting positions
     // ========================================================================
 
+    // Query 1b: Positions with EFFECTIVE value filtering
+    // Uses COALESCE to prefer: synced → last_known → alert_events values
     const positionsResult = await sql<PositionRow>`
-      WITH fill_counts AS (
-        SELECT wallet, condition_id, outcome, COUNT(*)::int as fill_count
-        FROM alert_events
-        WHERE fill_timestamp >= ${alertCutoff}::timestamptz
-          AND fill_price <= ${maxOdds}
-          AND position_current_value IS NOT NULL
-          AND position_current_value >= ${minPosition}
-          AND (
-            ${excludeCategory}::text IS NULL
-            OR ${excludeCategory} != 'crypto'
-            OR (
-              whale_category IS DISTINCT FROM 'crypto'
-              AND title NOT ILIKE '%bitcoin%'
-              AND title NOT ILIKE '%btc%'
-              AND title NOT ILIKE '%ethereum%'
-              AND title NOT ILIKE '%eth %'
-              AND title NOT ILIKE '%solana%'
-              AND title NOT ILIKE '%sol %'
-              AND title NOT ILIKE '%crypto%'
-              AND title NOT ILIKE '%token%'
-              AND title NOT ILIKE '%market cap%'
-              AND title NOT ILIKE '%fdv%'
-              AND title NOT ILIKE '%defi%'
-            )
-          )
-        GROUP BY wallet, condition_id, outcome
-      ),
-      latest_fills AS (
+      WITH base_events AS (
+        -- First pass: select all qualifying fills (relaxed filter, refined later)
         SELECT DISTINCT ON (ae.wallet, ae.condition_id, ae.outcome)
           ae.wallet, ae.condition_id, ae.outcome,
           ae.title, ae.slug, ae.event_slug, ae.outcome_index,
@@ -861,7 +838,6 @@ export async function GET(req: NextRequest) {
         WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
           AND ae.fill_price <= ${maxOdds}
           AND ae.position_current_value IS NOT NULL
-          AND ae.position_current_value >= ${minPosition}
           AND (
             ${excludeCategory}::text IS NULL
             OR ${excludeCategory} != 'crypto'
@@ -881,19 +857,54 @@ export async function GET(req: NextRequest) {
             )
           )
         ORDER BY ae.wallet, ae.condition_id, ae.outcome, ae.fill_timestamp DESC
+      ),
+      with_overlay AS (
+        -- Join overlay + price cache to compute mark-to-market effective values
+        SELECT
+          be.*,
+          pso.synced_position_size, pso.synced_avg_price, pso.synced_current_value, pso.synced_payout_if_wins,
+          pso.synced_at, pso.sync_status, pso.position_state,
+          pso.last_known_position_size, pso.last_known_avg_price, pso.last_known_current_value, pso.last_known_payout_if_wins,
+          pso.last_nonzero_at,
+          opc.price as cached_price,
+          -- Effective position size: synced → last_known → alert_events
+          COALESCE(pso.synced_position_size, pso.last_known_position_size, be.position_size) as effective_position_size,
+          -- Effective current value: prefer mark-to-market (shares × cached_price), fallback to snapshot values
+          COALESCE(
+            COALESCE(pso.synced_position_size, pso.last_known_position_size, be.position_size)::numeric * opc.price::numeric,
+            pso.synced_current_value,
+            pso.last_known_current_value,
+            be.position_current_value
+          ) as effective_current_value
+        FROM base_events be
+        LEFT JOIN position_sync_overlay pso ON be.condition_id = pso.condition_id AND be.wallet = pso.wallet AND be.outcome = pso.outcome
+        LEFT JOIN outcome_price_cache opc ON be.condition_id = opc.condition_id AND be.outcome = opc.outcome
+      ),
+      filtered AS (
+        -- Apply minPosition filter on EFFECTIVE value
+        SELECT * FROM with_overlay
+        WHERE effective_current_value >= ${minPosition}
+      ),
+      fill_counts AS (
+        SELECT wallet, condition_id, outcome, COUNT(*)::int as fill_count
+        FROM alert_events ae
+        WHERE fill_timestamp >= ${alertCutoff}::timestamptz
+          AND fill_price <= ${maxOdds}
+          AND EXISTS (SELECT 1 FROM filtered f WHERE f.wallet = ae.wallet AND f.condition_id = ae.condition_id AND f.outcome = ae.outcome)
+        GROUP BY wallet, condition_id, outcome
       )
       SELECT
-        lf.wallet, lf.condition_id, lf.outcome,
-        lf.title, lf.slug, lf.event_slug, lf.outcome_index,
-        lf.trader_name, lf.trader_pseudonym,
-        lf.is_whale, lf.whale_label, lf.whale_tier, lf.whale_category,
-        lf.last_fill_price::text as last_fill_price,
-        lf.last_fill_value::text as last_fill_value,
-        lf.last_fill_timestamp,
-        fc.fill_count,
-        lf.position_size::text as position_size,
-        lf.position_avg_price::text as position_avg_price,
-        lf.position_current_value::text as position_current_value,
+        f.wallet, f.condition_id, f.outcome,
+        f.title, f.slug, f.event_slug, f.outcome_index,
+        f.trader_name, f.trader_pseudonym,
+        f.is_whale, f.whale_label, f.whale_tier, f.whale_category,
+        f.last_fill_price::text as last_fill_price,
+        f.last_fill_value::text as last_fill_value,
+        f.last_fill_timestamp,
+        COALESCE(fc.fill_count, 1) as fill_count,
+        f.position_size::text as position_size,
+        f.position_avg_price::text as position_avg_price,
+        f.position_current_value::text as position_current_value,
         opc.price::text as cached_price,
         opc.fetched_at::text as price_fetched_at,
         ms.market_resolved, ms.market_closed, ms.winning_outcome,
@@ -903,31 +914,30 @@ export async function GET(req: NextRequest) {
         mfp.is_estimated as final_pnl_is_estimated,
         mfp.estimate_source as final_pnl_estimate_source,
         mfp.estimate_as_of::text as final_pnl_estimate_as_of,
-        pso.synced_position_size::text as synced_position_size,
-        pso.synced_avg_price::text as synced_avg_price,
-        pso.synced_current_value::text as synced_current_value,
-        pso.synced_payout_if_wins::text as synced_payout_if_wins,
-        pso.synced_at::text as synced_at,
-        pso.sync_status,
-        pso.position_state,
-        pso.last_known_position_size::text as last_known_position_size,
-        pso.last_known_avg_price::text as last_known_avg_price,
-        pso.last_known_current_value::text as last_known_current_value,
-        pso.last_known_payout_if_wins::text as last_known_payout_if_wins,
-        pso.last_nonzero_at::text as last_nonzero_at
-      FROM latest_fills lf
-      INNER JOIN fill_counts fc ON lf.wallet = fc.wallet AND lf.condition_id = fc.condition_id AND lf.outcome = fc.outcome
-      LEFT JOIN outcome_price_cache opc ON lf.condition_id = opc.condition_id AND lf.outcome = opc.outcome
-      LEFT JOIN market_status ms ON lf.condition_id = ms.condition_id
-      LEFT JOIN market_final_pnl mfp ON lf.condition_id = mfp.condition_id AND lf.wallet = mfp.wallet AND lf.outcome = mfp.outcome
-      LEFT JOIN position_sync_overlay pso ON lf.condition_id = pso.condition_id AND lf.wallet = pso.wallet AND lf.outcome = pso.outcome
+        f.synced_position_size::text as synced_position_size,
+        f.synced_avg_price::text as synced_avg_price,
+        f.synced_current_value::text as synced_current_value,
+        f.synced_payout_if_wins::text as synced_payout_if_wins,
+        f.synced_at::text as synced_at,
+        f.sync_status,
+        f.position_state,
+        f.last_known_position_size::text as last_known_position_size,
+        f.last_known_avg_price::text as last_known_avg_price,
+        f.last_known_current_value::text as last_known_current_value,
+        f.last_known_payout_if_wins::text as last_known_payout_if_wins,
+        f.last_nonzero_at::text as last_nonzero_at
+      FROM filtered f
+      LEFT JOIN fill_counts fc ON f.wallet = fc.wallet AND f.condition_id = fc.condition_id AND f.outcome = fc.outcome
+      LEFT JOIN outcome_price_cache opc ON f.condition_id = opc.condition_id AND f.outcome = opc.outcome
+      LEFT JOIN market_status ms ON f.condition_id = ms.condition_id
+      LEFT JOIN market_final_pnl mfp ON f.condition_id = mfp.condition_id AND f.wallet = mfp.wallet AND f.outcome = mfp.outcome
       WHERE (
         CASE WHEN ${includeResolved}::boolean = TRUE
           THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL AND TRIM(ms.winning_outcome) != ''
           ELSE ms.market_resolved IS NOT TRUE OR ms.winning_outcome IS NULL OR TRIM(ms.winning_outcome) = ''
         END
       )
-      ORDER BY lf.last_fill_timestamp DESC
+      ORDER BY f.last_fill_timestamp DESC
       LIMIT ${pageSize} OFFSET ${offset}
     `;
 
@@ -939,24 +949,13 @@ export async function GET(req: NextRequest) {
     const formattedPositions: FormattedPosition[] = positionsResult.rows.map((row) => {
       const lastFillPrice = parseNumeric(row.last_fill_price);
       const lastFillValue = parseNumeric(row.last_fill_value);
-      const positionSize = parseNumeric(row.position_size);
-      const positionAvgPrice = parseNumeric(row.position_avg_price);
       const cachedPrice = parseNumeric(row.cached_price);
 
-      // Cost = shares × avgEntry
-      const positionCost = (positionSize !== null && positionAvgPrice !== null)
-        ? positionSize * positionAvgPrice
-        : null;
+      // Raw values from each source
+      const rawPositionSize = parseNumeric(row.position_size);
+      const rawPositionAvgPrice = parseNumeric(row.position_avg_price);
 
-      // Value = shares × currentPrice
-      const positionValue = (positionSize !== null && cachedPrice !== null)
-        ? positionSize * cachedPrice
-        : null;
-
-      // Payout = shares (each share pays $1)
-      const totalPayoutIfWins = positionSize;
-
-      // Position sync overlay
+      // Position sync overlay (synced = current API response)
       const syncedPositionSize = parseNumeric(row.synced_position_size);
       const syncedAvgPrice = parseNumeric(row.synced_avg_price);
       const syncedCurrentValue = parseNumeric(row.synced_current_value);
@@ -965,7 +964,7 @@ export async function GET(req: NextRequest) {
         ? syncedPositionSize * syncedAvgPrice
         : null;
 
-      // Safe state model
+      // Safe state model (last_known = preserved when position disappears)
       const lastKnownPositionSize = parseNumeric(row.last_known_position_size);
       const lastKnownAvgPrice = parseNumeric(row.last_known_avg_price);
       const lastKnownCurrentValue = parseNumeric(row.last_known_current_value);
@@ -973,6 +972,26 @@ export async function GET(req: NextRequest) {
       const lastKnownPositionCost = (lastKnownPositionSize !== null && lastKnownAvgPrice !== null)
         ? lastKnownPositionSize * lastKnownAvgPrice
         : null;
+
+      // ========================================================================
+      // EFFECTIVE VALUES: Prefer synced → lastKnown → alert_events fallback
+      // This ensures dashboard shows live position data when available
+      // ========================================================================
+      const positionSize = syncedPositionSize ?? lastKnownPositionSize ?? rawPositionSize;
+      const positionAvgPrice = syncedAvgPrice ?? lastKnownAvgPrice ?? rawPositionAvgPrice;
+
+      // Cost = effectiveShares × effectiveAvgPrice
+      const positionCost = (positionSize !== null && positionAvgPrice !== null)
+        ? positionSize * positionAvgPrice
+        : null;
+
+      // Value = effectiveShares × currentPrice (from price cache)
+      const positionValue = (positionSize !== null && cachedPrice !== null)
+        ? positionSize * cachedPrice
+        : null;
+
+      // Payout = effectiveShares (each share pays $1 if outcome wins)
+      const totalPayoutIfWins = syncedPayoutIfWins ?? lastKnownPayoutIfWins ?? positionSize;
 
       return {
         positionKey: makePositionKey(row.wallet, row.condition_id, row.outcome),
@@ -1220,18 +1239,17 @@ export async function GET(req: NextRequest) {
 
     // ========================================================================
     // Query 2b: Total positions count (for pagination)
-    // Uses same filters as Query 1b (excludeCategory only, no whale/category filters)
+    // Uses same EFFECTIVE VALUE filtering as Query 1b
     // ========================================================================
 
     const totalPositionsResult = await sql<{ count: number }>`
-      WITH position_keys AS (
-        SELECT DISTINCT ae.wallet, ae.condition_id, ae.outcome
+      WITH base_positions AS (
+        SELECT DISTINCT ON (ae.wallet, ae.condition_id, ae.outcome)
+          ae.wallet, ae.condition_id, ae.outcome, ae.position_current_value, ae.position_size
         FROM alert_events ae
-        LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
         WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
           AND ae.fill_price <= ${maxOdds}
           AND ae.position_current_value IS NOT NULL
-          AND ae.position_current_value >= ${minPosition}
           AND (
             ${excludeCategory}::text IS NULL
             OR ${excludeCategory} != 'crypto'
@@ -1250,6 +1268,27 @@ export async function GET(req: NextRequest) {
               AND ae.title NOT ILIKE '%defi%'
             )
           )
+        ORDER BY ae.wallet, ae.condition_id, ae.outcome, ae.fill_timestamp DESC
+      ),
+      with_overlay AS (
+        -- Join overlay + price cache to compute mark-to-market effective values
+        SELECT bp.*,
+          -- Effective current value: prefer mark-to-market (shares × cached_price), fallback to snapshot values
+          COALESCE(
+            COALESCE(pso.synced_position_size, pso.last_known_position_size, bp.position_size)::numeric * opc.price::numeric,
+            pso.synced_current_value,
+            pso.last_known_current_value,
+            bp.position_current_value
+          ) as effective_current_value
+        FROM base_positions bp
+        LEFT JOIN position_sync_overlay pso ON bp.condition_id = pso.condition_id AND bp.wallet = pso.wallet AND bp.outcome = pso.outcome
+        LEFT JOIN outcome_price_cache opc ON bp.condition_id = opc.condition_id AND bp.outcome = opc.outcome
+      ),
+      filtered AS (
+        SELECT wo.wallet, wo.condition_id, wo.outcome
+        FROM with_overlay wo
+        LEFT JOIN market_status ms ON wo.condition_id = ms.condition_id
+        WHERE wo.effective_current_value >= ${minPosition}
           AND (
             CASE WHEN ${includeResolved}::boolean = TRUE
               THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL AND TRIM(ms.winning_outcome) != ''
@@ -1257,7 +1296,7 @@ export async function GET(req: NextRequest) {
             END
           )
       )
-      SELECT COUNT(*)::int as count FROM position_keys
+      SELECT COUNT(*)::int as count FROM filtered
     `;
 
     const totalPositions = totalPositionsResult.rows[0]?.count ?? 0;
@@ -1703,7 +1742,6 @@ export async function GET(req: NextRequest) {
               WHERE ae.fill_timestamp >= ${convergenceCutoff}::timestamptz
                 AND ae.fill_price <= ${maxOdds}
                 AND ae.position_current_value IS NOT NULL
-                AND ae.position_current_value >= ${minPosition}
                 AND ae.is_whale = TRUE
                 AND ae.whale_category = ${category}
                 AND (
@@ -1714,13 +1752,37 @@ export async function GET(req: NextRequest) {
                 )
               ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
             ),
+            with_effective AS (
+              -- Compute mark-to-market effective values, filter on minPosition
+              SELECT d.*,
+                pso.synced_position_size, pso.synced_avg_price, pso.synced_current_value, pso.synced_payout_if_wins,
+                pso.synced_at, pso.sync_status, pso.position_state,
+                pso.last_known_position_size, pso.last_known_avg_price, pso.last_known_current_value, pso.last_known_payout_if_wins,
+                pso.last_nonzero_at,
+                opc.price as cached_price,
+                COALESCE(
+                  COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric * opc.price::numeric,
+                  pso.synced_current_value,
+                  pso.last_known_current_value,
+                  d.position_current_value
+                ) as effective_current_value
+              FROM deduped d
+              LEFT JOIN position_sync_overlay pso ON d.condition_id = pso.condition_id AND d.wallet = pso.wallet AND d.outcome = pso.outcome
+              LEFT JOIN outcome_price_cache opc ON d.condition_id = opc.condition_id AND d.outcome = opc.outcome
+              WHERE COALESCE(
+                COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric * opc.price::numeric,
+                pso.synced_current_value,
+                pso.last_known_current_value,
+                d.position_current_value
+              ) >= ${minPosition}
+            ),
             aggregated AS (
               SELECT condition_id, outcome,
                 COUNT(DISTINCT wallet)::int as distinct_wallets,
-                COALESCE(SUM(position_current_value::numeric), 0) as total_val,
+                COALESCE(SUM(effective_current_value), 0) as total_val,
                 (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                  OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
-              FROM deduped GROUP BY condition_id, outcome
+                  OR COALESCE(SUM(effective_current_value), 0) >= ${thresholds.minTotalValue}) AS qualifies
+              FROM with_effective GROUP BY condition_id, outcome
             ),
             group_keys AS (
               SELECT condition_id, outcome FROM aggregated
@@ -1729,33 +1791,32 @@ export async function GET(req: NextRequest) {
               LIMIT ${maxGroups}
             ),
             ranked AS (
-              SELECT d.condition_id, d.outcome, d.wallet,
-                d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
-                d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
-                opc.price::text as cached_price,
+              SELECT e.condition_id, e.outcome, e.wallet,
+                e.position_current_value, e.position_size, e.position_avg_price, e.fill_price, e.fill_timestamp,
+                e.trader_name, e.trader_pseudonym, e.is_whale, e.whale_label,
+                e.cached_price::text as cached_price,
+                e.effective_current_value,
                 mfp.final_pnl, mfp.position_found as final_position_found,
                 mfp.is_estimated as final_pnl_is_estimated,
                 mfp.estimate_source as final_pnl_estimate_source,
                 mfp.estimate_as_of::text as final_pnl_estimate_as_of,
-                pso.synced_position_size::text as synced_position_size,
-                pso.synced_avg_price::text as synced_avg_price,
-                pso.synced_current_value::text as synced_current_value,
-                pso.synced_payout_if_wins::text as synced_payout_if_wins,
-                pso.synced_at::text as synced_at,
-                pso.sync_status as sync_status,
-                pso.position_state as position_state,
-                pso.last_known_position_size::text as last_known_position_size,
-                pso.last_known_avg_price::text as last_known_avg_price,
-                pso.last_known_current_value::text as last_known_current_value,
-                pso.last_known_payout_if_wins::text as last_known_payout_if_wins,
-                pso.last_nonzero_at::text as last_nonzero_at,
-                ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
-                  ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
-              FROM deduped d
-              INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
-              LEFT JOIN outcome_price_cache opc ON opc.condition_id = d.condition_id AND opc.outcome = d.outcome
-              LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
-              LEFT JOIN position_sync_overlay pso ON pso.condition_id = d.condition_id AND pso.wallet = d.wallet AND pso.outcome = d.outcome
+                e.synced_position_size::text as synced_position_size,
+                e.synced_avg_price::text as synced_avg_price,
+                e.synced_current_value::text as synced_current_value,
+                e.synced_payout_if_wins::text as synced_payout_if_wins,
+                e.synced_at::text as synced_at,
+                e.sync_status as sync_status,
+                e.position_state as position_state,
+                e.last_known_position_size::text as last_known_position_size,
+                e.last_known_avg_price::text as last_known_avg_price,
+                e.last_known_current_value::text as last_known_current_value,
+                e.last_known_payout_if_wins::text as last_known_payout_if_wins,
+                e.last_nonzero_at::text as last_nonzero_at,
+                ROW_NUMBER() OVER (PARTITION BY e.condition_id, e.outcome
+                  ORDER BY e.effective_current_value DESC, e.wallet ASC)::int as rn
+              FROM with_effective e
+              INNER JOIN group_keys g ON e.condition_id = g.condition_id AND e.outcome = g.outcome
+              LEFT JOIN market_final_pnl mfp ON mfp.condition_id = e.condition_id AND mfp.wallet = e.wallet AND mfp.outcome = e.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
             ORDER BY condition_id, outcome, rn
@@ -1772,7 +1833,6 @@ export async function GET(req: NextRequest) {
               WHERE ae.fill_timestamp >= ${convergenceCutoff}::timestamptz
                 AND ae.fill_price <= ${maxOdds}
                 AND ae.position_current_value IS NOT NULL
-                AND ae.position_current_value >= ${minPosition}
                 AND ae.is_whale = TRUE
                 AND (
                   CASE WHEN ${includeResolved}::boolean = TRUE
@@ -1782,13 +1842,37 @@ export async function GET(req: NextRequest) {
                 )
               ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
             ),
+            with_effective AS (
+              -- Compute mark-to-market effective values, filter on minPosition
+              SELECT d.*,
+                pso.synced_position_size, pso.synced_avg_price, pso.synced_current_value, pso.synced_payout_if_wins,
+                pso.synced_at, pso.sync_status, pso.position_state,
+                pso.last_known_position_size, pso.last_known_avg_price, pso.last_known_current_value, pso.last_known_payout_if_wins,
+                pso.last_nonzero_at,
+                opc.price as cached_price,
+                COALESCE(
+                  COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric * opc.price::numeric,
+                  pso.synced_current_value,
+                  pso.last_known_current_value,
+                  d.position_current_value
+                ) as effective_current_value
+              FROM deduped d
+              LEFT JOIN position_sync_overlay pso ON d.condition_id = pso.condition_id AND d.wallet = pso.wallet AND d.outcome = pso.outcome
+              LEFT JOIN outcome_price_cache opc ON d.condition_id = opc.condition_id AND d.outcome = opc.outcome
+              WHERE COALESCE(
+                COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric * opc.price::numeric,
+                pso.synced_current_value,
+                pso.last_known_current_value,
+                d.position_current_value
+              ) >= ${minPosition}
+            ),
             aggregated AS (
               SELECT condition_id, outcome,
                 COUNT(DISTINCT wallet)::int as distinct_wallets,
-                COALESCE(SUM(position_current_value::numeric), 0) as total_val,
+                COALESCE(SUM(effective_current_value), 0) as total_val,
                 (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                  OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
-              FROM deduped GROUP BY condition_id, outcome
+                  OR COALESCE(SUM(effective_current_value), 0) >= ${thresholds.minTotalValue}) AS qualifies
+              FROM with_effective GROUP BY condition_id, outcome
             ),
             group_keys AS (
               SELECT condition_id, outcome FROM aggregated
@@ -1797,33 +1881,32 @@ export async function GET(req: NextRequest) {
               LIMIT ${maxGroups}
             ),
             ranked AS (
-              SELECT d.condition_id, d.outcome, d.wallet,
-                d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
-                d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
-                opc.price::text as cached_price,
+              SELECT e.condition_id, e.outcome, e.wallet,
+                e.position_current_value, e.position_size, e.position_avg_price, e.fill_price, e.fill_timestamp,
+                e.trader_name, e.trader_pseudonym, e.is_whale, e.whale_label,
+                e.cached_price::text as cached_price,
+                e.effective_current_value,
                 mfp.final_pnl, mfp.position_found as final_position_found,
                 mfp.is_estimated as final_pnl_is_estimated,
                 mfp.estimate_source as final_pnl_estimate_source,
                 mfp.estimate_as_of::text as final_pnl_estimate_as_of,
-                pso.synced_position_size::text as synced_position_size,
-                pso.synced_avg_price::text as synced_avg_price,
-                pso.synced_current_value::text as synced_current_value,
-                pso.synced_payout_if_wins::text as synced_payout_if_wins,
-                pso.synced_at::text as synced_at,
-                pso.sync_status as sync_status,
-                pso.position_state as position_state,
-                pso.last_known_position_size::text as last_known_position_size,
-                pso.last_known_avg_price::text as last_known_avg_price,
-                pso.last_known_current_value::text as last_known_current_value,
-                pso.last_known_payout_if_wins::text as last_known_payout_if_wins,
-                pso.last_nonzero_at::text as last_nonzero_at,
-                ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
-                  ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
-              FROM deduped d
-              INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
-              LEFT JOIN outcome_price_cache opc ON opc.condition_id = d.condition_id AND opc.outcome = d.outcome
-              LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
-              LEFT JOIN position_sync_overlay pso ON pso.condition_id = d.condition_id AND pso.wallet = d.wallet AND pso.outcome = d.outcome
+                e.synced_position_size::text as synced_position_size,
+                e.synced_avg_price::text as synced_avg_price,
+                e.synced_current_value::text as synced_current_value,
+                e.synced_payout_if_wins::text as synced_payout_if_wins,
+                e.synced_at::text as synced_at,
+                e.sync_status as sync_status,
+                e.position_state as position_state,
+                e.last_known_position_size::text as last_known_position_size,
+                e.last_known_avg_price::text as last_known_avg_price,
+                e.last_known_current_value::text as last_known_current_value,
+                e.last_known_payout_if_wins::text as last_known_payout_if_wins,
+                e.last_nonzero_at::text as last_nonzero_at,
+                ROW_NUMBER() OVER (PARTITION BY e.condition_id, e.outcome
+                  ORDER BY e.effective_current_value DESC, e.wallet ASC)::int as rn
+              FROM with_effective e
+              INNER JOIN group_keys g ON e.condition_id = g.condition_id AND e.outcome = g.outcome
+              LEFT JOIN market_final_pnl mfp ON mfp.condition_id = e.condition_id AND mfp.wallet = e.wallet AND mfp.outcome = e.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
             ORDER BY condition_id, outcome, rn
@@ -1840,7 +1923,6 @@ export async function GET(req: NextRequest) {
               WHERE ae.fill_timestamp >= ${convergenceCutoff}::timestamptz
                 AND ae.fill_price <= ${maxOdds}
                 AND ae.position_current_value IS NOT NULL
-                AND ae.position_current_value >= ${minPosition}
                 AND ae.whale_category = ${category}
                 AND (
                   CASE WHEN ${includeResolved}::boolean = TRUE
@@ -1850,13 +1932,37 @@ export async function GET(req: NextRequest) {
                 )
               ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
             ),
+            with_effective AS (
+              -- Compute mark-to-market effective values, filter on minPosition
+              SELECT d.*,
+                pso.synced_position_size, pso.synced_avg_price, pso.synced_current_value, pso.synced_payout_if_wins,
+                pso.synced_at, pso.sync_status, pso.position_state,
+                pso.last_known_position_size, pso.last_known_avg_price, pso.last_known_current_value, pso.last_known_payout_if_wins,
+                pso.last_nonzero_at,
+                opc.price as cached_price,
+                COALESCE(
+                  COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric * opc.price::numeric,
+                  pso.synced_current_value,
+                  pso.last_known_current_value,
+                  d.position_current_value
+                ) as effective_current_value
+              FROM deduped d
+              LEFT JOIN position_sync_overlay pso ON d.condition_id = pso.condition_id AND d.wallet = pso.wallet AND d.outcome = pso.outcome
+              LEFT JOIN outcome_price_cache opc ON d.condition_id = opc.condition_id AND d.outcome = opc.outcome
+              WHERE COALESCE(
+                COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric * opc.price::numeric,
+                pso.synced_current_value,
+                pso.last_known_current_value,
+                d.position_current_value
+              ) >= ${minPosition}
+            ),
             aggregated AS (
               SELECT condition_id, outcome,
                 COUNT(DISTINCT wallet)::int as distinct_wallets,
-                COALESCE(SUM(position_current_value::numeric), 0) as total_val,
+                COALESCE(SUM(effective_current_value), 0) as total_val,
                 (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                  OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
-              FROM deduped GROUP BY condition_id, outcome
+                  OR COALESCE(SUM(effective_current_value), 0) >= ${thresholds.minTotalValue}) AS qualifies
+              FROM with_effective GROUP BY condition_id, outcome
             ),
             group_keys AS (
               SELECT condition_id, outcome FROM aggregated
@@ -1865,33 +1971,32 @@ export async function GET(req: NextRequest) {
               LIMIT ${maxGroups}
             ),
             ranked AS (
-              SELECT d.condition_id, d.outcome, d.wallet,
-                d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
-                d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
-                opc.price::text as cached_price,
+              SELECT e.condition_id, e.outcome, e.wallet,
+                e.position_current_value, e.position_size, e.position_avg_price, e.fill_price, e.fill_timestamp,
+                e.trader_name, e.trader_pseudonym, e.is_whale, e.whale_label,
+                e.cached_price::text as cached_price,
+                e.effective_current_value,
                 mfp.final_pnl, mfp.position_found as final_position_found,
                 mfp.is_estimated as final_pnl_is_estimated,
                 mfp.estimate_source as final_pnl_estimate_source,
                 mfp.estimate_as_of::text as final_pnl_estimate_as_of,
-                pso.synced_position_size::text as synced_position_size,
-                pso.synced_avg_price::text as synced_avg_price,
-                pso.synced_current_value::text as synced_current_value,
-                pso.synced_payout_if_wins::text as synced_payout_if_wins,
-                pso.synced_at::text as synced_at,
-                pso.sync_status as sync_status,
-                pso.position_state as position_state,
-                pso.last_known_position_size::text as last_known_position_size,
-                pso.last_known_avg_price::text as last_known_avg_price,
-                pso.last_known_current_value::text as last_known_current_value,
-                pso.last_known_payout_if_wins::text as last_known_payout_if_wins,
-                pso.last_nonzero_at::text as last_nonzero_at,
-                ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
-                  ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
-              FROM deduped d
-              INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
-              LEFT JOIN outcome_price_cache opc ON opc.condition_id = d.condition_id AND opc.outcome = d.outcome
-              LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
-              LEFT JOIN position_sync_overlay pso ON pso.condition_id = d.condition_id AND pso.wallet = d.wallet AND pso.outcome = d.outcome
+                e.synced_position_size::text as synced_position_size,
+                e.synced_avg_price::text as synced_avg_price,
+                e.synced_current_value::text as synced_current_value,
+                e.synced_payout_if_wins::text as synced_payout_if_wins,
+                e.synced_at::text as synced_at,
+                e.sync_status as sync_status,
+                e.position_state as position_state,
+                e.last_known_position_size::text as last_known_position_size,
+                e.last_known_avg_price::text as last_known_avg_price,
+                e.last_known_current_value::text as last_known_current_value,
+                e.last_known_payout_if_wins::text as last_known_payout_if_wins,
+                e.last_nonzero_at::text as last_nonzero_at,
+                ROW_NUMBER() OVER (PARTITION BY e.condition_id, e.outcome
+                  ORDER BY e.effective_current_value DESC, e.wallet ASC)::int as rn
+              FROM with_effective e
+              INNER JOIN group_keys g ON e.condition_id = g.condition_id AND e.outcome = g.outcome
+              LEFT JOIN market_final_pnl mfp ON mfp.condition_id = e.condition_id AND mfp.wallet = e.wallet AND mfp.outcome = e.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
             ORDER BY condition_id, outcome, rn
@@ -1908,7 +2013,6 @@ export async function GET(req: NextRequest) {
               WHERE ae.fill_timestamp >= ${convergenceCutoff}::timestamptz
                 AND ae.fill_price <= ${maxOdds}
                 AND ae.position_current_value IS NOT NULL
-                AND ae.position_current_value >= ${minPosition}
                 AND (
                   ${excludeCategory}::text IS NULL
                   OR ${excludeCategory} != 'crypto'
@@ -1935,13 +2039,37 @@ export async function GET(req: NextRequest) {
                 )
               ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
             ),
+            with_effective AS (
+              -- Compute mark-to-market effective values, filter on minPosition
+              SELECT d.*,
+                pso.synced_position_size, pso.synced_avg_price, pso.synced_current_value, pso.synced_payout_if_wins,
+                pso.synced_at, pso.sync_status, pso.position_state,
+                pso.last_known_position_size, pso.last_known_avg_price, pso.last_known_current_value, pso.last_known_payout_if_wins,
+                pso.last_nonzero_at,
+                opc.price as cached_price,
+                COALESCE(
+                  COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric * opc.price::numeric,
+                  pso.synced_current_value,
+                  pso.last_known_current_value,
+                  d.position_current_value
+                ) as effective_current_value
+              FROM deduped d
+              LEFT JOIN position_sync_overlay pso ON d.condition_id = pso.condition_id AND d.wallet = pso.wallet AND d.outcome = pso.outcome
+              LEFT JOIN outcome_price_cache opc ON d.condition_id = opc.condition_id AND d.outcome = opc.outcome
+              WHERE COALESCE(
+                COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric * opc.price::numeric,
+                pso.synced_current_value,
+                pso.last_known_current_value,
+                d.position_current_value
+              ) >= ${minPosition}
+            ),
             aggregated AS (
               SELECT condition_id, outcome,
                 COUNT(DISTINCT wallet)::int as distinct_wallets,
-                COALESCE(SUM(position_current_value::numeric), 0) as total_val,
+                COALESCE(SUM(effective_current_value), 0) as total_val,
                 (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                  OR COALESCE(SUM(position_current_value::numeric), 0) >= ${thresholds.minTotalValue}) AS qualifies
-              FROM deduped GROUP BY condition_id, outcome
+                  OR COALESCE(SUM(effective_current_value), 0) >= ${thresholds.minTotalValue}) AS qualifies
+              FROM with_effective GROUP BY condition_id, outcome
             ),
             group_keys AS (
               SELECT condition_id, outcome FROM aggregated
@@ -1950,33 +2078,32 @@ export async function GET(req: NextRequest) {
               LIMIT ${maxGroups}
             ),
             ranked AS (
-              SELECT d.condition_id, d.outcome, d.wallet,
-                d.position_current_value, d.position_size, d.position_avg_price, d.fill_price, d.fill_timestamp,
-                d.trader_name, d.trader_pseudonym, d.is_whale, d.whale_label,
-                opc.price::text as cached_price,
+              SELECT e.condition_id, e.outcome, e.wallet,
+                e.position_current_value, e.position_size, e.position_avg_price, e.fill_price, e.fill_timestamp,
+                e.trader_name, e.trader_pseudonym, e.is_whale, e.whale_label,
+                e.cached_price::text as cached_price,
+                e.effective_current_value,
                 mfp.final_pnl, mfp.position_found as final_position_found,
                 mfp.is_estimated as final_pnl_is_estimated,
                 mfp.estimate_source as final_pnl_estimate_source,
                 mfp.estimate_as_of::text as final_pnl_estimate_as_of,
-                pso.synced_position_size::text as synced_position_size,
-                pso.synced_avg_price::text as synced_avg_price,
-                pso.synced_current_value::text as synced_current_value,
-                pso.synced_payout_if_wins::text as synced_payout_if_wins,
-                pso.synced_at::text as synced_at,
-                pso.sync_status as sync_status,
-                pso.position_state as position_state,
-                pso.last_known_position_size::text as last_known_position_size,
-                pso.last_known_avg_price::text as last_known_avg_price,
-                pso.last_known_current_value::text as last_known_current_value,
-                pso.last_known_payout_if_wins::text as last_known_payout_if_wins,
-                pso.last_nonzero_at::text as last_nonzero_at,
-                ROW_NUMBER() OVER (PARTITION BY d.condition_id, d.outcome
-                  ORDER BY d.position_current_value::numeric DESC, d.wallet ASC)::int as rn
-              FROM deduped d
-              INNER JOIN group_keys g ON d.condition_id = g.condition_id AND d.outcome = g.outcome
-              LEFT JOIN outcome_price_cache opc ON opc.condition_id = d.condition_id AND opc.outcome = d.outcome
-              LEFT JOIN market_final_pnl mfp ON mfp.condition_id = d.condition_id AND mfp.wallet = d.wallet AND mfp.outcome = d.outcome
-              LEFT JOIN position_sync_overlay pso ON pso.condition_id = d.condition_id AND pso.wallet = d.wallet AND pso.outcome = d.outcome
+                e.synced_position_size::text as synced_position_size,
+                e.synced_avg_price::text as synced_avg_price,
+                e.synced_current_value::text as synced_current_value,
+                e.synced_payout_if_wins::text as synced_payout_if_wins,
+                e.synced_at::text as synced_at,
+                e.sync_status as sync_status,
+                e.position_state as position_state,
+                e.last_known_position_size::text as last_known_position_size,
+                e.last_known_avg_price::text as last_known_avg_price,
+                e.last_known_current_value::text as last_known_current_value,
+                e.last_known_payout_if_wins::text as last_known_payout_if_wins,
+                e.last_nonzero_at::text as last_nonzero_at,
+                ROW_NUMBER() OVER (PARTITION BY e.condition_id, e.outcome
+                  ORDER BY e.effective_current_value DESC, e.wallet ASC)::int as rn
+              FROM with_effective e
+              INNER JOIN group_keys g ON e.condition_id = g.condition_id AND e.outcome = g.outcome
+              LEFT JOIN market_final_pnl mfp ON mfp.condition_id = e.condition_id AND mfp.wallet = e.wallet AND mfp.outcome = e.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
             ORDER BY condition_id, outcome, rn
@@ -1989,42 +2116,48 @@ export async function GET(req: NextRequest) {
         const group = groupMap.get(key);
         if (group) {
           const fillPrice = parseNumeric(row.fill_price);
-          const positionSize = parseNumeric(row.position_size);
-          const positionAvgPrice = parseNumeric(row.position_avg_price);
           const cachedPrice = parseNumeric(row.cached_price);
 
-          // Cost basis = positionSize × positionAvgPrice
-          const positionCost = (positionSize !== null && positionAvgPrice !== null)
-            ? positionSize * positionAvgPrice
-            : null;
+          // Raw values from alert_events
+          const rawPositionSize = parseNumeric(row.position_size);
+          const rawPositionAvgPrice = parseNumeric(row.position_avg_price);
 
-          // Mark-to-market value = positionSize × currentPrice (null if no price)
-          const positionValue = (positionSize !== null && cachedPrice !== null)
-            ? positionSize * cachedPrice
-            : null;
-
-          // Total payout if outcome wins = positionSize (each share pays $1)
-          const totalPayoutIfWins = positionSize;
-
-          // Phase 10: Position sync overlay (when feature enabled)
+          // Position sync overlay (synced = current API response)
           const syncedPositionSize = parseNumeric(row.synced_position_size);
           const syncedAvgPrice = parseNumeric(row.synced_avg_price);
           const syncedCurrentValue = parseNumeric(row.synced_current_value);
           const syncedPayoutIfWins = parseNumeric(row.synced_payout_if_wins);
-          // Compute synced cost = syncedPositionSize × syncedAvgPrice
           const syncedPositionCost = (syncedPositionSize !== null && syncedAvgPrice !== null)
             ? syncedPositionSize * syncedAvgPrice
             : null;
 
-          // Phase 10.1: Safe state model - last known values (preserved when sync returns empty)
+          // Safe state model (last_known = preserved when position disappears)
           const lastKnownPositionSize = parseNumeric(row.last_known_position_size);
           const lastKnownAvgPrice = parseNumeric(row.last_known_avg_price);
           const lastKnownCurrentValue = parseNumeric(row.last_known_current_value);
           const lastKnownPayoutIfWins = parseNumeric(row.last_known_payout_if_wins);
-          // Compute last known cost = lastKnownPositionSize × lastKnownAvgPrice
           const lastKnownPositionCost = (lastKnownPositionSize !== null && lastKnownAvgPrice !== null)
             ? lastKnownPositionSize * lastKnownAvgPrice
             : null;
+
+          // ========================================================================
+          // EFFECTIVE VALUES: Prefer synced → lastKnown → alert_events fallback
+          // ========================================================================
+          const positionSize = syncedPositionSize ?? lastKnownPositionSize ?? rawPositionSize;
+          const positionAvgPrice = syncedAvgPrice ?? lastKnownAvgPrice ?? rawPositionAvgPrice;
+
+          // Cost basis = effectiveShares × effectiveAvgPrice
+          const positionCost = (positionSize !== null && positionAvgPrice !== null)
+            ? positionSize * positionAvgPrice
+            : null;
+
+          // Mark-to-market value = effectiveShares × currentPrice
+          const positionValue = (positionSize !== null && cachedPrice !== null)
+            ? positionSize * cachedPrice
+            : null;
+
+          // Total payout if outcome wins = effectiveShares
+          const totalPayoutIfWins = syncedPayoutIfWins ?? lastKnownPayoutIfWins ?? positionSize;
 
           group.wallets.push({
             wallet: row.wallet,
@@ -2166,6 +2299,54 @@ export async function GET(req: NextRequest) {
     }
 
     // ========================================================================
+    // Observability: Get latest sync and price update timestamps
+    // ========================================================================
+    let positionsUpdatedAt: string | null = null;
+    let pricesUpdatedAt: string | null = null;
+
+    try {
+      const [syncTimestamp, priceTimestamp] = await Promise.all([
+        sql<{ latest: string | null }>`
+          SELECT MAX(synced_at)::text as latest FROM position_sync_overlay
+        `,
+        sql<{ latest: string | null }>`
+          SELECT MAX(fetched_at)::text as latest FROM outcome_price_cache
+        `,
+      ]);
+      positionsUpdatedAt = syncTimestamp.rows[0]?.latest ?? null;
+      pricesUpdatedAt = priceTimestamp.rows[0]?.latest ?? null;
+    } catch (err) {
+      console.warn('[report] Failed to fetch observability timestamps:', err);
+    }
+
+    // ========================================================================
+    // Observability: Cached price coverage counters
+    // ========================================================================
+    const positionRowsOnPage = formattedPositions.length;
+    const positionRowsMissingCachedPrice = formattedPositions.filter(p => p.currentPrice === null).length;
+    const pctMissingCachedPrice = positionRowsOnPage > 0
+      ? Math.round((positionRowsMissingCachedPrice / positionRowsOnPage) * 10000) / 100
+      : 0;
+
+    // Structured timing log (only log if slow OR missing prices detected)
+    const durationMs = Date.now() - requestStartTime;
+    if (durationMs > 1500 || positionRowsMissingCachedPrice > 0) {
+      console.info(JSON.stringify({
+        route: 'api/report',
+        durationMs,
+        minPosition,
+        maxOdds,
+        positionRowsOnPage,
+        positionRowsMissingCachedPrice,
+        pctMissingCachedPrice,
+        totalPositions,
+        convergenceGroups: trueConvergence.length,
+        positionsUpdatedAt,
+        pricesUpdatedAt,
+      }));
+    }
+
+    // ========================================================================
     // Response
     // ========================================================================
     return NextResponse.json({
@@ -2190,6 +2371,13 @@ export async function GET(req: NextRequest) {
         totalPages: Math.ceil(totalAlerts / pageSize),
         // Phase 10: Position sync feature flag
         positionSyncEnabled: POSITION_SYNC_ENABLED,
+        // Observability: when data was last refreshed
+        positionsUpdatedAt,
+        pricesUpdatedAt,
+        // Observability: cached price coverage on this page
+        positionRowsOnPage,
+        positionRowsMissingCachedPrice,
+        pctMissingCachedPrice,
       },
       alertsPage: formattedAlerts,
       // Phase 11: Aggregated positions (one per wallet+market+outcome)

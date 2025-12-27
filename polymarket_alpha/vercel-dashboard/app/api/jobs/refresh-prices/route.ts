@@ -647,9 +647,20 @@ export async function POST(request: Request) {
       WHERE id = ${jobRunId}
     `;
 
-    const resolvedSkipMsg = metrics.skippedResolved > 0 ? `, ${metrics.skippedResolved} resolved skipped` : '';
-    const pnlMsg = metrics.pnlMarketsFinalized > 0 ? `, ${metrics.pnlMarketsFinalized} P&L finalized` : '';
-    console.log(`[refresh-prices] Completed: ${metrics.updated} prices updated, ${metrics.failed} failed${resolvedSkipMsg}, ${metrics.marketsResolved} newly resolved${pnlMsg}, ${durationMs}ms`);
+    // Structured JSON log for observability (grep-friendly)
+    console.info(JSON.stringify({
+      job: JOB_NAME,
+      ok: true,
+      durationMs,
+      outcomesConsidered: metrics.requested,
+      outcomesRefreshed: metrics.updated,
+      cacheUpserts: metrics.updated,
+      skippedResolved: metrics.skippedResolved,
+      marketsResolved: metrics.marketsResolved,
+      pnlFinalized: metrics.pnlMarketsFinalized,
+      snapshotsUpserted: metrics.snapshotPositionsUpserted,
+      errorCount: metrics.failed,
+    }));
 
     return NextResponse.json({
       jobRunId,
@@ -661,8 +672,6 @@ export async function POST(request: Request) {
   } catch (err) {
     const durationMs = Date.now() - startTime;
     const errorMessage = err instanceof Error ? err.message : String(err);
-
-    console.error('[refresh-prices] Job failed:', err);
 
     // Try to update job_runs with error status
     try {
@@ -678,6 +687,22 @@ export async function POST(request: Request) {
     } catch (updateErr) {
       console.error('[refresh-prices] Failed to update job_runs:', updateErr);
     }
+
+    // Structured JSON log for observability (grep-friendly)
+    console.info(JSON.stringify({
+      job: JOB_NAME,
+      ok: false,
+      durationMs,
+      outcomesConsidered: metrics.requested,
+      outcomesRefreshed: metrics.updated,
+      cacheUpserts: metrics.updated,
+      skippedResolved: metrics.skippedResolved,
+      marketsResolved: metrics.marketsResolved,
+      pnlFinalized: metrics.pnlMarketsFinalized,
+      snapshotsUpserted: metrics.snapshotPositionsUpserted,
+      errorCount: metrics.failed + 1, // +1 for the fatal error
+      error: errorMessage.slice(0, 200),
+    }));
 
     return NextResponse.json({
       jobRunId,
