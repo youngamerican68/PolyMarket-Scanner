@@ -1502,8 +1502,17 @@ export default function ReportPage() {
                                 </a>
                                 <span className="text-poly-muted ml-2">({position.outcome})</span>
                               </span>
-                              {position.marketResolved && (
-                                <span className="text-xs px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded">
+                              {position.marketResolved && position.winningOutcome && (
+                                <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${
+                                  position.outcome === position.winningOutcome
+                                    ? 'bg-green-500/20 text-green-400'
+                                    : 'bg-red-500/20 text-red-400'
+                                }`}>
+                                  {position.outcome === position.winningOutcome ? 'WON' : 'LOST'}
+                                </span>
+                              )}
+                              {position.marketResolved && !position.winningOutcome && (
+                                <span className="text-xs px-1.5 py-0.5 bg-gray-500/20 text-gray-400 rounded">
                                   Resolved
                                 </span>
                               )}
