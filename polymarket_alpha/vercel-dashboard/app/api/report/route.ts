@@ -1728,32 +1728,40 @@ export async function GET(req: NextRequest) {
 
     // Query wallet details only if we have groups
     if (groupMap.size > 0) {
+      // Build JSON array of known group keys from groupMap (determined by aggregate query)
+      // We use JSON because sql template doesn't accept arrays directly
+      const knownGroupsJson = JSON.stringify(
+        Array.from(groupMap.values()).map(g => ({
+          condition_id: g.conditionId,
+          outcome: g.outcome
+        }))
+      );
+
       let walletDetailsResult: { rows: WalletDetailRow[] };
 
       switch (filterMode) {
         case 'both':
+          // Use known group keys from aggregate query (don't recompute qualification)
           walletDetailsResult = await sql<WalletDetailRow>`
-            WITH deduped AS (
-              SELECT DISTINCT ON (condition_id, outcome, wallet)
-                condition_id, outcome, wallet,
-                position_current_value, position_size, position_avg_price, fill_price, fill_timestamp,
-                trader_name, trader_pseudonym, is_whale, whale_label
+            WITH known_groups AS (
+              SELECT elem->>'condition_id' as condition_id, elem->>'outcome' as outcome
+              FROM jsonb_array_elements(${knownGroupsJson}::jsonb) as elem
+            ),
+            deduped AS (
+              SELECT DISTINCT ON (ae.condition_id, ae.outcome, ae.wallet)
+                ae.condition_id, ae.outcome, ae.wallet,
+                ae.position_current_value, ae.position_size, ae.position_avg_price, ae.fill_price, ae.fill_timestamp,
+                ae.trader_name, ae.trader_pseudonym, ae.is_whale, ae.whale_label
               FROM alert_events ae
+              INNER JOIN known_groups kg ON ae.condition_id = kg.condition_id AND ae.outcome = kg.outcome
               WHERE ae.fill_timestamp >= ${convergenceCutoff}::timestamptz
                 AND ae.fill_price <= ${maxOdds}
                 AND ae.position_current_value IS NOT NULL
                 AND ae.is_whale = TRUE
                 AND ae.whale_category = ${category}
-                AND (
-                  CASE WHEN ${includeResolved}::boolean = TRUE
-                    THEN EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
-                    ELSE NOT EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
-                  END
-                )
-              ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
+              ORDER BY ae.condition_id, ae.outcome, ae.wallet, ae.fill_timestamp DESC
             ),
-            with_effective AS (
-              -- Compute mark-to-market effective values, filter on minPosition
+            with_details AS (
               SELECT d.*,
                 pso.synced_position_size, pso.synced_avg_price, pso.synced_current_value, pso.synced_payout_if_wins,
                 pso.synced_at, pso.sync_status, pso.position_state,
@@ -1769,26 +1777,6 @@ export async function GET(req: NextRequest) {
               FROM deduped d
               LEFT JOIN position_sync_overlay pso ON d.condition_id = pso.condition_id AND d.wallet = pso.wallet AND d.outcome = pso.outcome
               LEFT JOIN outcome_price_cache opc ON d.condition_id = opc.condition_id AND d.outcome = opc.outcome
-              WHERE COALESCE(
-                COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric * opc.price::numeric,
-                pso.synced_current_value,
-                pso.last_known_current_value,
-                d.position_current_value
-              ) >= ${minPosition}
-            ),
-            aggregated AS (
-              SELECT condition_id, outcome,
-                COUNT(DISTINCT wallet)::int as distinct_wallets,
-                COALESCE(SUM(effective_current_value), 0) as total_val,
-                (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                  OR COALESCE(SUM(effective_current_value), 0) >= ${thresholds.minTotalValue}) AS qualifies
-              FROM with_effective GROUP BY condition_id, outcome
-            ),
-            group_keys AS (
-              SELECT condition_id, outcome FROM aggregated
-              WHERE qualifies = TRUE
-              ORDER BY distinct_wallets DESC, total_val DESC, condition_id ASC, outcome ASC
-              LIMIT ${maxGroups}
             ),
             ranked AS (
               SELECT e.condition_id, e.outcome, e.wallet,
@@ -1813,9 +1801,8 @@ export async function GET(req: NextRequest) {
                 e.last_known_payout_if_wins::text as last_known_payout_if_wins,
                 e.last_nonzero_at::text as last_nonzero_at,
                 ROW_NUMBER() OVER (PARTITION BY e.condition_id, e.outcome
-                  ORDER BY e.effective_current_value DESC, e.wallet ASC)::int as rn
-              FROM with_effective e
-              INNER JOIN group_keys g ON e.condition_id = g.condition_id AND e.outcome = g.outcome
+                  ORDER BY COALESCE(e.effective_current_value, 0) DESC, e.wallet ASC)::int as rn
+              FROM with_details e
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = e.condition_id AND mfp.wallet = e.wallet AND mfp.outcome = e.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
@@ -1823,27 +1810,26 @@ export async function GET(req: NextRequest) {
           `;
           break;
         case 'whalesOnly':
+          // Use known group keys from aggregate query (don't recompute qualification)
           walletDetailsResult = await sql<WalletDetailRow>`
-            WITH deduped AS (
-              SELECT DISTINCT ON (condition_id, outcome, wallet)
-                condition_id, outcome, wallet,
-                position_current_value, position_size, position_avg_price, fill_price, fill_timestamp,
-                trader_name, trader_pseudonym, is_whale, whale_label
+            WITH known_groups AS (
+              SELECT elem->>'condition_id' as condition_id, elem->>'outcome' as outcome
+              FROM jsonb_array_elements(${knownGroupsJson}::jsonb) as elem
+            ),
+            deduped AS (
+              SELECT DISTINCT ON (ae.condition_id, ae.outcome, ae.wallet)
+                ae.condition_id, ae.outcome, ae.wallet,
+                ae.position_current_value, ae.position_size, ae.position_avg_price, ae.fill_price, ae.fill_timestamp,
+                ae.trader_name, ae.trader_pseudonym, ae.is_whale, ae.whale_label
               FROM alert_events ae
+              INNER JOIN known_groups kg ON ae.condition_id = kg.condition_id AND ae.outcome = kg.outcome
               WHERE ae.fill_timestamp >= ${convergenceCutoff}::timestamptz
                 AND ae.fill_price <= ${maxOdds}
                 AND ae.position_current_value IS NOT NULL
                 AND ae.is_whale = TRUE
-                AND (
-                  CASE WHEN ${includeResolved}::boolean = TRUE
-                    THEN EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
-                    ELSE NOT EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
-                  END
-                )
-              ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
+              ORDER BY ae.condition_id, ae.outcome, ae.wallet, ae.fill_timestamp DESC
             ),
-            with_effective AS (
-              -- Compute mark-to-market effective values, filter on minPosition
+            with_details AS (
               SELECT d.*,
                 pso.synced_position_size, pso.synced_avg_price, pso.synced_current_value, pso.synced_payout_if_wins,
                 pso.synced_at, pso.sync_status, pso.position_state,
@@ -1859,26 +1845,6 @@ export async function GET(req: NextRequest) {
               FROM deduped d
               LEFT JOIN position_sync_overlay pso ON d.condition_id = pso.condition_id AND d.wallet = pso.wallet AND d.outcome = pso.outcome
               LEFT JOIN outcome_price_cache opc ON d.condition_id = opc.condition_id AND d.outcome = opc.outcome
-              WHERE COALESCE(
-                COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric * opc.price::numeric,
-                pso.synced_current_value,
-                pso.last_known_current_value,
-                d.position_current_value
-              ) >= ${minPosition}
-            ),
-            aggregated AS (
-              SELECT condition_id, outcome,
-                COUNT(DISTINCT wallet)::int as distinct_wallets,
-                COALESCE(SUM(effective_current_value), 0) as total_val,
-                (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                  OR COALESCE(SUM(effective_current_value), 0) >= ${thresholds.minTotalValue}) AS qualifies
-              FROM with_effective GROUP BY condition_id, outcome
-            ),
-            group_keys AS (
-              SELECT condition_id, outcome FROM aggregated
-              WHERE qualifies = TRUE
-              ORDER BY distinct_wallets DESC, total_val DESC, condition_id ASC, outcome ASC
-              LIMIT ${maxGroups}
             ),
             ranked AS (
               SELECT e.condition_id, e.outcome, e.wallet,
@@ -1903,9 +1869,8 @@ export async function GET(req: NextRequest) {
                 e.last_known_payout_if_wins::text as last_known_payout_if_wins,
                 e.last_nonzero_at::text as last_nonzero_at,
                 ROW_NUMBER() OVER (PARTITION BY e.condition_id, e.outcome
-                  ORDER BY e.effective_current_value DESC, e.wallet ASC)::int as rn
-              FROM with_effective e
-              INNER JOIN group_keys g ON e.condition_id = g.condition_id AND e.outcome = g.outcome
+                  ORDER BY COALESCE(e.effective_current_value, 0) DESC, e.wallet ASC)::int as rn
+              FROM with_details e
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = e.condition_id AND mfp.wallet = e.wallet AND mfp.outcome = e.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
@@ -1913,27 +1878,26 @@ export async function GET(req: NextRequest) {
           `;
           break;
         case 'categoryOnly':
+          // Use known group keys from aggregate query (don't recompute qualification)
           walletDetailsResult = await sql<WalletDetailRow>`
-            WITH deduped AS (
-              SELECT DISTINCT ON (condition_id, outcome, wallet)
-                condition_id, outcome, wallet,
-                position_current_value, position_size, position_avg_price, fill_price, fill_timestamp,
-                trader_name, trader_pseudonym, is_whale, whale_label
+            WITH known_groups AS (
+              SELECT elem->>'condition_id' as condition_id, elem->>'outcome' as outcome
+              FROM jsonb_array_elements(${knownGroupsJson}::jsonb) as elem
+            ),
+            deduped AS (
+              SELECT DISTINCT ON (ae.condition_id, ae.outcome, ae.wallet)
+                ae.condition_id, ae.outcome, ae.wallet,
+                ae.position_current_value, ae.position_size, ae.position_avg_price, ae.fill_price, ae.fill_timestamp,
+                ae.trader_name, ae.trader_pseudonym, ae.is_whale, ae.whale_label
               FROM alert_events ae
+              INNER JOIN known_groups kg ON ae.condition_id = kg.condition_id AND ae.outcome = kg.outcome
               WHERE ae.fill_timestamp >= ${convergenceCutoff}::timestamptz
                 AND ae.fill_price <= ${maxOdds}
                 AND ae.position_current_value IS NOT NULL
                 AND ae.whale_category = ${category}
-                AND (
-                  CASE WHEN ${includeResolved}::boolean = TRUE
-                    THEN EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
-                    ELSE NOT EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
-                  END
-                )
-              ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
+              ORDER BY ae.condition_id, ae.outcome, ae.wallet, ae.fill_timestamp DESC
             ),
-            with_effective AS (
-              -- Compute mark-to-market effective values, filter on minPosition
+            with_details AS (
               SELECT d.*,
                 pso.synced_position_size, pso.synced_avg_price, pso.synced_current_value, pso.synced_payout_if_wins,
                 pso.synced_at, pso.sync_status, pso.position_state,
@@ -1949,26 +1913,6 @@ export async function GET(req: NextRequest) {
               FROM deduped d
               LEFT JOIN position_sync_overlay pso ON d.condition_id = pso.condition_id AND d.wallet = pso.wallet AND d.outcome = pso.outcome
               LEFT JOIN outcome_price_cache opc ON d.condition_id = opc.condition_id AND d.outcome = opc.outcome
-              WHERE COALESCE(
-                COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric * opc.price::numeric,
-                pso.synced_current_value,
-                pso.last_known_current_value,
-                d.position_current_value
-              ) >= ${minPosition}
-            ),
-            aggregated AS (
-              SELECT condition_id, outcome,
-                COUNT(DISTINCT wallet)::int as distinct_wallets,
-                COALESCE(SUM(effective_current_value), 0) as total_val,
-                (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                  OR COALESCE(SUM(effective_current_value), 0) >= ${thresholds.minTotalValue}) AS qualifies
-              FROM with_effective GROUP BY condition_id, outcome
-            ),
-            group_keys AS (
-              SELECT condition_id, outcome FROM aggregated
-              WHERE qualifies = TRUE
-              ORDER BY distinct_wallets DESC, total_val DESC, condition_id ASC, outcome ASC
-              LIMIT ${maxGroups}
             ),
             ranked AS (
               SELECT e.condition_id, e.outcome, e.wallet,
@@ -1993,9 +1937,8 @@ export async function GET(req: NextRequest) {
                 e.last_known_payout_if_wins::text as last_known_payout_if_wins,
                 e.last_nonzero_at::text as last_nonzero_at,
                 ROW_NUMBER() OVER (PARTITION BY e.condition_id, e.outcome
-                  ORDER BY e.effective_current_value DESC, e.wallet ASC)::int as rn
-              FROM with_effective e
-              INNER JOIN group_keys g ON e.condition_id = g.condition_id AND e.outcome = g.outcome
+                  ORDER BY COALESCE(e.effective_current_value, 0) DESC, e.wallet ASC)::int as rn
+              FROM with_details e
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = e.condition_id AND mfp.wallet = e.wallet AND mfp.outcome = e.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
@@ -2003,44 +1946,25 @@ export async function GET(req: NextRequest) {
           `;
           break;
         default:
+          // Use known group keys from aggregate query (don't recompute qualification)
           walletDetailsResult = await sql<WalletDetailRow>`
-            WITH deduped AS (
-              SELECT DISTINCT ON (condition_id, outcome, wallet)
-                condition_id, outcome, wallet,
-                position_current_value, position_size, position_avg_price, fill_price, fill_timestamp,
-                trader_name, trader_pseudonym, is_whale, whale_label
+            WITH known_groups AS (
+              SELECT elem->>'condition_id' as condition_id, elem->>'outcome' as outcome
+              FROM jsonb_array_elements(${knownGroupsJson}::jsonb) as elem
+            ),
+            deduped AS (
+              SELECT DISTINCT ON (ae.condition_id, ae.outcome, ae.wallet)
+                ae.condition_id, ae.outcome, ae.wallet,
+                ae.position_current_value, ae.position_size, ae.position_avg_price, ae.fill_price, ae.fill_timestamp,
+                ae.trader_name, ae.trader_pseudonym, ae.is_whale, ae.whale_label
               FROM alert_events ae
+              INNER JOIN known_groups kg ON ae.condition_id = kg.condition_id AND ae.outcome = kg.outcome
               WHERE ae.fill_timestamp >= ${convergenceCutoff}::timestamptz
                 AND ae.fill_price <= ${maxOdds}
                 AND ae.position_current_value IS NOT NULL
-                AND (
-                  ${excludeCategory}::text IS NULL
-                  OR ${excludeCategory} != 'crypto'
-                  OR (
-                    ae.whale_category IS DISTINCT FROM 'crypto'
-                    AND ae.title NOT ILIKE '%bitcoin%'
-                    AND ae.title NOT ILIKE '%btc%'
-                    AND ae.title NOT ILIKE '%ethereum%'
-                    AND ae.title NOT ILIKE '%eth %'
-                    AND ae.title NOT ILIKE '%solana%'
-                    AND ae.title NOT ILIKE '%sol %'
-                    AND ae.title NOT ILIKE '%crypto%'
-                    AND ae.title NOT ILIKE '%token%'
-                    AND ae.title NOT ILIKE '%market cap%'
-                    AND ae.title NOT ILIKE '%fdv%'
-                    AND ae.title NOT ILIKE '%defi%'
-                  )
-                )
-                AND (
-                  CASE WHEN ${includeResolved}::boolean = TRUE
-                    THEN EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
-                    ELSE NOT EXISTS (SELECT 1 FROM market_status ms2 WHERE ms2.condition_id = ae.condition_id AND ms2.market_resolved = TRUE AND ms2.winning_outcome IS NOT NULL AND TRIM(ms2.winning_outcome) != '')
-                  END
-                )
-              ORDER BY condition_id, outcome, wallet, fill_timestamp DESC
+              ORDER BY ae.condition_id, ae.outcome, ae.wallet, ae.fill_timestamp DESC
             ),
-            with_effective AS (
-              -- Compute mark-to-market effective values, filter on minPosition
+            with_details AS (
               SELECT d.*,
                 pso.synced_position_size, pso.synced_avg_price, pso.synced_current_value, pso.synced_payout_if_wins,
                 pso.synced_at, pso.sync_status, pso.position_state,
@@ -2056,26 +1980,6 @@ export async function GET(req: NextRequest) {
               FROM deduped d
               LEFT JOIN position_sync_overlay pso ON d.condition_id = pso.condition_id AND d.wallet = pso.wallet AND d.outcome = pso.outcome
               LEFT JOIN outcome_price_cache opc ON d.condition_id = opc.condition_id AND d.outcome = opc.outcome
-              WHERE COALESCE(
-                COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric * opc.price::numeric,
-                pso.synced_current_value,
-                pso.last_known_current_value,
-                d.position_current_value
-              ) >= ${minPosition}
-            ),
-            aggregated AS (
-              SELECT condition_id, outcome,
-                COUNT(DISTINCT wallet)::int as distinct_wallets,
-                COALESCE(SUM(effective_current_value), 0) as total_val,
-                (COUNT(DISTINCT wallet) >= ${thresholds.minWallets}
-                  OR COALESCE(SUM(effective_current_value), 0) >= ${thresholds.minTotalValue}) AS qualifies
-              FROM with_effective GROUP BY condition_id, outcome
-            ),
-            group_keys AS (
-              SELECT condition_id, outcome FROM aggregated
-              WHERE qualifies = TRUE
-              ORDER BY distinct_wallets DESC, total_val DESC, condition_id ASC, outcome ASC
-              LIMIT ${maxGroups}
             ),
             ranked AS (
               SELECT e.condition_id, e.outcome, e.wallet,
@@ -2100,9 +2004,8 @@ export async function GET(req: NextRequest) {
                 e.last_known_payout_if_wins::text as last_known_payout_if_wins,
                 e.last_nonzero_at::text as last_nonzero_at,
                 ROW_NUMBER() OVER (PARTITION BY e.condition_id, e.outcome
-                  ORDER BY e.effective_current_value DESC, e.wallet ASC)::int as rn
-              FROM with_effective e
-              INNER JOIN group_keys g ON e.condition_id = g.condition_id AND e.outcome = g.outcome
+                  ORDER BY COALESCE(e.effective_current_value, 0) DESC, e.wallet ASC)::int as rn
+              FROM with_details e
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = e.condition_id AND mfp.wallet = e.wallet AND mfp.outcome = e.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
