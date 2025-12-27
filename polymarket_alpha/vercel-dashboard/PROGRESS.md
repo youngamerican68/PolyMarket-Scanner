@@ -1,5 +1,61 @@
 # Polymarket Tracker - Development Progress
 
+## Session: December 27, 2025 (GitHub Actions Job Logging)
+
+### GitHub Actions job_runs Logging (Completed)
+
+**Goal:** Make the GitHub Actions–scheduled `collect-trades` job log to the same `public.job_runs` table that Vercel jobs use, enabling heartbeat monitoring visibility.
+
+**Implementation:**
+
+1. **New Script:** `scripts/gha-job-logger.ts`
+   - Direct PostgreSQL connection to Neon (via `pg` package)
+   - Commands: `sanity-check`, `start <job_name>`, `finish <id> success|error`
+   - SSL with fallback for CI environments
+   - Prints only sanitized host/db (never secrets)
+   - Adds `source: "github-actions"` to metrics for disambiguation
+
+2. **Workflow Updates:** `.github/workflows/collect-trades.yml`
+   - Checkout repo, setup Node 20, `npm ci`
+   - DB sanity check before starting
+   - Insert `job_runs` row with `status='running'` at start
+   - EXIT trap updates to `success` or `error` on completion
+   - Guard against empty `JOB_RUN_ID` if start fails
+
+3. **Dependencies:** Moved `pg` from devDependencies to dependencies (runtime dep for GHA)
+
+**Required GitHub Secret:**
+- `POSTGRES_URL` - Neon connection string with `sslmode=require`
+
+**Metrics JSONB includes:**
+- `source`: `"github-actions"` (vs absent for Vercel-logged)
+- `gha.git_sha`: Short commit hash (8 chars)
+- `gha.workflow_run_id`: GitHub Actions run ID
+- `gha.run_number`: Sequential run number
+- `gha.workflow`: Workflow name
+- `gha.actor`: GitHub user who triggered
+
+**Verification SQL:**
+```sql
+SELECT id, status, started_at, finished_at,
+       metrics->>'source' as source,
+       metrics->'gha'->>'workflow_run_id' as gha_run_id,
+       metrics->'gha'->>'git_sha' as git_sha
+FROM public.job_runs
+WHERE job_name = 'collect-trades'
+ORDER BY started_at DESC
+LIMIT 5;
+```
+
+**Files Created/Modified:**
+- `scripts/gha-job-logger.ts` (new)
+- `scripts/verify-job-runs-schema.ts` (new - schema verification utility)
+- `.github/workflows/collect-trades.yml`
+- `package.json`
+- `docs/ops.md`
+
+---
+
 ## Session: December 24, 2025 (Phase 10 + UI Fixes)
 
 ### Phase 10: Position Sync Overlay (Completed)
