@@ -38,48 +38,268 @@ interface JobMetrics {
   rowsUpdated: number;
   rowsNotFound: number;
   errors: string[];
+  // Source breakdown metrics
+  walletsFromAlertEvents: number;
+  walletsFromSnapshot: number;
+  walletsWithStaleOverlay: number;
+  walletsWithMissingOverlay: number;
+  // Reconciliation metric
+  unresolvedSnapshotWalletsNotInOverlay: number;
 }
 
-// Get distinct wallets from alert_events (unresolved markets only)
-async function getWalletsToSync(): Promise<string[]> {
+// Wallet selection result with metadata for metrics
+interface WalletSelectionResult {
+  wallets: string[];
+  fromAlertEvents: number;
+  fromSnapshot: number;
+  staleOverlay: number;
+  missingOverlay: number;
+}
+
+// Unified wallet sourcing: combines alert_events + snapshot wallets
+// Prioritizes: missing overlay > stale overlay > recent activity
+// Uses consistent unresolved-market predicate across both sources
+async function getWalletsToSync(): Promise<WalletSelectionResult> {
   const cutoff = new Date(Date.now() - ALERT_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
 
-  const result = await sql<{ wallet: string }>`
-    SELECT DISTINCT ae.wallet
-    FROM alert_events ae
-    LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
-    WHERE ae.fill_timestamp >= ${cutoff}::timestamptz
-      AND ae.position_current_value IS NOT NULL
-      AND (
-        ms.market_resolved IS NOT TRUE
-        OR ms.winning_outcome IS NULL
-        OR TRIM(ms.winning_outcome) = ''
+  // Single unified query with CTEs for clarity and consistency
+  // PERF: unresolved_conditions only scans condition_ids we actually care about:
+  //   - alert_events within 72h window (not full history)
+  //   - wallet_position_snapshot (already bounded by snapshot lifecycle)
+  const result = await sql<{
+    wallet: string;
+    source: string;
+    priority: number;
+    overlay_status: string;
+  }>`
+    WITH
+    -- Unified unresolved market definition (single source of truth)
+    -- A market is unresolved if: not in market_status, OR market_resolved is not true, OR no valid winning_outcome
+    -- PERF: Constrain alert_events to 72h window to avoid full table scan
+    unresolved_conditions AS (
+      SELECT DISTINCT condition_id
+      FROM (
+        -- Only condition_ids from RECENT alert_events (72h) - avoids full scan
+        SELECT DISTINCT condition_id
+        FROM alert_events
+        WHERE condition_id IS NOT NULL
+          AND fill_timestamp >= ${cutoff}::timestamptz
+        UNION
+        -- All condition_ids from snapshot (already bounded by snapshot lifecycle)
+        SELECT DISTINCT condition_id
+        FROM wallet_position_snapshot
+        WHERE condition_id IS NOT NULL
+      ) relevant_conditions
+      WHERE NOT EXISTS (
+        SELECT 1 FROM market_status ms
+        WHERE ms.condition_id = relevant_conditions.condition_id
+          AND ms.market_resolved = TRUE
+          AND ms.winning_outcome IS NOT NULL
+          AND TRIM(ms.winning_outcome) != ''
       )
-    ORDER BY ae.wallet
+    ),
+
+    -- Source 1: Wallets from alert_events with recent fills (72h)
+    -- No longer gated on position_current_value IS NOT NULL for wallet selection
+    alert_wallets AS (
+      SELECT
+        ae.wallet,
+        'alert_events'::text AS source,
+        MAX(ae.fill_timestamp) AS last_activity
+      FROM alert_events ae
+      WHERE ae.wallet IS NOT NULL
+        AND ae.fill_timestamp >= ${cutoff}::timestamptz
+        AND ae.condition_id IN (SELECT condition_id FROM unresolved_conditions)
+      GROUP BY ae.wallet
+    ),
+
+    -- Source 2: Wallets from snapshot with unresolved positions
+    -- These may have older alert_events or no recent fills
+    snapshot_wallets AS (
+      SELECT
+        wps.wallet,
+        'snapshot'::text AS source,
+        MAX(wps.updated_at) AS last_activity
+      FROM wallet_position_snapshot wps
+      WHERE wps.wallet IS NOT NULL
+        AND wps.condition_id IN (SELECT condition_id FROM unresolved_conditions)
+      GROUP BY wps.wallet
+    ),
+
+    -- Combine both sources with UNION ALL, then aggregate per wallet
+    -- This correctly handles wallets appearing in both sources
+    combined_wallets AS (
+      SELECT wallet, source, last_activity FROM alert_wallets
+      UNION ALL
+      SELECT wallet, source, last_activity FROM snapshot_wallets
+    ),
+
+    -- Dedupe by wallet: determine primary source and pick max last_activity
+    -- Uses explicit aggregation for deterministic results
+    deduped_wallets AS (
+      SELECT
+        wallet,
+        -- If wallet appears in both sources, mark as 'both'
+        CASE
+          WHEN COUNT(DISTINCT source) > 1 THEN 'both'
+          ELSE MAX(source)
+        END AS primary_source,
+        -- Pick the most recent activity timestamp across all sources
+        -- Both are timestamptz so MAX() is semantically correct
+        MAX(last_activity) AS last_activity
+      FROM combined_wallets
+      GROUP BY wallet
+    ),
+
+    -- Join with wallet_sync_state to determine sync freshness
+    wallet_with_overlay AS (
+      SELECT
+        dw.wallet,
+        dw.primary_source,
+        dw.last_activity,
+        wss.last_synced_at,
+        CASE
+          WHEN wss.wallet IS NULL THEN 'missing'
+          WHEN wss.last_synced_at IS NULL THEN 'never_synced'
+          WHEN wss.last_synced_at < NOW() - INTERVAL '30 minutes' THEN 'stale'
+          ELSE 'fresh'
+        END AS overlay_status,
+        -- Priority: lower = higher priority
+        -- 1 = missing overlay, 2 = never synced, 3 = stale, 4 = fresh
+        CASE
+          WHEN wss.wallet IS NULL THEN 1
+          WHEN wss.last_synced_at IS NULL THEN 2
+          WHEN wss.last_synced_at < NOW() - INTERVAL '30 minutes' THEN 3
+          ELSE 4
+        END AS priority
+      FROM deduped_wallets dw
+      LEFT JOIN wallet_sync_state wss ON wss.wallet = dw.wallet
+    )
+
+    -- Final selection: prioritize missing/stale, then by activity, then wallet for determinism
+    SELECT
+      wallet,
+      primary_source AS source,
+      priority,
+      overlay_status
+    FROM wallet_with_overlay
+    ORDER BY
+      priority ASC,                    -- Missing/stale first
+      last_activity DESC NULLS LAST,   -- Most recently active next
+      wallet ASC                       -- Deterministic tiebreaker
     LIMIT ${MAX_WALLETS_PER_RUN}
   `;
 
-  return result.rows.map(r => r.wallet);
+  // Extract wallets and compute source breakdown
+  const wallets = result.rows.map(r => r.wallet);
+
+  const fromAlertEvents = result.rows.filter(r => r.source === 'alert_events' || r.source === 'both').length;
+  const fromSnapshot = result.rows.filter(r => r.source === 'snapshot' || r.source === 'both').length;
+  const staleOverlay = result.rows.filter(r => r.overlay_status === 'stale').length;
+  const missingOverlay = result.rows.filter(r => r.overlay_status === 'missing' || r.overlay_status === 'never_synced').length;
+
+  return {
+    wallets,
+    fromAlertEvents,
+    fromSnapshot,
+    staleOverlay,
+    missingOverlay,
+  };
+}
+
+// Reconciliation check: count unresolved snapshot wallets not in overlay
+async function countUnresolvedSnapshotWalletsNotInOverlay(): Promise<number> {
+  const result = await sql<{ count: number }>`
+    WITH unresolved_conditions AS (
+      SELECT DISTINCT condition_id
+      FROM wallet_position_snapshot wps
+      WHERE NOT EXISTS (
+        SELECT 1 FROM market_status ms
+        WHERE ms.condition_id = wps.condition_id
+          AND ms.market_resolved = TRUE
+          AND ms.winning_outcome IS NOT NULL
+          AND TRIM(ms.winning_outcome) != ''
+      )
+    )
+    SELECT COUNT(DISTINCT wps.wallet)::int AS count
+    FROM wallet_position_snapshot wps
+    WHERE wps.condition_id IN (SELECT condition_id FROM unresolved_conditions)
+      AND NOT EXISTS (
+        SELECT 1 FROM position_sync_overlay pso
+        WHERE pso.wallet = wps.wallet
+          AND pso.condition_id = wps.condition_id
+          AND pso.outcome = wps.outcome
+          AND pso.synced_at >= NOW() - INTERVAL '1 hour'
+      )
+  `;
+  return result.rows[0]?.count ?? 0;
 }
 
 // Get condition_id + outcome pairs for a wallet
+// Sources from both alert_events AND snapshot for complete coverage
+// Uses consistent unresolved-market predicate
+// PERF: Constrains alert_events to 72h window to avoid full scan
 async function getDashboardRowsForWallet(
   wallet: string
 ): Promise<Array<{ condition_id: string; outcome: string }>> {
   const cutoff = new Date(Date.now() - ALERT_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
+  const walletLower = wallet.toLowerCase();
 
+  // Unified query: combines alert_events and snapshot positions
+  // for unresolved markets only
+  // Note: UNION on (condition_id, outcome) correctly dedupes by business key
   const result = await sql<{ condition_id: string; outcome: string }>`
-    SELECT DISTINCT ae.condition_id, ae.outcome
-    FROM alert_events ae
-    LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
-    WHERE ae.wallet = ${wallet.toLowerCase()}
-      AND ae.fill_timestamp >= ${cutoff}::timestamptz
-      AND ae.position_current_value IS NOT NULL
-      AND (
-        ms.market_resolved IS NOT TRUE
-        OR ms.winning_outcome IS NULL
-        OR TRIM(ms.winning_outcome) = ''
+    WITH
+    -- Unified unresolved market predicate
+    -- PERF: Constrain alert_events to 72h window for this wallet
+    unresolved_conditions AS (
+      SELECT DISTINCT condition_id
+      FROM (
+        -- Only recent alert_events (72h) for this wallet
+        SELECT DISTINCT condition_id
+        FROM alert_events
+        WHERE wallet = ${walletLower}
+          AND condition_id IS NOT NULL
+          AND fill_timestamp >= ${cutoff}::timestamptz
+        UNION
+        -- All snapshot positions for this wallet
+        SELECT DISTINCT condition_id
+        FROM wallet_position_snapshot
+        WHERE wallet = ${walletLower}
+          AND condition_id IS NOT NULL
+      ) wallet_conditions
+      WHERE NOT EXISTS (
+        SELECT 1 FROM market_status ms
+        WHERE ms.condition_id = wallet_conditions.condition_id
+          AND ms.market_resolved = TRUE
+          AND ms.winning_outcome IS NOT NULL
+          AND TRIM(ms.winning_outcome) != ''
       )
+    ),
+
+    -- Source 1: From alert_events (recent fills, 72h window)
+    alert_positions AS (
+      SELECT DISTINCT ae.condition_id, ae.outcome
+      FROM alert_events ae
+      WHERE ae.wallet = ${walletLower}
+        AND ae.fill_timestamp >= ${cutoff}::timestamptz
+        AND ae.condition_id IN (SELECT condition_id FROM unresolved_conditions)
+        AND ae.outcome IS NOT NULL
+    ),
+
+    -- Source 2: From snapshot (may have older positions not in recent alerts)
+    snapshot_positions AS (
+      SELECT DISTINCT wps.condition_id, wps.outcome
+      FROM wallet_position_snapshot wps
+      WHERE wps.wallet = ${walletLower}
+        AND wps.condition_id IN (SELECT condition_id FROM unresolved_conditions)
+        AND wps.outcome IS NOT NULL
+    )
+
+    -- Combine both sources: UNION dedupes by (condition_id, outcome) which is the business key
+    SELECT condition_id, outcome FROM alert_positions
+    UNION
+    SELECT condition_id, outcome FROM snapshot_positions
   `;
 
   return result.rows;
@@ -229,6 +449,13 @@ export async function POST(request: Request) {
     rowsUpdated: 0,
     rowsNotFound: 0,
     errors: [],
+    // Source breakdown metrics
+    walletsFromAlertEvents: 0,
+    walletsFromSnapshot: 0,
+    walletsWithStaleOverlay: 0,
+    walletsWithMissingOverlay: 0,
+    // Reconciliation metric
+    unresolvedSnapshotWalletsNotInOverlay: 0,
   };
 
   try {
@@ -241,9 +468,21 @@ export async function POST(request: Request) {
     const jobRunId = jobRunResult.rows[0]?.id;
     console.log(`[${JOB_NAME}] Started job ${jobRunId}`);
 
-    // Get wallets to sync (unresolved markets only)
-    const wallets = await getWalletsToSync();
+    // Get wallets to sync (unified: alert_events + snapshot, unresolved markets only)
+    const walletSelection = await getWalletsToSync();
+    const wallets = walletSelection.wallets;
     metrics.walletsRequested = wallets.length;
+    metrics.walletsFromAlertEvents = walletSelection.fromAlertEvents;
+    metrics.walletsFromSnapshot = walletSelection.fromSnapshot;
+    metrics.walletsWithStaleOverlay = walletSelection.staleOverlay;
+    metrics.walletsWithMissingOverlay = walletSelection.missingOverlay;
+
+    // Run reconciliation check (non-blocking)
+    try {
+      metrics.unresolvedSnapshotWalletsNotInOverlay = await countUnresolvedSnapshotWalletsNotInOverlay();
+    } catch (err) {
+      console.warn('[sync-positions] Reconciliation check failed (non-fatal):', err);
+    }
 
     if (wallets.length === 0) {
       const durationMs = Date.now() - startTime;
@@ -261,7 +500,7 @@ export async function POST(request: Request) {
       }, { headers: NO_CACHE_HEADERS });
     }
 
-    console.log(`[${JOB_NAME}] Syncing ${wallets.length} wallets`);
+    console.log(`[${JOB_NAME}] Syncing ${wallets.length} wallets (alert_events: ${metrics.walletsFromAlertEvents}, snapshot: ${metrics.walletsFromSnapshot}, missing_overlay: ${metrics.walletsWithMissingOverlay}, stale_overlay: ${metrics.walletsWithStaleOverlay})`);
 
     // Sync wallets with concurrency limit
     await Promise.all(
@@ -288,6 +527,13 @@ export async function POST(request: Request) {
       positionsUpserted: metrics.rowsUpdated,
       positionsNotFound: metrics.rowsNotFound,
       errorCount: metrics.walletsFailed,
+      // Source breakdown
+      fromAlertEvents: metrics.walletsFromAlertEvents,
+      fromSnapshot: metrics.walletsFromSnapshot,
+      missingOverlay: metrics.walletsWithMissingOverlay,
+      staleOverlay: metrics.walletsWithStaleOverlay,
+      // Reconciliation
+      unresolvedNotInOverlay: metrics.unresolvedSnapshotWalletsNotInOverlay,
     }));
 
     return NextResponse.json({
@@ -311,6 +557,11 @@ export async function POST(request: Request) {
       positionsUpserted: metrics.rowsUpdated,
       positionsNotFound: metrics.rowsNotFound,
       errorCount: metrics.walletsFailed + 1, // +1 for the fatal error
+      // Source breakdown
+      fromAlertEvents: metrics.walletsFromAlertEvents,
+      fromSnapshot: metrics.walletsFromSnapshot,
+      missingOverlay: metrics.walletsWithMissingOverlay,
+      staleOverlay: metrics.walletsWithStaleOverlay,
       error: errorMessage.slice(0, 200),
     }));
 
