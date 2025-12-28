@@ -1,5 +1,86 @@
 # Polymarket Tracker - Development Progress
 
+## Session: December 28, 2025 (Sync-Positions Wallet Sourcing Fix)
+
+### Bug: 291 Snapshot Wallets Not Being Synced (Fixed)
+
+**Symptom:** Reconciliation analysis showed 291 wallets existed in `wallet_position_snapshot` but were never picked up by the `sync-positions` job. These wallets had unresolved positions that weren't being refreshed.
+
+**Root Cause:** The `sync-positions` job only sourced wallets from `alert_events` with:
+- `fill_timestamp >= 72 hours ago`
+- `position_current_value IS NOT NULL`
+
+This missed wallets that:
+- Had older alert_events (>72h)
+- Still had unresolved positions captured in snapshot
+
+**Fix:** Unified wallet sourcing from both `alert_events` AND `wallet_position_snapshot`:
+
+```typescript
+// New wallet selection combines both sources
+WITH
+  unresolved_conditions AS (...),  -- Consistent predicate
+  alert_wallets AS (...),          -- From alert_events (72h)
+  snapshot_wallets AS (...),       -- From wallet_position_snapshot
+  combined_wallets AS (UNION ALL),
+  deduped_wallets AS (GROUP BY wallet),
+  wallet_with_overlay AS (LEFT JOIN wallet_sync_state)
+SELECT wallet ORDER BY priority ASC, last_activity DESC
+```
+
+**Priority-Based Selection:**
+| Priority | Status | Description |
+|----------|--------|-------------|
+| 1 | missing | No wallet_sync_state row |
+| 2 | never_synced | Row exists, last_synced_at IS NULL |
+| 3 | stale | last_synced_at > 30 min ago |
+| 4 | fresh | Recently synced |
+
+**New Metrics:**
+```json
+{
+  "fromAlertEvents": 84,
+  "fromSnapshot": 63,
+  "missingOverlay": 0,
+  "staleOverlay": 75,
+  "unresolvedNotInOverlay": 7
+}
+```
+
+**Result:** `unresolvedNotInOverlay` dropped from **291 → 7** (97.6% reduction) on first run after deployment.
+
+**Migration 006:** Added performance indexes for new query patterns:
+- `idx_alert_events_fill_ts_condition` - 72h window scan
+- `idx_alert_events_wallet_fill_condition` - per-wallet lookups
+- `idx_wallet_position_snapshot_condition` - condition_id lookups
+- `idx_wallet_position_snapshot_wallet_condition` - wallet + condition
+- `idx_wallet_sync_state_wallet_last_synced` - overlay freshness
+- `idx_position_sync_overlay_reconciliation` - reconciliation check
+
+**Commit:** `4b49453` - fix(sync-positions): unify wallet sourcing from alert_events + snapshot
+
+**Files Created/Modified:**
+- `app/api/jobs/sync-positions/route.ts` - Unified wallet sourcing
+- `lib/migrations/006_sync_positions_indexes.sql` - New indexes
+- `tests/sync-positions-wallet-selection.test.ts` - Regression tests
+
+---
+
+### Known Issue: 100-Position Truncation (Future TODO)
+
+**Observation:** Multiple wallets hit the 100-position fetch limit:
+```
+[fetchPositionsWithRetry] Wallet 0x... returned 100 positions (at limit, may be truncated)
+```
+
+**Impact:** Wallets with >100 positions may have incomplete data in the overlay.
+
+**Future Fix:** Add pagination to `fetchPositionsWithRetry()` to loop until `results.length < limit`.
+
+**Priority:** Low - doesn't affect wallet sourcing fix, only affects large position counts for specific wallets.
+
+---
+
 ## Session: December 28, 2025 (Convergence Wallet Details Fix)
 
 ### Bug: Convergence Tabs Not Expanding for Resolved Markets (Fixed)
