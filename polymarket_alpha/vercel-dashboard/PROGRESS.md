@@ -1,5 +1,47 @@
 # Polymarket Tracker - Development Progress
 
+## Session: December 28, 2025 (Convergence Wallet Details Fix)
+
+### Bug: Convergence Tabs Not Expanding for Resolved Markets (Fixed)
+
+**Symptom:** Clicking convergence rows did nothing. Groups showed "Wallets: 3" but "Total Cost / Value: $0 / $0".
+
+**Root Cause:** The wallet details query was **recomputing** group qualification independently from the aggregate query. For resolved markets, `outcome_price_cache.price` is NULL, causing `effective_current_value` calculations to fail and produce different group keys than the aggregate query already determined.
+
+**Fix:** Pass known group keys from `groupMap` to wallet details query using JSON (since sql template doesn't support arrays). Applied to all 4 `filterMode` cases (both, whalesOnly, categoryOnly, none).
+
+```typescript
+// Build JSON of known groups from aggregate query
+const knownGroupsJson = JSON.stringify(
+  Array.from(groupMap.values()).map(g => ({
+    condition_id: g.conditionId,
+    outcome: g.outcome
+  }))
+);
+```
+
+```sql
+-- In SQL, extract with jsonb_array_elements
+WITH known_groups AS (
+  SELECT elem->>'condition_id' as condition_id, elem->>'outcome' as outcome
+  FROM jsonb_array_elements(${knownGroupsJson}::jsonb) as elem
+),
+deduped AS (
+  ...
+  INNER JOIN known_groups kg ON ae.condition_id = kg.condition_id AND ae.outcome = kg.outcome
+  ...
+)
+```
+
+**Result:** -166 lines of redundant recomputation logic, +69 lines using known keys. Wallet details now always match aggregate groups.
+
+**Commit:** `6aeed26` - fix(convergence): use known group keys for wallet details query
+
+**Files Modified:**
+- `app/api/report/route.ts`
+
+---
+
 ## Session: December 27, 2025 (GitHub Actions Job Logging)
 
 ### GitHub Actions job_runs Logging (Completed)
