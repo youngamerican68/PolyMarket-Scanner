@@ -556,14 +556,14 @@ function SyncedPayoutDisplay({ wallet, marketResolved, winningOutcome, positionO
   if (positionState === 'not_found_in_sync' && wallet.lastKnownPayoutIfWins !== null && wallet.lastNonzeroAt) {
     const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
     const lastCheckedAge = wallet.syncedAt ? formatTimeAgo(wallet.syncedAt) : null
+    // For unresolved markets, position was sold/closed - show as "Sold" not "Not found"
     const tooltipText = lastCheckedAge
-      ? `Last known value as of ${lastKnownAge}. Last checked ${lastCheckedAge}. Position not found in API (may be closed/redeemed).`
-      : `Last known value as of ${lastKnownAge}. Position not found in API (may be closed/redeemed).`
+      ? `Position sold/closed. Last value as of ${lastKnownAge}. Checked ${lastCheckedAge}.`
+      : `Position sold/closed. Last value as of ${lastKnownAge}.`
     return (
       <span className="whitespace-nowrap" title={tooltipText}>
-        <span className="text-amber-400">{wallet.lastKnownPayoutIfWinsFormatted}</span>
-        <span className="ml-1 text-xs px-1 py-0.5 bg-amber-500/20 text-amber-400 rounded">Not found</span>
-        {lastCheckedAge && <span className="ml-1 text-xs text-gray-500">⟳ {lastCheckedAge}</span>}
+        <span className="text-gray-400">{wallet.lastKnownPayoutIfWinsFormatted}</span>
+        <span className="ml-1 text-xs px-1 py-0.5 bg-gray-600/30 text-gray-400 rounded">Sold</span>
       </span>
     )
   }
@@ -583,25 +583,18 @@ function SyncedPayoutDisplay({ wallet, marketResolved, winningOutcome, positionO
   // Legacy fallback: sync_status = 'not_found' without positionState (pre-migration data)
   // (Resolved markets already handled above, so this is for unresolved markets)
   if (wallet.syncStatus === 'not_found' && wallet.syncedAt) {
-    // Show last-known if available, otherwise show "—"
+    // For unresolved markets, position was sold/closed - show as "Sold" not "Not found"
     if (wallet.lastKnownPayoutIfWins !== null && wallet.lastNonzeroAt) {
       const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
-      const lastCheckedAge = formatTimeAgo(wallet.syncedAt)
       return (
-        <span className="whitespace-nowrap" title={`Last known value as of ${lastKnownAge}. Last checked ${lastCheckedAge}. Position not found in API.`}>
-          <span className="text-amber-400">{wallet.lastKnownPayoutIfWinsFormatted}</span>
-          <span className="ml-1 text-xs px-1 py-0.5 bg-amber-500/20 text-amber-400 rounded">Not found</span>
-          <span className="ml-1 text-xs text-gray-500">⟳ {lastCheckedAge}</span>
+        <span className="whitespace-nowrap" title={`Position sold/closed. Last value as of ${lastKnownAge}.`}>
+          <span className="text-gray-400">{wallet.lastKnownPayoutIfWinsFormatted}</span>
+          <span className="ml-1 text-xs px-1 py-0.5 bg-gray-600/30 text-gray-400 rounded">Sold</span>
         </span>
       )
     }
-    // No last-known data available
-    const lastCheckedAge = formatTimeAgo(wallet.syncedAt)
-    return (
-      <span className="text-gray-500" title={`Position not found in API. Last checked ${lastCheckedAge}. No historical data available.`}>
-        — <span className="text-xs text-gray-600">(not found {lastCheckedAge})</span>
-      </span>
-    )
+    // No last-known data available - just show dash
+    return <span className="text-gray-500">—</span>
   }
 
   // Fall back to snapshot data
@@ -692,17 +685,13 @@ function SyncedPositionCostValue({ wallet, marketResolved, winningOutcome, posit
   // (Resolved markets already handled above, so this is for unresolved markets)
   if (positionState === 'not_found_in_sync' && wallet.lastKnownPositionCost !== null && wallet.lastNonzeroAt) {
     const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
-    const lastCheckedAge = wallet.syncedAt ? formatTimeAgo(wallet.syncedAt) : null
-    const tooltipText = lastCheckedAge
-      ? `Last known value as of ${lastKnownAge}. Last checked ${lastCheckedAge}. Position not found in API (may be closed/redeemed).`
-      : `Last known value as of ${lastKnownAge}. Position not found in API (may be closed/redeemed).`
+    // For unresolved markets, position was sold/closed - show as "Sold" not "Not found"
     return (
-      <span className="whitespace-nowrap" title={tooltipText}>
-        <span className="text-amber-400">{wallet.lastKnownPositionCostFormatted}</span>
+      <span className="whitespace-nowrap" title={`Position sold/closed. Last value as of ${lastKnownAge}.`}>
+        <span className="text-gray-400">{wallet.lastKnownPositionCostFormatted}</span>
         <span className="text-poly-muted/50"> / </span>
-        <span className="text-amber-300">{wallet.lastKnownCurrentValueFormatted}</span>
-        <span className="ml-1 text-xs px-1 py-0.5 bg-amber-500/20 text-amber-400 rounded">Not found</span>
-        {lastCheckedAge && <span className="ml-1 text-xs text-gray-500">⟳ {lastCheckedAge}</span>}
+        <span className="text-gray-400">{wallet.lastKnownCurrentValueFormatted}</span>
+        <span className="ml-1 text-xs px-1 py-0.5 bg-gray-600/30 text-gray-400 rounded">Sold</span>
       </span>
     )
   }
@@ -724,27 +713,20 @@ function SyncedPositionCostValue({ wallet, marketResolved, winningOutcome, posit
   // Legacy fallback: sync_status = 'not_found' without positionState (pre-migration data)
   // (Resolved markets already handled above, so this is for unresolved markets)
   if (wallet.syncStatus === 'not_found' && wallet.syncedAt) {
-    // Show last-known if available, otherwise show "—"
+    // For unresolved markets, position was sold/closed - show as "Sold" not "Not found"
     if (wallet.lastKnownPositionCost !== null && wallet.lastNonzeroAt) {
       const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
-      const lastCheckedAge = formatTimeAgo(wallet.syncedAt)
       return (
-        <span className="whitespace-nowrap" title={`Last known value as of ${lastKnownAge}. Last checked ${lastCheckedAge}. Position not found in API.`}>
-          <span className="text-amber-400">{wallet.lastKnownPositionCostFormatted}</span>
+        <span className="whitespace-nowrap" title={`Position sold/closed. Last value as of ${lastKnownAge}.`}>
+          <span className="text-gray-400">{wallet.lastKnownPositionCostFormatted}</span>
           <span className="text-poly-muted/50"> / </span>
-          <span className="text-amber-300">{wallet.lastKnownCurrentValueFormatted}</span>
-          <span className="ml-1 text-xs px-1 py-0.5 bg-amber-500/20 text-amber-400 rounded">Not found</span>
-          <span className="ml-1 text-xs text-gray-500">⟳ {lastCheckedAge}</span>
+          <span className="text-gray-400">{wallet.lastKnownCurrentValueFormatted}</span>
+          <span className="ml-1 text-xs px-1 py-0.5 bg-gray-600/30 text-gray-400 rounded">Sold</span>
         </span>
       )
     }
-    // No last-known data available
-    const lastCheckedAge = formatTimeAgo(wallet.syncedAt)
-    return (
-      <span className="text-gray-500" title={`Position not found in API. Last checked ${lastCheckedAge}. No historical data available.`}>
-        — / — <span className="text-xs text-gray-600">(not found {lastCheckedAge})</span>
-      </span>
-    )
+    // No last-known data available - just show dash
+    return <span className="text-gray-500">— / —</span>
   }
 
   // Fall back to snapshot data
