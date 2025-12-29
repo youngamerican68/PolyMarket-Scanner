@@ -1491,14 +1491,14 @@ export default function ReportPage() {
                   <th className="text-right p-3 text-poly-muted font-medium" title="USD value of most recent fill">
                     Last Fill Value
                   </th>
+                  <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of TOTAL position">
+                    Pos Avg Entry
+                  </th>
                   <th className="text-right p-3 text-poly-muted font-medium" title="TOTAL position (all-time, not just this window): Cost basis / Current value">
                     <span className="flex items-center justify-end gap-1">
                       Position Cost / Value
                       <span className="text-xs text-poly-muted/60" title="Reflects full position, may include fills from before window">ⓘ</span>
                     </span>
-                  </th>
-                  <th className="text-right p-3 text-poly-muted font-medium" title="Average entry price of TOTAL position">
-                    Pos Avg Entry
                   </th>
                   <th className="text-right p-3 text-poly-muted font-medium" title="TOTAL payout if outcome wins - full position, not just window fills">
                     <span className="flex items-center justify-end gap-1">
@@ -1606,12 +1606,12 @@ export default function ReportPage() {
                             </span>
                           </td>
                           <td className="p-3 text-right text-poly-green">{position.lastFillValueFormatted}</td>
+                          <td className="p-3 text-right text-poly-muted">{position.positionAvgPriceFormatted}</td>
                           <td className="p-3 text-right">
                             <span className="text-poly-muted">{position.positionCostFormatted}</span>
                             <span className="text-poly-muted/50"> / </span>
                             <span className="text-white font-medium">{position.positionValueFormatted}</span>
                           </td>
-                          <td className="p-3 text-right text-poly-muted">{position.positionAvgPriceFormatted}</td>
                           <td className="p-3 text-right font-medium text-white">{position.totalPayoutIfWinsFormatted}</td>
                           <td className="p-3 text-right text-poly-muted text-xs whitespace-nowrap">
                             {formatTimeAgo(position.lastFillTimestamp)}
