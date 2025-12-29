@@ -875,15 +875,18 @@ export async function GET(req: NextRequest) {
             pso.synced_current_value,
             pso.last_known_current_value,
             be.position_current_value
-          ) as effective_current_value
+          ) as effective_current_value,
+          -- Effective position cost: shares × avg_entry (for filtering by investment amount)
+          COALESCE(pso.synced_position_size, pso.last_known_position_size, be.position_size)::numeric *
+          COALESCE(pso.synced_avg_price, pso.last_known_avg_price, be.position_avg_price)::numeric as effective_position_cost
         FROM base_events be
         LEFT JOIN position_sync_overlay pso ON be.condition_id = pso.condition_id AND be.wallet = pso.wallet AND be.outcome = pso.outcome
         LEFT JOIN outcome_price_cache opc ON be.condition_id = opc.condition_id AND be.outcome = opc.outcome
       ),
       filtered AS (
-        -- Apply minPosition filter on EFFECTIVE value
+        -- Apply minPosition filter on position COST (shares × avg_entry), not current value
         SELECT * FROM with_overlay
-        WHERE effective_current_value >= ${minPosition}
+        WHERE effective_position_cost >= ${minPosition} OR effective_position_cost IS NULL
       ),
       fill_counts AS (
         SELECT wallet, condition_id, outcome, COUNT(*)::int as fill_count
@@ -1239,13 +1242,13 @@ export async function GET(req: NextRequest) {
 
     // ========================================================================
     // Query 2b: Total positions count (for pagination)
-    // Uses same EFFECTIVE VALUE filtering as Query 1b
+    // Uses same EFFECTIVE POSITION COST filtering as Query 1b (shares × avg_price)
     // ========================================================================
 
     const totalPositionsResult = await sql<{ count: number }>`
       WITH base_positions AS (
         SELECT DISTINCT ON (ae.wallet, ae.condition_id, ae.outcome)
-          ae.wallet, ae.condition_id, ae.outcome, ae.position_current_value, ae.position_size
+          ae.wallet, ae.condition_id, ae.outcome, ae.position_current_value, ae.position_size, ae.position_avg_price
         FROM alert_events ae
         WHERE ae.fill_timestamp >= ${alertCutoff}::timestamptz
           AND ae.fill_price <= ${maxOdds}
@@ -1271,24 +1274,19 @@ export async function GET(req: NextRequest) {
         ORDER BY ae.wallet, ae.condition_id, ae.outcome, ae.fill_timestamp DESC
       ),
       with_overlay AS (
-        -- Join overlay + price cache to compute mark-to-market effective values
+        -- Join overlay to compute effective position cost (shares × avg_price)
         SELECT bp.*,
-          -- Effective current value: prefer mark-to-market (shares × cached_price), fallback to snapshot values
-          COALESCE(
-            COALESCE(pso.synced_position_size, pso.last_known_position_size, bp.position_size)::numeric * opc.price::numeric,
-            pso.synced_current_value,
-            pso.last_known_current_value,
-            bp.position_current_value
-          ) as effective_current_value
+          -- Effective position cost: shares × avg_entry (for filtering by investment amount)
+          COALESCE(pso.synced_position_size, pso.last_known_position_size, bp.position_size)::numeric *
+          COALESCE(pso.synced_avg_price, pso.last_known_avg_price, bp.position_avg_price)::numeric as effective_position_cost
         FROM base_positions bp
         LEFT JOIN position_sync_overlay pso ON bp.condition_id = pso.condition_id AND bp.wallet = pso.wallet AND bp.outcome = pso.outcome
-        LEFT JOIN outcome_price_cache opc ON bp.condition_id = opc.condition_id AND bp.outcome = opc.outcome
       ),
       filtered AS (
         SELECT wo.wallet, wo.condition_id, wo.outcome
         FROM with_overlay wo
         LEFT JOIN market_status ms ON wo.condition_id = ms.condition_id
-        WHERE wo.effective_current_value >= ${minPosition}
+        WHERE (wo.effective_position_cost >= ${minPosition} OR wo.effective_position_cost IS NULL)
           AND (
             CASE WHEN ${includeResolved}::boolean = TRUE
               THEN ms.market_resolved = TRUE AND ms.winning_outcome IS NOT NULL AND TRIM(ms.winning_outcome) != ''
