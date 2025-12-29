@@ -267,23 +267,21 @@ async function getWalletsToSync(): Promise<WalletSelectionResult> {
 
 // Reconciliation check: count unresolved snapshot wallets not in overlay
 // Rule A: "overlay row exists" = sync_status='synced' AND synced_at IS NOT NULL
+// Excludes resolved markets to match sync logic
 async function countUnresolvedSnapshotWalletsNotInOverlay(): Promise<number> {
   const result = await sql<{ count: number }>`
-    WITH unresolved_conditions AS (
-      SELECT DISTINCT condition_id
-      FROM wallet_position_snapshot wps
-      WHERE NOT EXISTS (
+    SELECT COUNT(DISTINCT wps.wallet)::int AS count
+    FROM wallet_position_snapshot wps
+    WHERE wps.shares > 0
+      -- Exclude resolved markets (match sync logic)
+      AND NOT EXISTS (
         SELECT 1 FROM market_status ms
         WHERE ms.condition_id = wps.condition_id
           AND ms.market_resolved = TRUE
           AND ms.winning_outcome IS NOT NULL
           AND TRIM(ms.winning_outcome) != ''
       )
-    )
-    SELECT COUNT(DISTINCT wps.wallet)::int AS count
-    FROM wallet_position_snapshot wps
-    WHERE wps.condition_id IN (SELECT condition_id FROM unresolved_conditions)
-      AND wps.shares > 0
+      -- Rule A: no valid overlay row
       AND NOT EXISTS (
         SELECT 1 FROM position_sync_overlay pso
         WHERE pso.wallet = wps.wallet
