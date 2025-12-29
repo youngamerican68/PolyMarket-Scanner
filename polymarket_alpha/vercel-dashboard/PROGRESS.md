@@ -83,12 +83,14 @@ SELECT wallet ORDER BY priority ASC, last_activity DESC
 
 ## Session: December 28, 2025 (Sync Overlay Hardening)
 
-### Comprehensive Sync Overlay Hardening (In Progress)
+### Comprehensive Sync Overlay Hardening (Completed ✅)
 
 **Problem:** Persistent "missing overlay" backlog despite wallet sourcing fix. Root causes:
 1. "Overlay row exists" was ambiguously defined
 2. Stub rows with NULL fields were masking missing data
 3. No observability into sync runs
+
+**Result:** Backlog drained from **341 → 32** (steady-state). The 32 remaining are "phantom" positions where snapshot says shares > 0 but API returns not_found.
 
 **Solution: 6-Part Hardening**
 
@@ -202,10 +204,33 @@ CREATE TABLE position_sync_run_wallet (
 - `app/api/jobs/sync-positions/route.ts` - Backlog-first selection, new metrics
 - `lib/migrations/007_sync_overlay_hardening.sql` - Schema + cleanup + observability
 
-**Next Steps:**
-1. Run Migration 007 in Neon SQL Editor (sections separately due to CONCURRENTLY)
-2. Deploy updated route.ts to Vercel
-3. Verify backlog drains to 0 in logs
+**Commits:**
+- `34af8b9` - feat(sync-positions): backlog-first selection + schema hardening
+- `f120b96` - fix(sync-positions): exclude resolved markets from backlog metric
+
+**Verification Results (Post-Migration 007):**
+```sql
+-- All checks passed
+null_status: 0      -- No NULL sync_status
+bad_synced: 0       -- No synced rows without synced_at
+empty_keys: 0       -- No empty/whitespace keys
+```
+
+**Steady-State Explanation:**
+The 32 remaining backlog wallets are "phantom" positions:
+- Snapshot has `shares > 0` for unresolved markets
+- API returns "not found" (position closed/redeemed)
+- These retry each run (aggressive retry strategy)
+- Will clear when markets resolve or snapshots update
+
+**Logs to Monitor:**
+```json
+{
+  "fromBacklog": 0,           // Should stay near 0
+  "fromLagging": 0,           // Occasional spikes OK
+  "unresolvedNotInOverlay": 32 // Steady-state (phantom positions)
+}
+```
 
 ---
 
