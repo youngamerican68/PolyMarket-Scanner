@@ -515,6 +515,31 @@ function SyncedPayoutDisplay({ wallet, marketResolved, winningOutcome, positionO
   // Check if this is a resolved winning position (likely redeemed)
   const isResolvedWin = marketResolved && winningOutcome && positionOutcome && winningOutcome === positionOutcome
 
+  // RESOLVED MARKETS: Show Lost/Won badges FIRST, regardless of position state
+  // If the market resolved and position lost, show "Lost" badge (payout = $0)
+  if (isResolvedLoss) {
+    const originalPayout = wallet.syncedPayoutIfWins ?? wallet.lastKnownPayoutIfWins ?? wallet.totalPayoutIfWins
+    const originalPayoutStr = originalPayout !== null ? formatMoney(originalPayout) : wallet.totalPayoutIfWinsFormatted
+    return (
+      <span className="whitespace-nowrap" title={`Position lost. Original potential payout was ${originalPayoutStr}.`}>
+        <span className="text-gray-500 line-through">{originalPayoutStr}</span>
+        <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
+      </span>
+    )
+  }
+
+  // If the market resolved and position won, show "Won" badge
+  if (isResolvedWin) {
+    const payoutValue = wallet.syncedPayoutIfWins ?? wallet.lastKnownPayoutIfWins ?? wallet.totalPayoutIfWins
+    const payoutStr = payoutValue !== null ? formatMoney(payoutValue) : wallet.totalPayoutIfWinsFormatted
+    return (
+      <span className="whitespace-nowrap" title={`Position won! Payout: ${payoutStr}.`}>
+        <span className="text-emerald-400 font-medium">{payoutStr}</span>
+        <span className="ml-1 text-xs px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">Won</span>
+      </span>
+    )
+  }
+
   // If position is open and we have synced data, show it normally
   if (positionState === 'open' && wallet.syncedPayoutIfWins !== null && wallet.syncedAt) {
     const syncAge = formatTimeAgo(wallet.syncedAt)
@@ -527,30 +552,10 @@ function SyncedPayoutDisplay({ wallet, marketResolved, winningOutcome, positionO
   }
 
   // If position is not found in sync but we have last-known values, show them with status pill
+  // (Resolved markets already handled above, so this is for unresolved markets)
   if (positionState === 'not_found_in_sync' && wallet.lastKnownPayoutIfWins !== null && wallet.lastNonzeroAt) {
     const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
     const lastCheckedAge = wallet.syncedAt ? formatTimeAgo(wallet.syncedAt) : null
-
-    // For resolved losing positions, show "Lost" instead of "Not found"
-    if (isResolvedLoss) {
-      return (
-        <span className="whitespace-nowrap" title={`Position lost. Original potential payout was ${wallet.lastKnownPayoutIfWinsFormatted}.`}>
-          <span className="text-gray-500 line-through">{wallet.lastKnownPayoutIfWinsFormatted}</span>
-          <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
-        </span>
-      )
-    }
-
-    // For resolved winning positions, show "Won" (likely redeemed)
-    if (isResolvedWin) {
-      return (
-        <span className="whitespace-nowrap" title={`Position won and likely redeemed. Payout was ${wallet.lastKnownPayoutIfWinsFormatted}.`}>
-          <span className="text-emerald-400">{wallet.lastKnownPayoutIfWinsFormatted}</span>
-          <span className="ml-1 text-xs px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">Won</span>
-        </span>
-      )
-    }
-
     const tooltipText = lastCheckedAge
       ? `Last known value as of ${lastKnownAge}. Last checked ${lastCheckedAge}. Position not found in API (may be closed/redeemed).`
       : `Last known value as of ${lastKnownAge}. Position not found in API (may be closed/redeemed).`
@@ -576,43 +581,8 @@ function SyncedPayoutDisplay({ wallet, marketResolved, winningOutcome, positionO
   }
 
   // Legacy fallback: sync_status = 'not_found' without positionState (pre-migration data)
+  // (Resolved markets already handled above, so this is for unresolved markets)
   if (wallet.syncStatus === 'not_found' && wallet.syncedAt) {
-    // For resolved losing positions, show "Lost" instead of "Not found"
-    if (isResolvedLoss) {
-      if (wallet.lastKnownPayoutIfWins !== null) {
-        return (
-          <span className="whitespace-nowrap" title={`Position lost. Original potential payout was ${wallet.lastKnownPayoutIfWinsFormatted}.`}>
-            <span className="text-gray-500 line-through">{wallet.lastKnownPayoutIfWinsFormatted}</span>
-            <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
-          </span>
-        )
-      }
-      return (
-        <span className="whitespace-nowrap" title="Position lost.">
-          <span className="text-gray-500">$0</span>
-          <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
-        </span>
-      )
-    }
-
-    // For resolved winning positions, show "Won" (likely redeemed)
-    if (isResolvedWin) {
-      if (wallet.lastKnownPayoutIfWins !== null) {
-        return (
-          <span className="whitespace-nowrap" title={`Position won and likely redeemed. Payout was ${wallet.lastKnownPayoutIfWinsFormatted}.`}>
-            <span className="text-emerald-400">{wallet.lastKnownPayoutIfWinsFormatted}</span>
-            <span className="ml-1 text-xs px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">Won</span>
-          </span>
-        )
-      }
-      return (
-        <span className="whitespace-nowrap" title="Position won and likely redeemed.">
-          <span className="text-emerald-400">—</span>
-          <span className="ml-1 text-xs px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">Won</span>
-        </span>
-      )
-    }
-
     // Show last-known if available, otherwise show "—"
     if (wallet.lastKnownPayoutIfWins !== null && wallet.lastNonzeroAt) {
       const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
@@ -673,6 +643,38 @@ function SyncedPositionCostValue({ wallet, marketResolved, winningOutcome, posit
   // Check if this is a resolved winning position (likely redeemed)
   const isResolvedWin = marketResolved && winningOutcome && positionOutcome && winningOutcome === positionOutcome
 
+  // RESOLVED MARKETS: Show Lost/Won badges FIRST, regardless of position state
+  // If the market resolved and position lost, show "Lost" badge (value = $0)
+  if (isResolvedLoss) {
+    const originalCost = wallet.syncedPositionCost ?? wallet.lastKnownPositionCost ?? wallet.positionCost
+    const originalCostStr = originalCost !== null ? formatMoney(originalCost) : wallet.positionCostFormatted
+    return (
+      <span className="whitespace-nowrap" title={`Position lost. Original cost was ${originalCostStr}.`}>
+        <span className="text-gray-500 line-through">{originalCostStr}</span>
+        <span className="text-poly-muted/50"> / </span>
+        <span className="text-red-400 font-medium">$0</span>
+        <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
+      </span>
+    )
+  }
+
+  // If the market resolved and position won, show "Won" badge
+  if (isResolvedWin) {
+    const originalCost = wallet.syncedPositionCost ?? wallet.lastKnownPositionCost ?? wallet.positionCost
+    const originalCostStr = originalCost !== null ? formatMoney(originalCost) : wallet.positionCostFormatted
+    // Payout = position size (each share pays $1)
+    const payoutValue = wallet.syncedPayoutIfWins ?? wallet.lastKnownPayoutIfWins ?? wallet.totalPayoutIfWins
+    const payoutStr = payoutValue !== null ? formatMoney(payoutValue) : '—'
+    return (
+      <span className="whitespace-nowrap" title={`Position won! Cost was ${originalCostStr}, payout: ${payoutStr}.`}>
+        <span className="text-emerald-400">{originalCostStr}</span>
+        <span className="text-poly-muted/50"> / </span>
+        <span className="text-emerald-300 font-medium">{payoutStr}</span>
+        <span className="ml-1 text-xs px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">Won</span>
+      </span>
+    )
+  }
+
   // If position is open and we have synced data, show it normally
   if (positionState === 'open' && wallet.syncedPositionCost !== null && wallet.syncedAt) {
     const syncAge = formatTimeAgo(wallet.syncedAt)
@@ -687,36 +689,10 @@ function SyncedPositionCostValue({ wallet, marketResolved, winningOutcome, posit
   }
 
   // If position is not found in sync but we have last-known values, show them with status pill
+  // (Resolved markets already handled above, so this is for unresolved markets)
   if (positionState === 'not_found_in_sync' && wallet.lastKnownPositionCost !== null && wallet.lastNonzeroAt) {
     const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
     const lastCheckedAge = wallet.syncedAt ? formatTimeAgo(wallet.syncedAt) : null
-
-    // For resolved losing positions, show "Lost" instead of "Not found"
-    if (isResolvedLoss) {
-      return (
-        <span className="whitespace-nowrap" title={`Position lost. Original cost was ${wallet.lastKnownPositionCostFormatted}.`}>
-          <span className="text-gray-500 line-through">{wallet.lastKnownPositionCostFormatted}</span>
-          <span className="text-poly-muted/50"> / </span>
-          <span className="text-red-400">$0</span>
-          <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
-        </span>
-      )
-    }
-
-    // For resolved winning positions, show "Won" (likely redeemed)
-    if (isResolvedWin) {
-      // For wins, payout = position size (each share pays $1)
-      const payoutValue = wallet.lastKnownPayoutIfWins !== null ? wallet.lastKnownPayoutIfWinsFormatted : wallet.lastKnownCurrentValueFormatted
-      return (
-        <span className="whitespace-nowrap" title={`Position won and likely redeemed. Cost was ${wallet.lastKnownPositionCostFormatted}, payout was ${payoutValue}.`}>
-          <span className="text-emerald-400">{wallet.lastKnownPositionCostFormatted}</span>
-          <span className="text-poly-muted/50"> / </span>
-          <span className="text-emerald-300 font-medium">{payoutValue}</span>
-          <span className="ml-1 text-xs px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">Won</span>
-        </span>
-      )
-    }
-
     const tooltipText = lastCheckedAge
       ? `Last known value as of ${lastKnownAge}. Last checked ${lastCheckedAge}. Position not found in API (may be closed/redeemed).`
       : `Last known value as of ${lastKnownAge}. Position not found in API (may be closed/redeemed).`
@@ -746,50 +722,8 @@ function SyncedPositionCostValue({ wallet, marketResolved, winningOutcome, posit
   }
 
   // Legacy fallback: sync_status = 'not_found' without positionState (pre-migration data)
+  // (Resolved markets already handled above, so this is for unresolved markets)
   if (wallet.syncStatus === 'not_found' && wallet.syncedAt) {
-    // For resolved losing positions, show "Lost" instead of "Not found"
-    if (isResolvedLoss) {
-      if (wallet.lastKnownPositionCost !== null) {
-        return (
-          <span className="whitespace-nowrap" title={`Position lost. Original cost was ${wallet.lastKnownPositionCostFormatted}.`}>
-            <span className="text-gray-500 line-through">{wallet.lastKnownPositionCostFormatted}</span>
-            <span className="text-poly-muted/50"> / </span>
-            <span className="text-red-400">$0</span>
-            <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
-          </span>
-        )
-      }
-      return (
-        <span className="whitespace-nowrap" title="Position lost.">
-          <span className="text-gray-500">— / </span>
-          <span className="text-red-400">$0</span>
-          <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
-        </span>
-      )
-    }
-
-    // For resolved winning positions, show "Won" (likely redeemed)
-    if (isResolvedWin) {
-      if (wallet.lastKnownPositionCost !== null) {
-        const payoutValue = wallet.lastKnownPayoutIfWins !== null ? wallet.lastKnownPayoutIfWinsFormatted : wallet.lastKnownCurrentValueFormatted
-        return (
-          <span className="whitespace-nowrap" title={`Position won and likely redeemed. Cost was ${wallet.lastKnownPositionCostFormatted}, payout was ${payoutValue}.`}>
-            <span className="text-emerald-400">{wallet.lastKnownPositionCostFormatted}</span>
-            <span className="text-poly-muted/50"> / </span>
-            <span className="text-emerald-300 font-medium">{payoutValue}</span>
-            <span className="ml-1 text-xs px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">Won</span>
-          </span>
-        )
-      }
-      return (
-        <span className="whitespace-nowrap" title="Position won and likely redeemed.">
-          <span className="text-gray-500">— / </span>
-          <span className="text-emerald-400">—</span>
-          <span className="ml-1 text-xs px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">Won</span>
-        </span>
-      )
-    }
-
     // Show last-known if available, otherwise show "—"
     if (wallet.lastKnownPositionCost !== null && wallet.lastNonzeroAt) {
       const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)

@@ -2116,6 +2116,10 @@ export async function GET(req: NextRequest) {
       // Compute group totals from wallet details
       const groups = Array.from(groupMap.values());
       for (const group of groups) {
+        // Update distinctWallets to match actual wallets array length
+        // (aggregation query count may differ from wallet details query results)
+        group.distinctWallets = group.wallets.length;
+
         let totalCost = 0;
         let totalValue: number | null = 0;
         let totalPayoutIfWins: number | null = 0;
