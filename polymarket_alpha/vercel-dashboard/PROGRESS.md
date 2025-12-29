@@ -81,6 +81,134 @@ SELECT wallet ORDER BY priority ASC, last_activity DESC
 
 ---
 
+## Session: December 28, 2025 (Sync Overlay Hardening)
+
+### Comprehensive Sync Overlay Hardening (In Progress)
+
+**Problem:** Persistent "missing overlay" backlog despite wallet sourcing fix. Root causes:
+1. "Overlay row exists" was ambiguously defined
+2. Stub rows with NULL fields were masking missing data
+3. No observability into sync runs
+
+**Solution: 6-Part Hardening**
+
+#### A) Rule A: "Overlay row exists" = `sync_status='synced' AND synced_at IS NOT NULL`
+
+Updated all queries to use this strict definition:
+- `getWalletsToSync()` - backlog_wallets CTE
+- `countUnresolvedSnapshotWalletsNotInOverlay()` - reconciliation check
+- Ensures stub rows are never counted as "synced"
+
+#### B) Backlog-First Wallet Selection
+
+New priority order:
+| Priority | Category | Description |
+|----------|----------|-------------|
+| 1 | Backlog | Snapshot positions with no valid overlay (Rule A) |
+| 2 | Lagging | `snapshot.updated_at > overlay.synced_at + 10min` |
+| 3 | Stale | Overlay older than 30 minutes |
+| 4-6 | Fresh | Source-based (alert_events, snapshot, other) |
+
+**New metrics:**
+- `walletsFromBacklog` - Priority 1 wallets selected
+- `walletsFromLagging` - Priority 2 wallets selected
+
+#### C) Prevent Stub Rows
+
+Schema constraints ensure no NULL-stub rows can be created:
+- `wallet`, `condition_id`, `outcome` are all `NOT NULL`
+- `sync_status` defaults to `'pending'` and is `NOT NULL`
+- `CHECK (sync_status IN ('pending', 'synced', 'not_found', 'error'))`
+- `CHECK (sync_status <> 'synced' OR synced_at IS NOT NULL)`
+
+#### D) Schema Hardening (Migration 007)
+
+```sql
+-- Key columns NOT NULL
+ALTER TABLE position_sync_overlay
+  ALTER COLUMN wallet SET NOT NULL,
+  ALTER COLUMN condition_id SET NOT NULL,
+  ALTER COLUMN outcome SET NOT NULL;
+
+-- sync_status validation
+ALTER TABLE position_sync_overlay
+  ADD CONSTRAINT chk_sync_status
+  CHECK (sync_status IN ('pending', 'synced', 'not_found', 'error'));
+
+-- synced_at required when synced
+ALTER TABLE position_sync_overlay
+  ADD CONSTRAINT chk_synced_at_required
+  CHECK (sync_status <> 'synced' OR synced_at IS NOT NULL);
+```
+
+#### E) Data Cleanup (Migration 007)
+
+Migration 007 sections run in order:
+1. Normalize empty strings to NULL
+2. Delete rows with NULL key columns
+3. Fix invalid sync_status values
+4. Ensure synced rows have synced_at
+5. Mark incomplete stub rows as error
+6. **Deduplicate rows** before adding unique index
+
+```sql
+-- Dedupe keeping best row per key
+WITH ranked AS (
+  SELECT ctid, ROW_NUMBER() OVER (
+    PARTITION BY wallet, condition_id, outcome
+    ORDER BY synced_at DESC NULLS LAST, last_nonzero_at DESC NULLS LAST
+  ) AS rn
+  FROM position_sync_overlay
+)
+DELETE FROM position_sync_overlay p
+USING ranked r
+WHERE p.ctid = r.ctid AND r.rn > 1;
+```
+
+#### F) Observability Tables
+
+```sql
+CREATE TABLE position_sync_run (
+  id UUID PRIMARY KEY,
+  started_at TIMESTAMPTZ NOT NULL,
+  finished_at TIMESTAMPTZ,
+  status TEXT NOT NULL CHECK (status IN ('running', 'success', 'error')),
+  wallets_requested INT,
+  wallets_synced INT,
+  wallets_failed INT,
+  positions_upserted INT,
+  positions_not_found INT,
+  backlog_wallets_selected INT,
+  lagging_wallets_selected INT,
+  error_message TEXT,
+  metrics JSONB
+);
+
+CREATE TABLE position_sync_run_wallet (
+  run_id UUID REFERENCES position_sync_run(id),
+  wallet TEXT NOT NULL,
+  selection_reason TEXT NOT NULL, -- 'backlog'|'lagging'|'stale'|...
+  status TEXT NOT NULL,
+  positions_synced INT,
+  positions_not_found INT,
+  error_message TEXT,
+  started_at TIMESTAMPTZ,
+  finished_at TIMESTAMPTZ,
+  PRIMARY KEY (run_id, wallet)
+);
+```
+
+**Files Created/Modified:**
+- `app/api/jobs/sync-positions/route.ts` - Backlog-first selection, new metrics
+- `lib/migrations/007_sync_overlay_hardening.sql` - Schema + cleanup + observability
+
+**Next Steps:**
+1. Run Migration 007 in Neon SQL Editor (sections separately due to CONCURRENTLY)
+2. Deploy updated route.ts to Vercel
+3. Verify backlog drains to 0 in logs
+
+---
+
 ## Session: December 28, 2025 (Convergence Wallet Details Fix)
 
 ### Bug: Convergence Tabs Not Expanding for Resolved Markets (Fixed)

@@ -43,49 +43,57 @@ interface JobMetrics {
   walletsFromSnapshot: number;
   walletsWithStaleOverlay: number;
   walletsWithMissingOverlay: number;
+  // Backlog-first metrics
+  walletsFromBacklog: number;
+  walletsFromLagging: number;
   // Reconciliation metric
   unresolvedSnapshotWalletsNotInOverlay: number;
 }
 
-// Wallet selection result with metadata for metrics
+// Selection reason for observability
+type SelectionReason = 'backlog' | 'lagging' | 'stale' | 'alert_events' | 'snapshot' | 'other';
+
+// Wallet selection result with metadata for metrics and observability
 interface WalletSelectionResult {
-  wallets: string[];
+  wallets: Array<{ wallet: string; reason: SelectionReason }>;
   fromAlertEvents: number;
   fromSnapshot: number;
   staleOverlay: number;
   missingOverlay: number;
+  fromBacklog: number;
+  fromLagging: number;
 }
 
-// Unified wallet sourcing: combines alert_events + snapshot wallets
-// Prioritizes: missing overlay > stale overlay > recent activity
-// Uses consistent unresolved-market predicate across both sources
+// Unified wallet sourcing with BACKLOG-FIRST selection
+// Priority order:
+//   1. BACKLOG: Wallets with snapshot positions missing valid overlay (sync_status='synced' AND synced_at IS NOT NULL)
+//   2. LAGGING: Wallets where snapshot.updated_at > overlay.synced_at + LAG_THRESHOLD
+//   3. STALE: Wallets where overlay is older than 30 minutes
+//   4. FRESH: All other wallets from alert_events/snapshot sources
+//
+// Rule A: "Overlay row exists" = sync_status='synced' AND synced_at IS NOT NULL
 async function getWalletsToSync(): Promise<WalletSelectionResult> {
   const cutoff = new Date(Date.now() - ALERT_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
 
-  // Single unified query with CTEs for clarity and consistency
-  // PERF: unresolved_conditions only scans condition_ids we actually care about:
-  //   - alert_events within 72h window (not full history)
-  //   - wallet_position_snapshot (already bounded by snapshot lifecycle)
+  // Single unified query implementing backlog-first selection
   const result = await sql<{
     wallet: string;
+    selection_reason: SelectionReason;
     source: string;
     priority: number;
     overlay_status: string;
   }>`
     WITH
     -- Unified unresolved market definition (single source of truth)
-    -- A market is unresolved if: not in market_status, OR market_resolved is not true, OR no valid winning_outcome
     -- PERF: Constrain alert_events to 72h window to avoid full table scan
     unresolved_conditions AS (
       SELECT DISTINCT condition_id
       FROM (
-        -- Only condition_ids from RECENT alert_events (72h) - avoids full scan
         SELECT DISTINCT condition_id
         FROM alert_events
         WHERE condition_id IS NOT NULL
           AND fill_timestamp >= ${cutoff}::timestamptz
         UNION
-        -- All condition_ids from snapshot (already bounded by snapshot lifecycle)
         SELECT DISTINCT condition_id
         FROM wallet_position_snapshot
         WHERE condition_id IS NOT NULL
@@ -99,8 +107,44 @@ async function getWalletsToSync(): Promise<WalletSelectionResult> {
       )
     ),
 
+    -- BACKLOG WALLETS (Priority 1): Snapshot positions with no valid overlay
+    -- Rule A: overlay is valid only if sync_status='synced' AND synced_at IS NOT NULL
+    backlog_wallets AS (
+      SELECT DISTINCT wps.wallet
+      FROM wallet_position_snapshot wps
+      WHERE wps.wallet IS NOT NULL
+        AND wps.shares > 0
+        AND wps.condition_id IN (SELECT condition_id FROM unresolved_conditions)
+        AND NOT EXISTS (
+          SELECT 1 FROM position_sync_overlay pso
+          WHERE pso.wallet = wps.wallet
+            AND pso.condition_id = wps.condition_id
+            AND pso.outcome = wps.outcome
+            AND pso.sync_status = 'synced'
+            AND pso.synced_at IS NOT NULL
+        )
+    ),
+
+    -- LAGGING WALLETS (Priority 2): Snapshot updated more recently than overlay by > 10 minutes
+    lagging_wallets AS (
+      SELECT wps.wallet
+      FROM wallet_position_snapshot wps
+      WHERE wps.wallet IS NOT NULL
+        AND wps.shares > 0
+        AND wps.condition_id IN (SELECT condition_id FROM unresolved_conditions)
+        AND wps.wallet NOT IN (SELECT wallet FROM backlog_wallets)
+      GROUP BY wps.wallet
+      HAVING MAX(wps.updated_at) > COALESCE(
+        (SELECT MAX(pso.synced_at)
+         FROM position_sync_overlay pso
+         WHERE pso.wallet = wps.wallet
+           AND pso.sync_status = 'synced'
+           AND pso.synced_at IS NOT NULL),
+        '1970-01-01'::timestamptz
+      ) + INTERVAL '10 minutes'
+    ),
+
     -- Source 1: Wallets from alert_events with recent fills (72h)
-    -- No longer gated on position_current_value IS NOT NULL for wallet selection
     alert_wallets AS (
       SELECT
         ae.wallet,
@@ -114,7 +158,6 @@ async function getWalletsToSync(): Promise<WalletSelectionResult> {
     ),
 
     -- Source 2: Wallets from snapshot with unresolved positions
-    -- These may have older alert_events or no recent fills
     snapshot_wallets AS (
       SELECT
         wps.wallet,
@@ -126,77 +169,90 @@ async function getWalletsToSync(): Promise<WalletSelectionResult> {
       GROUP BY wps.wallet
     ),
 
-    -- Combine both sources with UNION ALL, then aggregate per wallet
-    -- This correctly handles wallets appearing in both sources
+    -- Combine sources and dedupe
     combined_wallets AS (
       SELECT wallet, source, last_activity FROM alert_wallets
       UNION ALL
       SELECT wallet, source, last_activity FROM snapshot_wallets
     ),
 
-    -- Dedupe by wallet: determine primary source and pick max last_activity
-    -- Uses explicit aggregation for deterministic results
     deduped_wallets AS (
       SELECT
         wallet,
-        -- If wallet appears in both sources, mark as 'both'
         CASE
           WHEN COUNT(DISTINCT source) > 1 THEN 'both'
           ELSE MAX(source)
         END AS primary_source,
-        -- Pick the most recent activity timestamp across all sources
-        -- Both are timestamptz so MAX() is semantically correct
         MAX(last_activity) AS last_activity
       FROM combined_wallets
       GROUP BY wallet
     ),
 
-    -- Join with wallet_sync_state to determine sync freshness
-    wallet_with_overlay AS (
+    -- Join with wallet_sync_state and assign selection_reason + priority
+    wallet_with_priority AS (
       SELECT
         dw.wallet,
         dw.primary_source,
         dw.last_activity,
         wss.last_synced_at,
+        -- Selection reason: backlog > lagging > stale > source-based
+        CASE
+          WHEN dw.wallet IN (SELECT wallet FROM backlog_wallets) THEN 'backlog'
+          WHEN dw.wallet IN (SELECT wallet FROM lagging_wallets) THEN 'lagging'
+          WHEN wss.wallet IS NULL OR wss.last_synced_at IS NULL THEN 'stale'
+          WHEN wss.last_synced_at < NOW() - INTERVAL '30 minutes' THEN 'stale'
+          WHEN dw.primary_source = 'alert_events' THEN 'alert_events'
+          WHEN dw.primary_source = 'snapshot' THEN 'snapshot'
+          ELSE 'other'
+        END::text AS selection_reason,
+        -- Priority: 1=backlog, 2=lagging, 3=stale, 4=alert_events, 5=snapshot, 6=other
+        CASE
+          WHEN dw.wallet IN (SELECT wallet FROM backlog_wallets) THEN 1
+          WHEN dw.wallet IN (SELECT wallet FROM lagging_wallets) THEN 2
+          WHEN wss.wallet IS NULL OR wss.last_synced_at IS NULL THEN 3
+          WHEN wss.last_synced_at < NOW() - INTERVAL '30 minutes' THEN 3
+          WHEN dw.primary_source = 'alert_events' THEN 4
+          WHEN dw.primary_source = 'snapshot' THEN 5
+          ELSE 6
+        END AS priority,
+        -- Overlay status for metrics
         CASE
           WHEN wss.wallet IS NULL THEN 'missing'
           WHEN wss.last_synced_at IS NULL THEN 'never_synced'
           WHEN wss.last_synced_at < NOW() - INTERVAL '30 minutes' THEN 'stale'
           ELSE 'fresh'
-        END AS overlay_status,
-        -- Priority: lower = higher priority
-        -- 1 = missing overlay, 2 = never synced, 3 = stale, 4 = fresh
-        CASE
-          WHEN wss.wallet IS NULL THEN 1
-          WHEN wss.last_synced_at IS NULL THEN 2
-          WHEN wss.last_synced_at < NOW() - INTERVAL '30 minutes' THEN 3
-          ELSE 4
-        END AS priority
+        END AS overlay_status
       FROM deduped_wallets dw
       LEFT JOIN wallet_sync_state wss ON wss.wallet = dw.wallet
     )
 
-    -- Final selection: prioritize missing/stale, then by activity, then wallet for determinism
+    -- Final selection: backlog-first, then lagging, then stale, then by activity
     SELECT
       wallet,
+      selection_reason,
       primary_source AS source,
       priority,
       overlay_status
-    FROM wallet_with_overlay
+    FROM wallet_with_priority
     ORDER BY
-      priority ASC,                    -- Missing/stale first
+      priority ASC,                    -- Backlog > lagging > stale > fresh
       last_activity DESC NULLS LAST,   -- Most recently active next
       wallet ASC                       -- Deterministic tiebreaker
     LIMIT ${MAX_WALLETS_PER_RUN}
   `;
 
-  // Extract wallets and compute source breakdown
-  const wallets = result.rows.map(r => r.wallet);
+  // Extract wallets with reasons and compute metrics
+  const wallets = result.rows.map(r => ({
+    wallet: r.wallet,
+    reason: r.selection_reason as SelectionReason
+  }));
 
   const fromAlertEvents = result.rows.filter(r => r.source === 'alert_events' || r.source === 'both').length;
   const fromSnapshot = result.rows.filter(r => r.source === 'snapshot' || r.source === 'both').length;
   const staleOverlay = result.rows.filter(r => r.overlay_status === 'stale').length;
   const missingOverlay = result.rows.filter(r => r.overlay_status === 'missing' || r.overlay_status === 'never_synced').length;
+  const fromBacklog = result.rows.filter(r => r.selection_reason === 'backlog').length;
+  const fromLagging = result.rows.filter(r => r.selection_reason === 'lagging').length;
 
   return {
     wallets,
@@ -204,10 +260,13 @@ async function getWalletsToSync(): Promise<WalletSelectionResult> {
     fromSnapshot,
     staleOverlay,
     missingOverlay,
+    fromBacklog,
+    fromLagging,
   };
 }
 
 // Reconciliation check: count unresolved snapshot wallets not in overlay
+// Rule A: "overlay row exists" = sync_status='synced' AND synced_at IS NOT NULL
 async function countUnresolvedSnapshotWalletsNotInOverlay(): Promise<number> {
   const result = await sql<{ count: number }>`
     WITH unresolved_conditions AS (
@@ -224,12 +283,14 @@ async function countUnresolvedSnapshotWalletsNotInOverlay(): Promise<number> {
     SELECT COUNT(DISTINCT wps.wallet)::int AS count
     FROM wallet_position_snapshot wps
     WHERE wps.condition_id IN (SELECT condition_id FROM unresolved_conditions)
+      AND wps.shares > 0
       AND NOT EXISTS (
         SELECT 1 FROM position_sync_overlay pso
         WHERE pso.wallet = wps.wallet
           AND pso.condition_id = wps.condition_id
           AND pso.outcome = wps.outcome
-          AND pso.synced_at >= NOW() - INTERVAL '1 hour'
+          AND pso.sync_status = 'synced'
+          AND pso.synced_at IS NOT NULL
       )
   `;
   return result.rows[0]?.count ?? 0;
@@ -454,6 +515,9 @@ export async function POST(request: Request) {
     walletsFromSnapshot: 0,
     walletsWithStaleOverlay: 0,
     walletsWithMissingOverlay: 0,
+    // Backlog-first metrics
+    walletsFromBacklog: 0,
+    walletsFromLagging: 0,
     // Reconciliation metric
     unresolvedSnapshotWalletsNotInOverlay: 0,
   };
@@ -470,12 +534,14 @@ export async function POST(request: Request) {
 
     // Get wallets to sync (unified: alert_events + snapshot, unresolved markets only)
     const walletSelection = await getWalletsToSync();
-    const wallets = walletSelection.wallets;
-    metrics.walletsRequested = wallets.length;
+    const walletItems = walletSelection.wallets;
+    metrics.walletsRequested = walletItems.length;
     metrics.walletsFromAlertEvents = walletSelection.fromAlertEvents;
     metrics.walletsFromSnapshot = walletSelection.fromSnapshot;
     metrics.walletsWithStaleOverlay = walletSelection.staleOverlay;
     metrics.walletsWithMissingOverlay = walletSelection.missingOverlay;
+    metrics.walletsFromBacklog = walletSelection.fromBacklog;
+    metrics.walletsFromLagging = walletSelection.fromLagging;
 
     // Run reconciliation check (non-blocking)
     try {
@@ -484,7 +550,7 @@ export async function POST(request: Request) {
       console.warn('[sync-positions] Reconciliation check failed (non-fatal):', err);
     }
 
-    if (wallets.length === 0) {
+    if (walletItems.length === 0) {
       const durationMs = Date.now() - startTime;
       await sql`
         UPDATE job_runs
@@ -500,12 +566,12 @@ export async function POST(request: Request) {
       }, { headers: NO_CACHE_HEADERS });
     }
 
-    console.log(`[${JOB_NAME}] Syncing ${wallets.length} wallets (alert_events: ${metrics.walletsFromAlertEvents}, snapshot: ${metrics.walletsFromSnapshot}, missing_overlay: ${metrics.walletsWithMissingOverlay}, stale_overlay: ${metrics.walletsWithStaleOverlay})`);
+    console.log(`[${JOB_NAME}] Syncing ${walletItems.length} wallets (backlog: ${metrics.walletsFromBacklog}, lagging: ${metrics.walletsFromLagging}, alert_events: ${metrics.walletsFromAlertEvents}, snapshot: ${metrics.walletsFromSnapshot}, missing_overlay: ${metrics.walletsWithMissingOverlay})`);
 
     // Sync wallets with concurrency limit
     await Promise.all(
-      wallets.map(wallet =>
-        syncLimit(() => syncWalletPositions(wallet, metrics))
+      walletItems.map(item =>
+        syncLimit(() => syncWalletPositions(item.wallet, metrics))
       )
     );
 
@@ -527,6 +593,9 @@ export async function POST(request: Request) {
       positionsUpserted: metrics.rowsUpdated,
       positionsNotFound: metrics.rowsNotFound,
       errorCount: metrics.walletsFailed,
+      // Backlog-first selection metrics
+      fromBacklog: metrics.walletsFromBacklog,
+      fromLagging: metrics.walletsFromLagging,
       // Source breakdown
       fromAlertEvents: metrics.walletsFromAlertEvents,
       fromSnapshot: metrics.walletsFromSnapshot,
@@ -557,6 +626,9 @@ export async function POST(request: Request) {
       positionsUpserted: metrics.rowsUpdated,
       positionsNotFound: metrics.rowsNotFound,
       errorCount: metrics.walletsFailed + 1, // +1 for the fatal error
+      // Backlog-first selection metrics
+      fromBacklog: metrics.walletsFromBacklog,
+      fromLagging: metrics.walletsFromLagging,
       // Source breakdown
       fromAlertEvents: metrics.walletsFromAlertEvents,
       fromSnapshot: metrics.walletsFromSnapshot,
