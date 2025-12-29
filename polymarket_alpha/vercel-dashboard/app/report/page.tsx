@@ -512,6 +512,8 @@ function SyncedPayoutDisplay({ wallet, marketResolved, winningOutcome, positionO
 
   // Check if this is a resolved losing position
   const isResolvedLoss = marketResolved && winningOutcome && positionOutcome && winningOutcome !== positionOutcome
+  // Check if this is a resolved winning position (likely redeemed)
+  const isResolvedWin = marketResolved && winningOutcome && positionOutcome && winningOutcome === positionOutcome
 
   // If position is open and we have synced data, show it normally
   if (positionState === 'open' && wallet.syncedPayoutIfWins !== null && wallet.syncedAt) {
@@ -535,6 +537,16 @@ function SyncedPayoutDisplay({ wallet, marketResolved, winningOutcome, positionO
         <span className="whitespace-nowrap" title={`Position lost. Original potential payout was ${wallet.lastKnownPayoutIfWinsFormatted}.`}>
           <span className="text-gray-500 line-through">{wallet.lastKnownPayoutIfWinsFormatted}</span>
           <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
+        </span>
+      )
+    }
+
+    // For resolved winning positions, show "Won" (likely redeemed)
+    if (isResolvedWin) {
+      return (
+        <span className="whitespace-nowrap" title={`Position won and likely redeemed. Payout was ${wallet.lastKnownPayoutIfWinsFormatted}.`}>
+          <span className="text-emerald-400">{wallet.lastKnownPayoutIfWinsFormatted}</span>
+          <span className="ml-1 text-xs px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">Won</span>
         </span>
       )
     }
@@ -579,6 +591,24 @@ function SyncedPayoutDisplay({ wallet, marketResolved, winningOutcome, positionO
         <span className="whitespace-nowrap" title="Position lost.">
           <span className="text-gray-500">$0</span>
           <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
+        </span>
+      )
+    }
+
+    // For resolved winning positions, show "Won" (likely redeemed)
+    if (isResolvedWin) {
+      if (wallet.lastKnownPayoutIfWins !== null) {
+        return (
+          <span className="whitespace-nowrap" title={`Position won and likely redeemed. Payout was ${wallet.lastKnownPayoutIfWinsFormatted}.`}>
+            <span className="text-emerald-400">{wallet.lastKnownPayoutIfWinsFormatted}</span>
+            <span className="ml-1 text-xs px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">Won</span>
+          </span>
+        )
+      }
+      return (
+        <span className="whitespace-nowrap" title="Position won and likely redeemed.">
+          <span className="text-emerald-400">—</span>
+          <span className="ml-1 text-xs px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">Won</span>
         </span>
       )
     }
@@ -640,6 +670,8 @@ function SyncedPositionCostValue({ wallet, marketResolved, winningOutcome, posit
 
   // Check if this is a resolved losing position
   const isResolvedLoss = marketResolved && winningOutcome && positionOutcome && winningOutcome !== positionOutcome
+  // Check if this is a resolved winning position (likely redeemed)
+  const isResolvedWin = marketResolved && winningOutcome && positionOutcome && winningOutcome === positionOutcome
 
   // If position is open and we have synced data, show it normally
   if (positionState === 'open' && wallet.syncedPositionCost !== null && wallet.syncedAt) {
@@ -667,6 +699,20 @@ function SyncedPositionCostValue({ wallet, marketResolved, winningOutcome, posit
           <span className="text-poly-muted/50"> / </span>
           <span className="text-red-400">$0</span>
           <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
+        </span>
+      )
+    }
+
+    // For resolved winning positions, show "Won" (likely redeemed)
+    if (isResolvedWin) {
+      // For wins, payout = position size (each share pays $1)
+      const payoutValue = wallet.lastKnownPayoutIfWins !== null ? wallet.lastKnownPayoutIfWinsFormatted : wallet.lastKnownCurrentValueFormatted
+      return (
+        <span className="whitespace-nowrap" title={`Position won and likely redeemed. Cost was ${wallet.lastKnownPositionCostFormatted}, payout was ${payoutValue}.`}>
+          <span className="text-emerald-400">{wallet.lastKnownPositionCostFormatted}</span>
+          <span className="text-poly-muted/50"> / </span>
+          <span className="text-emerald-300 font-medium">{payoutValue}</span>
+          <span className="ml-1 text-xs px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">Won</span>
         </span>
       )
     }
@@ -718,6 +764,28 @@ function SyncedPositionCostValue({ wallet, marketResolved, winningOutcome, posit
           <span className="text-gray-500">— / </span>
           <span className="text-red-400">$0</span>
           <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
+        </span>
+      )
+    }
+
+    // For resolved winning positions, show "Won" (likely redeemed)
+    if (isResolvedWin) {
+      if (wallet.lastKnownPositionCost !== null) {
+        const payoutValue = wallet.lastKnownPayoutIfWins !== null ? wallet.lastKnownPayoutIfWinsFormatted : wallet.lastKnownCurrentValueFormatted
+        return (
+          <span className="whitespace-nowrap" title={`Position won and likely redeemed. Cost was ${wallet.lastKnownPositionCostFormatted}, payout was ${payoutValue}.`}>
+            <span className="text-emerald-400">{wallet.lastKnownPositionCostFormatted}</span>
+            <span className="text-poly-muted/50"> / </span>
+            <span className="text-emerald-300 font-medium">{payoutValue}</span>
+            <span className="ml-1 text-xs px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">Won</span>
+          </span>
+        )
+      }
+      return (
+        <span className="whitespace-nowrap" title="Position won and likely redeemed.">
+          <span className="text-gray-500">— / </span>
+          <span className="text-emerald-400">—</span>
+          <span className="ml-1 text-xs px-1 py-0.5 bg-emerald-500/20 text-emerald-400 rounded">Won</span>
         </span>
       )
     }
