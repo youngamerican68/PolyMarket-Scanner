@@ -1773,10 +1773,17 @@ export async function GET(req: NextRequest) {
                   pso.synced_current_value,
                   pso.last_known_current_value,
                   d.position_current_value
-                ) as effective_current_value
+                ) as effective_current_value,
+                -- Effective position cost for filtering
+                COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric *
+                COALESCE(pso.synced_avg_price, pso.last_known_avg_price, d.position_avg_price)::numeric as effective_position_cost
               FROM deduped d
               LEFT JOIN position_sync_overlay pso ON d.condition_id = pso.condition_id AND d.wallet = pso.wallet AND d.outcome = pso.outcome
               LEFT JOIN outcome_price_cache opc ON d.condition_id = opc.condition_id AND d.outcome = opc.outcome
+            ),
+            cost_filtered AS (
+              SELECT * FROM with_details
+              WHERE effective_position_cost >= ${minPosition} OR effective_position_cost IS NULL
             ),
             ranked AS (
               SELECT e.condition_id, e.outcome, e.wallet,
@@ -1802,7 +1809,7 @@ export async function GET(req: NextRequest) {
                 e.last_nonzero_at::text as last_nonzero_at,
                 ROW_NUMBER() OVER (PARTITION BY e.condition_id, e.outcome
                   ORDER BY COALESCE(e.effective_current_value, 0) DESC, e.wallet ASC)::int as rn
-              FROM with_details e
+              FROM cost_filtered e
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = e.condition_id AND mfp.wallet = e.wallet AND mfp.outcome = e.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
@@ -1841,10 +1848,16 @@ export async function GET(req: NextRequest) {
                   pso.synced_current_value,
                   pso.last_known_current_value,
                   d.position_current_value
-                ) as effective_current_value
+                ) as effective_current_value,
+                COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric *
+                COALESCE(pso.synced_avg_price, pso.last_known_avg_price, d.position_avg_price)::numeric as effective_position_cost
               FROM deduped d
               LEFT JOIN position_sync_overlay pso ON d.condition_id = pso.condition_id AND d.wallet = pso.wallet AND d.outcome = pso.outcome
               LEFT JOIN outcome_price_cache opc ON d.condition_id = opc.condition_id AND d.outcome = opc.outcome
+            ),
+            cost_filtered AS (
+              SELECT * FROM with_details
+              WHERE effective_position_cost >= ${minPosition} OR effective_position_cost IS NULL
             ),
             ranked AS (
               SELECT e.condition_id, e.outcome, e.wallet,
@@ -1870,7 +1883,7 @@ export async function GET(req: NextRequest) {
                 e.last_nonzero_at::text as last_nonzero_at,
                 ROW_NUMBER() OVER (PARTITION BY e.condition_id, e.outcome
                   ORDER BY COALESCE(e.effective_current_value, 0) DESC, e.wallet ASC)::int as rn
-              FROM with_details e
+              FROM cost_filtered e
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = e.condition_id AND mfp.wallet = e.wallet AND mfp.outcome = e.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
@@ -1909,10 +1922,16 @@ export async function GET(req: NextRequest) {
                   pso.synced_current_value,
                   pso.last_known_current_value,
                   d.position_current_value
-                ) as effective_current_value
+                ) as effective_current_value,
+                COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric *
+                COALESCE(pso.synced_avg_price, pso.last_known_avg_price, d.position_avg_price)::numeric as effective_position_cost
               FROM deduped d
               LEFT JOIN position_sync_overlay pso ON d.condition_id = pso.condition_id AND d.wallet = pso.wallet AND d.outcome = pso.outcome
               LEFT JOIN outcome_price_cache opc ON d.condition_id = opc.condition_id AND d.outcome = opc.outcome
+            ),
+            cost_filtered AS (
+              SELECT * FROM with_details
+              WHERE effective_position_cost >= ${minPosition} OR effective_position_cost IS NULL
             ),
             ranked AS (
               SELECT e.condition_id, e.outcome, e.wallet,
@@ -1938,7 +1957,7 @@ export async function GET(req: NextRequest) {
                 e.last_nonzero_at::text as last_nonzero_at,
                 ROW_NUMBER() OVER (PARTITION BY e.condition_id, e.outcome
                   ORDER BY COALESCE(e.effective_current_value, 0) DESC, e.wallet ASC)::int as rn
-              FROM with_details e
+              FROM cost_filtered e
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = e.condition_id AND mfp.wallet = e.wallet AND mfp.outcome = e.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
@@ -1976,10 +1995,16 @@ export async function GET(req: NextRequest) {
                   pso.synced_current_value,
                   pso.last_known_current_value,
                   d.position_current_value
-                ) as effective_current_value
+                ) as effective_current_value,
+                COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric *
+                COALESCE(pso.synced_avg_price, pso.last_known_avg_price, d.position_avg_price)::numeric as effective_position_cost
               FROM deduped d
               LEFT JOIN position_sync_overlay pso ON d.condition_id = pso.condition_id AND d.wallet = pso.wallet AND d.outcome = pso.outcome
               LEFT JOIN outcome_price_cache opc ON d.condition_id = opc.condition_id AND d.outcome = opc.outcome
+            ),
+            cost_filtered AS (
+              SELECT * FROM with_details
+              WHERE effective_position_cost >= ${minPosition} OR effective_position_cost IS NULL
             ),
             ranked AS (
               SELECT e.condition_id, e.outcome, e.wallet,
@@ -2005,7 +2030,7 @@ export async function GET(req: NextRequest) {
                 e.last_nonzero_at::text as last_nonzero_at,
                 ROW_NUMBER() OVER (PARTITION BY e.condition_id, e.outcome
                   ORDER BY COALESCE(e.effective_current_value, 0) DESC, e.wallet ASC)::int as rn
-              FROM with_details e
+              FROM cost_filtered e
               LEFT JOIN market_final_pnl mfp ON mfp.condition_id = e.condition_id AND mfp.wallet = e.wallet AND mfp.outcome = e.outcome
             )
             SELECT * FROM ranked WHERE rn <= ${maxWalletsPerGroup}
