@@ -499,8 +499,19 @@ function ConvergenceWalletPayoutIfWins({ wallet }: { wallet: ConvergenceWallet }
 // Phase 10: Synced payout display with "synced X ago" indicator
 // Phase 10.1: Safe state model - show last-known values when position not found
 // Phase 10.2: Hardening - show "last checked" time for not_found states
-function SyncedPayoutDisplay({ wallet }: { wallet: ConvergenceWallet }) {
+// Phase 10.3: Show "Lost" instead of "Not found" for resolved losing positions
+interface SyncedDisplayProps {
+  wallet: ConvergenceWallet
+  marketResolved?: boolean
+  winningOutcome?: string | null
+  positionOutcome?: string
+}
+
+function SyncedPayoutDisplay({ wallet, marketResolved, winningOutcome, positionOutcome }: SyncedDisplayProps) {
   const positionState = wallet.positionState
+
+  // Check if this is a resolved losing position
+  const isResolvedLoss = marketResolved && winningOutcome && positionOutcome && winningOutcome !== positionOutcome
 
   // If position is open and we have synced data, show it normally
   if (positionState === 'open' && wallet.syncedPayoutIfWins !== null && wallet.syncedAt) {
@@ -517,6 +528,17 @@ function SyncedPayoutDisplay({ wallet }: { wallet: ConvergenceWallet }) {
   if (positionState === 'not_found_in_sync' && wallet.lastKnownPayoutIfWins !== null && wallet.lastNonzeroAt) {
     const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
     const lastCheckedAge = wallet.syncedAt ? formatTimeAgo(wallet.syncedAt) : null
+
+    // For resolved losing positions, show "Lost" instead of "Not found"
+    if (isResolvedLoss) {
+      return (
+        <span className="whitespace-nowrap" title={`Position lost. Original potential payout was ${wallet.lastKnownPayoutIfWinsFormatted}.`}>
+          <span className="text-gray-500 line-through">{wallet.lastKnownPayoutIfWinsFormatted}</span>
+          <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
+        </span>
+      )
+    }
+
     const tooltipText = lastCheckedAge
       ? `Last known value as of ${lastKnownAge}. Last checked ${lastCheckedAge}. Position not found in API (may be closed/redeemed).`
       : `Last known value as of ${lastKnownAge}. Position not found in API (may be closed/redeemed).`
@@ -543,6 +565,24 @@ function SyncedPayoutDisplay({ wallet }: { wallet: ConvergenceWallet }) {
 
   // Legacy fallback: sync_status = 'not_found' without positionState (pre-migration data)
   if (wallet.syncStatus === 'not_found' && wallet.syncedAt) {
+    // For resolved losing positions, show "Lost" instead of "Not found"
+    if (isResolvedLoss) {
+      if (wallet.lastKnownPayoutIfWins !== null) {
+        return (
+          <span className="whitespace-nowrap" title={`Position lost. Original potential payout was ${wallet.lastKnownPayoutIfWinsFormatted}.`}>
+            <span className="text-gray-500 line-through">{wallet.lastKnownPayoutIfWinsFormatted}</span>
+            <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
+          </span>
+        )
+      }
+      return (
+        <span className="whitespace-nowrap" title="Position lost.">
+          <span className="text-gray-500">$0</span>
+          <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
+        </span>
+      )
+    }
+
     // Show last-known if available, otherwise show "—"
     if (wallet.lastKnownPayoutIfWins !== null && wallet.lastNonzeroAt) {
       const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
@@ -594,8 +634,12 @@ function ConvergencePositionCostValue({ wallet }: { wallet: ConvergenceWallet })
 // Phase 10: Synced Position Cost / Value display with "synced X ago" indicator
 // Phase 10.1: Safe state model - show last-known values when position not found
 // Phase 10.2: Hardening - show "last checked" time for not_found states
-function SyncedPositionCostValue({ wallet }: { wallet: ConvergenceWallet }) {
+// Phase 10.3: Show "Lost" instead of "Not found" for resolved losing positions
+function SyncedPositionCostValue({ wallet, marketResolved, winningOutcome, positionOutcome }: SyncedDisplayProps) {
   const positionState = wallet.positionState
+
+  // Check if this is a resolved losing position
+  const isResolvedLoss = marketResolved && winningOutcome && positionOutcome && winningOutcome !== positionOutcome
 
   // If position is open and we have synced data, show it normally
   if (positionState === 'open' && wallet.syncedPositionCost !== null && wallet.syncedAt) {
@@ -614,6 +658,19 @@ function SyncedPositionCostValue({ wallet }: { wallet: ConvergenceWallet }) {
   if (positionState === 'not_found_in_sync' && wallet.lastKnownPositionCost !== null && wallet.lastNonzeroAt) {
     const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
     const lastCheckedAge = wallet.syncedAt ? formatTimeAgo(wallet.syncedAt) : null
+
+    // For resolved losing positions, show "Lost" instead of "Not found"
+    if (isResolvedLoss) {
+      return (
+        <span className="whitespace-nowrap" title={`Position lost. Original cost was ${wallet.lastKnownPositionCostFormatted}.`}>
+          <span className="text-gray-500 line-through">{wallet.lastKnownPositionCostFormatted}</span>
+          <span className="text-poly-muted/50"> / </span>
+          <span className="text-red-400">$0</span>
+          <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
+        </span>
+      )
+    }
+
     const tooltipText = lastCheckedAge
       ? `Last known value as of ${lastKnownAge}. Last checked ${lastCheckedAge}. Position not found in API (may be closed/redeemed).`
       : `Last known value as of ${lastKnownAge}. Position not found in API (may be closed/redeemed).`
@@ -644,6 +701,27 @@ function SyncedPositionCostValue({ wallet }: { wallet: ConvergenceWallet }) {
 
   // Legacy fallback: sync_status = 'not_found' without positionState (pre-migration data)
   if (wallet.syncStatus === 'not_found' && wallet.syncedAt) {
+    // For resolved losing positions, show "Lost" instead of "Not found"
+    if (isResolvedLoss) {
+      if (wallet.lastKnownPositionCost !== null) {
+        return (
+          <span className="whitespace-nowrap" title={`Position lost. Original cost was ${wallet.lastKnownPositionCostFormatted}.`}>
+            <span className="text-gray-500 line-through">{wallet.lastKnownPositionCostFormatted}</span>
+            <span className="text-poly-muted/50"> / </span>
+            <span className="text-red-400">$0</span>
+            <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
+          </span>
+        )
+      }
+      return (
+        <span className="whitespace-nowrap" title="Position lost.">
+          <span className="text-gray-500">— / </span>
+          <span className="text-red-400">$0</span>
+          <span className="ml-1 text-xs px-1 py-0.5 bg-red-500/20 text-red-400 rounded">Lost</span>
+        </span>
+      )
+    }
+
     // Show last-known if available, otherwise show "—"
     if (wallet.lastKnownPositionCost !== null && wallet.lastNonzeroAt) {
       const lastKnownAge = formatTimeAgo(wallet.lastNonzeroAt)
@@ -1199,8 +1277,8 @@ export default function ReportPage() {
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-blue-400">{w.currentPrice !== null ? formatOdds(w.currentPrice) : '—'}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
-                              <td className="p-3 text-right"><SyncedPositionCostValue wallet={w} /></td>
-                              <td className="p-3 text-right font-medium"><SyncedPayoutDisplay wallet={w} /></td>
+                              <td className="p-3 text-right"><SyncedPositionCostValue wallet={w} marketResolved={group.marketResolved} winningOutcome={group.winningOutcome} positionOutcome={group.outcome} /></td>
+                              <td className="p-3 text-right font-medium"><SyncedPayoutDisplay wallet={w} marketResolved={group.marketResolved} winningOutcome={group.winningOutcome} positionOutcome={group.outcome} /></td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
                           ))}
@@ -1310,8 +1388,8 @@ export default function ReportPage() {
                               <td className="p-3 text-right text-yellow-400">{w.fillPriceFormatted}</td>
                               <td className="p-3 text-right text-blue-400">{w.currentPrice !== null ? formatOdds(w.currentPrice) : '—'}</td>
                               <td className="p-3 text-right text-poly-muted">{w.positionAvgPriceFormatted}</td>
-                              <td className="p-3 text-right"><SyncedPositionCostValue wallet={w} /></td>
-                              <td className="p-3 text-right font-medium"><SyncedPayoutDisplay wallet={w} /></td>
+                              <td className="p-3 text-right"><SyncedPositionCostValue wallet={w} marketResolved={group.marketResolved} winningOutcome={group.winningOutcome} positionOutcome={group.outcome} /></td>
+                              <td className="p-3 text-right font-medium"><SyncedPayoutDisplay wallet={w} marketResolved={group.marketResolved} winningOutcome={group.winningOutcome} positionOutcome={group.outcome} /></td>
                               <td className="p-3 text-right text-poly-muted text-xs">{formatTimeAgo(w.latestTimestamp)}</td>
                             </tr>
                           ))}
