@@ -1,5 +1,111 @@
 # Polymarket Tracker - Development Progress
 
+## Session: December 29-30, 2025 (UI Fixes & Position Cost Filtering)
+
+### Bug: Inconsistent Lost/Won Badges in Resolved Markets (Fixed)
+
+**Symptom:** In resolved markets (e.g., Eagles vs Bills), some wallets showed "Lost" badge while others showed "⟳ 0m ago" sync indicator. Also "Wallets: 4" displayed but 6 wallets were shown.
+
+**Root Causes:**
+1. Wallet count used aggregation result instead of actual populated wallets
+2. Lost/Won badge logic was gated behind `positionState === 'open'` check, so closed positions didn't show badges
+
+**Fixes:**
+- Set `group.distinctWallets = group.wallets.length` after populating wallets array
+- Moved `isResolvedLoss`/`isResolvedWin` checks BEFORE position state checks in `SyncedPayoutDisplay` and `SyncedPositionCostValue` components
+
+**Commit:** `1b788f5` - fix(report): restore WON/LOST badges for resolved positions
+
+---
+
+### Feature: "Sold" Badge for Closed Positions in Unresolved Markets (Completed)
+
+**Problem:** Positions showing "Not found" (amber badge) in unresolved markets was confusing. Users thought it meant an error, but it actually means the position was sold (closed before market resolution).
+
+**Solution:** Changed badge from "Not found" (amber) to "Sold" (gray) for unresolved markets:
+- "Sold" badge (gray): Position closed in an unresolved market (realized P&L)
+- "Lost" badge (red): Position lost in a resolved market
+- "Won" badge (green): Position won in a resolved market
+
+**Commit:** `7655336` - ui(report): show Sold badge for closed positions in unresolved markets
+
+---
+
+### Bug: Wallets Under $2.5K Appearing in Convergence & Positions (Fixed)
+
+**Symptom:** Wallets with position cost < $2.5K (e.g., eanvanezygv with $748) were appearing in convergence groups and the "All Longshot Positions" table.
+
+**Root Cause:** Filtering was done on `effective_current_value` (shares × current_price) instead of `effective_position_cost` (shares × avg_entry). A position could have high current value due to price appreciation but low original cost.
+
+**Fix (Part 1 - Convergence Wallet Details):** Added `cost_filtered` CTE to all 4 wallet details queries:
+```sql
+with_details AS (
+  SELECT d.*,
+    COALESCE(pso.synced_position_size, pso.last_known_position_size, d.position_size)::numeric *
+    COALESCE(pso.synced_avg_price, pso.last_known_avg_price, d.position_avg_price)::numeric as effective_position_cost
+  FROM deduped d
+  LEFT JOIN position_sync_overlay pso ON ...
+),
+cost_filtered AS (
+  SELECT * FROM with_details
+  WHERE effective_position_cost >= ${minPosition} OR effective_position_cost IS NULL
+),
+ranked AS (
+  FROM cost_filtered e  -- Uses cost_filtered instead of with_details
+  ...
+)
+```
+
+**Commit:** `5631b85` - fix(report): filter convergence wallets by position cost
+
+**Fix (Part 2 - Positions Count Query):** Updated `totalPositionsResult` count query to filter by `effective_position_cost` instead of `effective_current_value`:
+```sql
+with_overlay AS (
+  SELECT bp.*,
+    COALESCE(pso.synced_position_size, pso.last_known_position_size, bp.position_size)::numeric *
+    COALESCE(pso.synced_avg_price, pso.last_known_avg_price, bp.position_avg_price)::numeric as effective_position_cost
+  FROM base_positions bp
+  LEFT JOIN position_sync_overlay pso ON ...
+),
+filtered AS (
+  SELECT wo.wallet, wo.condition_id, wo.outcome
+  FROM with_overlay wo
+  WHERE (wo.effective_position_cost >= ${minPosition} OR wo.effective_position_cost IS NULL)
+  ...
+)
+```
+
+**Commit:** `db9a34d` - fix(report): filter positions count by position cost, not current value
+
+---
+
+### UI: Reorder Columns in All Longshot Positions Table (Completed)
+
+**Request:** Move "Pos Avg Entry" column before "Position Cost / Value" column.
+
+**New Column Order:**
+Market → Trader → Last Fill Price → Current Price → Last Fill Value → **Pos Avg Entry** → **Position Cost / Value** → Payout if Wins → Time
+
+**Commit:** `6e2c1d3` - ui(report): move Pos Avg Entry column before Position Cost / Value
+
+---
+
+### Files Modified
+- `app/report/page.tsx` - UI badge logic, column reordering
+- `app/api/report/route.ts` - Wallet count fix, cost filtering in 4 wallet detail queries + positions count query
+
+### Commits Summary
+| Commit | Description |
+|--------|-------------|
+| `2e14b40` | fix(report): restore WON/LOST badges for resolved positions |
+| `1b788f5` | fix(report): wallet count mismatch + Lost badge consistency |
+| `7655336` | ui(report): show Sold badge for closed positions in unresolved markets |
+| `5631b85` | fix(report): filter convergence wallets by position cost |
+| `db9a34d` | fix(report): filter positions count by position cost, not current value |
+| `6e2c1d3` | ui(report): move Pos Avg Entry column before Position Cost / Value |
+
+---
+
 ## Session: December 28, 2025 (Sync-Positions Wallet Sourcing Fix)
 
 ### Bug: 291 Snapshot Wallets Not Being Synced (Fixed)
