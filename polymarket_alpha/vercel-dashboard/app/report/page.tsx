@@ -1004,6 +1004,12 @@ export default function ReportPage() {
           </div>
           <div className="flex items-center gap-3">
             <Link
+              href="/radar"
+              className="px-4 py-2 bg-red-600 text-white font-medium rounded hover:bg-red-500 transition-colors flex items-center gap-1"
+            >
+              <span>*</span> Radar
+            </Link>
+            <Link
               href="/history"
               className="px-4 py-2 bg-poly-card border border-poly-border text-white font-medium rounded hover:bg-poly-border transition-colors"
             >
