@@ -34,7 +34,7 @@ function parseFloatParam(value: string | null, defaultValue: number, min: number
 // Scoring functions (each returns 0-25 points)
 
 // Wallet freshness: newer = higher score
-// First seen < 7 days ago = 25pts, < 30 days = 20pts, < 90 days = 10pts, else 0
+// Based on actual first trade date from Polymarket API
 function scoreWalletFreshness(daysOld: number): number {
   if (daysOld <= 7) return 25;
   if (daysOld <= 14) return 22;
@@ -45,13 +45,55 @@ function scoreWalletFreshness(daysOld: number): number {
 }
 
 // Wallet activity: fewer trades = higher score (more "purpose-built")
-// 1-3 trades = 25pts, 4-10 = 18pts, 11-25 = 10pts, 26-50 = 5pts, else 0
+// Based on actual trade count from Polymarket API
 function scoreWalletActivity(tradeCount: number): number {
   if (tradeCount <= 3) return 25;
   if (tradeCount <= 10) return 18;
   if (tradeCount <= 25) return 10;
   if (tradeCount <= 50) return 5;
   return 0;
+}
+
+// Fetch actual wallet stats from Polymarket API
+// Returns { tradeCount, firstTradeDate, daysOld }
+async function fetchWalletStats(wallet: string): Promise<{
+  tradeCount: number;
+  firstTradeTimestamp: number | null;
+  daysOld: number;
+}> {
+  try {
+    // Fetch trades for this wallet (up to 1000)
+    const res = await fetch(
+      `https://data-api.polymarket.com/trades?user=${wallet}&limit=1000`,
+      { cache: 'no-store' }
+    );
+
+    if (!res.ok) {
+      console.warn(`[fetchWalletStats] Failed to fetch for ${wallet}: ${res.status}`);
+      return { tradeCount: 0, firstTradeTimestamp: null, daysOld: 999 };
+    }
+
+    const trades = await res.json();
+
+    if (!Array.isArray(trades) || trades.length === 0) {
+      return { tradeCount: 0, firstTradeTimestamp: null, daysOld: 999 };
+    }
+
+    const tradeCount = trades.length;
+
+    // Find oldest trade timestamp
+    const timestamps = trades.map((t: { timestamp: number }) => t.timestamp);
+    const oldestTimestamp = Math.min(...timestamps);
+
+    // Calculate days old
+    const now = Date.now() / 1000;
+    const daysOld = Math.floor((now - oldestTimestamp) / (60 * 60 * 24));
+
+    return { tradeCount, firstTradeTimestamp: oldestTimestamp, daysOld };
+  } catch (err) {
+    console.error(`[fetchWalletStats] Error for ${wallet}:`, err);
+    return { tradeCount: 0, firstTradeTimestamp: null, daysOld: 999 };
+  }
 }
 
 // Odds extremity: lower odds = higher score
@@ -241,23 +283,50 @@ export async function GET(request: NextRequest) {
       LIMIT 500
     `;
 
-    // Process rows and compute scores
+    // Filter rows first (before API calls)
+    const filteredRows = result.rows.filter(row => {
+      const isResolved = row.market_resolved ?? false;
+      return includeResolved || !isResolved;
+    });
+
+    // Get unique wallets to fetch stats for
+    const uniqueWallets = Array.from(new Set(filteredRows.map(r => r.wallet)));
+    console.log(`[radar] Fetching stats for ${uniqueWallets.length} unique wallets`);
+
+    // Fetch real wallet stats from Polymarket API (in parallel, max 10 concurrent)
+    const walletStatsMap = new Map<string, { tradeCount: number; daysOld: number }>();
+
+    // Process in batches of 10 to avoid rate limiting
+    const BATCH_SIZE = 10;
+    for (let i = 0; i < uniqueWallets.length; i += BATCH_SIZE) {
+      const batch = uniqueWallets.slice(i, i + BATCH_SIZE);
+      const statsPromises = batch.map(async (wallet) => {
+        const stats = await fetchWalletStats(wallet);
+        return { wallet, stats };
+      });
+
+      const batchResults = await Promise.all(statsPromises);
+      for (const { wallet, stats } of batchResults) {
+        walletStatsMap.set(wallet, { tradeCount: stats.tradeCount, daysOld: stats.daysOld });
+      }
+    }
+
+    // Process rows and compute scores using real wallet stats
     const signals: RadarSignal[] = [];
 
-    for (const row of result.rows) {
-      // Filter resolved markets if requested
-      const isResolved = row.market_resolved ?? false;
-      if (!includeResolved && isResolved) continue;
-
+    for (const row of filteredRows) {
       const fillPrice = parseFloat(row.fill_price) || 0;
       const fillValueUsd = parseFloat(row.fill_value_usd) || 0;
       const positionSize = row.position_size ? parseFloat(row.position_size) : null;
       const positionValue = row.position_current_value ? parseFloat(row.position_current_value) : null;
       const potentialPayout = positionSize ? positionSize * 1.0 : null; // Each share pays $1
-      const walletDaysOld = parseInt(row.wallet_days_old) || 0;
-      const walletTradeCount = parseInt(row.wallet_trade_count) || 0;
 
-      // Compute scores
+      // Get real wallet stats from Polymarket API
+      const walletStats = walletStatsMap.get(row.wallet) || { tradeCount: 999, daysOld: 999 };
+      const walletDaysOld = walletStats.daysOld;
+      const walletTradeCount = walletStats.tradeCount;
+
+      // Compute scores using REAL data
       const freshnessScore = scoreWalletFreshness(walletDaysOld);
       const activityScore = scoreWalletActivity(walletTradeCount);
       const oddsScore = scoreOddsExtremity(fillPrice);
