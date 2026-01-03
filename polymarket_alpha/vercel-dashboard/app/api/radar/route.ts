@@ -178,6 +178,10 @@ interface RadarSignal {
   // Whale info
   isWhale: boolean;
   whaleLabel: string | null;
+
+  // Synced data (from position_sync_overlay)
+  hasSyncedData: boolean;
+  syncedAt: string | null;
 }
 
 interface DbRow {
@@ -201,6 +205,11 @@ interface DbRow {
   winning_outcome: string | null;
   is_whale: boolean;
   whale_label: string | null;
+  // Synced position data
+  synced_position_size: string | null;
+  synced_current_value: string | null;
+  synced_payout_if_wins: string | null;
+  synced_at: string | null;
 }
 
 export async function GET(request: NextRequest) {
@@ -248,10 +257,19 @@ export async function GET(request: NextRequest) {
           ms.market_resolved,
           ms.winning_outcome,
           ae.is_whale,
-          ae.whale_label
+          ae.whale_label,
+          -- Synced position data (from position_sync_overlay)
+          pso.synced_position_size,
+          pso.synced_current_value,
+          pso.synced_payout_if_wins,
+          pso.synced_at
         FROM alert_events ae
         INNER JOIN wallet_stats ws ON ae.wallet = ws.wallet
         LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
+        LEFT JOIN position_sync_overlay pso
+          ON ae.wallet = pso.wallet
+          AND ae.condition_id = pso.condition_id
+          AND ae.outcome = pso.outcome
         WHERE ae.side = 'BUY'
           AND ae.fill_price <= ${maxOdds}
           AND ae.fill_value_usd >= ${minBet}
@@ -277,7 +295,11 @@ export async function GET(request: NextRequest) {
         market_resolved,
         winning_outcome,
         is_whale,
-        whale_label
+        whale_label,
+        synced_position_size::text,
+        synced_current_value::text,
+        synced_payout_if_wins::text,
+        synced_at::text
       FROM radar_candidates
       ORDER BY fill_timestamp DESC
       LIMIT 500
@@ -317,9 +339,18 @@ export async function GET(request: NextRequest) {
     for (const row of filteredRows) {
       const fillPrice = parseFloat(row.fill_price) || 0;
       const fillValueUsd = parseFloat(row.fill_value_usd) || 0;
-      const positionSize = row.position_size ? parseFloat(row.position_size) : null;
-      const positionValue = row.position_current_value ? parseFloat(row.position_current_value) : null;
-      const potentialPayout = positionSize ? positionSize * 1.0 : null; // Each share pays $1
+
+      // Use synced data if available, otherwise fall back to snapshot
+      const hasSyncedData = row.synced_position_size !== null;
+      const positionSize = hasSyncedData
+        ? (row.synced_position_size ? parseFloat(row.synced_position_size) : null)
+        : (row.position_size ? parseFloat(row.position_size) : null);
+      const positionValue = hasSyncedData
+        ? (row.synced_current_value ? parseFloat(row.synced_current_value) : null)
+        : (row.position_current_value ? parseFloat(row.position_current_value) : null);
+      const potentialPayout = hasSyncedData
+        ? (row.synced_payout_if_wins ? parseFloat(row.synced_payout_if_wins) : null)
+        : (positionSize ? positionSize * 1.0 : null);
 
       // Get real wallet stats from Polymarket API
       const walletStats = walletStatsMap.get(row.wallet) || { tradeCount: 999, daysOld: 999 };
@@ -376,6 +407,8 @@ export async function GET(request: NextRequest) {
         winningOutcome: row.winning_outcome,
         isWhale: row.is_whale,
         whaleLabel: row.whale_label,
+        hasSyncedData,
+        syncedAt: row.synced_at,
       });
     }
 

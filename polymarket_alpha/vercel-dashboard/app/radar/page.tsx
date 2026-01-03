@@ -38,6 +38,8 @@ interface RadarSignal {
   winningOutcome: string | null
   isWhale: boolean
   whaleLabel: string | null
+  hasSyncedData: boolean
+  syncedAt: string | null
 }
 
 interface RadarMetadata {
@@ -106,6 +108,10 @@ export default function RadarPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  // Sync state
+  const [syncLoading, setSyncLoading] = useState(false)
+  const [syncResult, setSyncResult] = useState<{ walletsSynced: number } | null>(null)
+
   // Filters
   const [maxOdds, setMaxOdds] = useState(0.20)
   const [minBet, setMinBet] = useState(500)
@@ -140,6 +146,38 @@ export default function RadarPage() {
   useEffect(() => {
     fetchSignals()
   }, [fetchSignals])
+
+  // Sync positions from Polymarket API
+  const syncPositions = useCallback(async () => {
+    setSyncLoading(true)
+    setSyncResult(null)
+    try {
+      const res = await fetch('/api/positions/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          scope: 'filter',
+          alertWindowHours: sinceDays * 24,
+          whalesOnly: false,
+          includeResolved,
+          maxOdds,
+          minPosition: minBet,
+        }),
+      })
+      if (res.ok) {
+        const data = await res.json()
+        if (data.success && data.result) {
+          setSyncResult({ walletsSynced: data.result.walletsSynced || 0 })
+          // Refetch radar to get updated data
+          await fetchSignals()
+        }
+      }
+    } catch (err) {
+      console.warn('[radar] Position sync failed:', err)
+    } finally {
+      setSyncLoading(false)
+    }
+  }, [sinceDays, includeResolved, maxOdds, minBet, fetchSignals])
 
   const formatTimeAgo = (timestamp: string): string => {
     const date = new Date(timestamp)
@@ -254,9 +292,27 @@ export default function RadarPage() {
             </div>
 
             <button
+              onClick={syncPositions}
+              disabled={syncLoading}
+              className="ml-auto bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-700 px-4 py-1 rounded text-sm font-medium flex items-center gap-1"
+              title="Fetch live positions from Polymarket API"
+            >
+              {syncLoading ? (
+                <>
+                  <span className="animate-spin">⟳</span>
+                  Syncing...
+                </>
+              ) : (
+                <>
+                  <span>⟳</span>
+                  Sync Positions
+                </>
+              )}
+            </button>
+            <button
               onClick={fetchSignals}
               disabled={loading}
-              className="ml-auto bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 px-4 py-1 rounded text-sm font-medium"
+              className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-700 px-4 py-1 rounded text-sm font-medium"
             >
               {loading ? 'Loading...' : 'Refresh'}
             </button>
@@ -361,7 +417,12 @@ export default function RadarPage() {
                         <div className="text-sm font-medium text-white">{signal.fillValueFormatted}</div>
                       </div>
                       <div>
-                        <div className="text-xs text-gray-500">Position Value</div>
+                        <div className="text-xs text-gray-500 flex items-center gap-1">
+                          Position Value
+                          {signal.hasSyncedData && (
+                            <span className="text-emerald-400" title={`Synced ${signal.syncedAt ? new Date(signal.syncedAt).toLocaleString() : ''}`}>⟳</span>
+                          )}
+                        </div>
                         <div className="text-sm font-medium text-white">{signal.positionValueFormatted}</div>
                       </div>
                       <div>
