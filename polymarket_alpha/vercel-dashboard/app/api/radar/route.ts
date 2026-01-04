@@ -182,6 +182,9 @@ interface RadarSignal {
   // Synced data (from position_sync_overlay)
   hasSyncedData: boolean;
   syncedAt: string | null;
+
+  // Hedge detection
+  isHedger: boolean;  // true if wallet has positions on multiple outcomes of this market
 }
 
 interface DbRow {
@@ -322,6 +325,25 @@ export async function GET(request: NextRequest) {
       return includeResolved || !isResolved;
     });
 
+    // ========================================================================
+    // HEDGE DETECTION: Find wallets with positions on multiple outcomes of same market
+    // ========================================================================
+    const hedgeMap = new Map<string, Set<string>>();  // key: wallet|condition_id → Set of outcomes
+    for (const row of filteredRows) {
+      const key = `${row.wallet}|${row.condition_id}`;
+      if (!hedgeMap.has(key)) {
+        hedgeMap.set(key, new Set());
+      }
+      hedgeMap.get(key)!.add(row.outcome);
+    }
+    // A wallet is hedging if they have 2+ outcomes on the same market
+    const hedgerKeys = new Set<string>();
+    hedgeMap.forEach((outcomes, key) => {
+      if (outcomes.size > 1) {
+        hedgerKeys.add(key);
+      }
+    });
+
     // Get unique wallets to fetch stats for
     const uniqueWallets = Array.from(new Set(filteredRows.map(r => r.wallet)));
     console.log(`[radar] Fetching stats for ${uniqueWallets.length} unique wallets`);
@@ -397,6 +419,10 @@ export async function GET(request: NextRequest) {
       // Filter by minimum score
       if (totalScore < minScore) continue;
 
+      // Check if this wallet is hedging on this market
+      const hedgeKey = `${row.wallet}|${row.condition_id}`;
+      const isHedger = hedgerKeys.has(hedgeKey);
+
       signals.push({
         id: row.id,
         fillTimestamp: row.fill_timestamp,
@@ -439,6 +465,7 @@ export async function GET(request: NextRequest) {
         whaleLabel: row.whale_label,
         hasSyncedData,
         syncedAt: row.synced_at,
+        isHedger,
       });
     }
 

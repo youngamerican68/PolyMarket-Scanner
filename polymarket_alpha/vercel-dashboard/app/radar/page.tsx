@@ -40,6 +40,7 @@ interface RadarSignal {
   whaleLabel: string | null
   hasSyncedData: boolean
   syncedAt: string | null
+  isHedger: boolean
 }
 
 interface RadarMetadata {
@@ -454,6 +455,11 @@ export default function RadarPage() {
                         {signal.isWhale && (
                           <span className="px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">
                             {signal.whaleLabel || 'Whale'}
+                          </span>
+                        )}
+                        {signal.isHedger && (
+                          <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded text-xs" title="Wallet has positions on multiple outcomes of this market">
+                            Hedged
                           </span>
                         )}
                       </div>
