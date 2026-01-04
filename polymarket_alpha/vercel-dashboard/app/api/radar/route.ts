@@ -240,7 +240,8 @@ export async function GET(request: NextRequest) {
         GROUP BY wallet
       ),
       radar_candidates AS (
-        SELECT
+        -- Deduplicate by wallet + condition_id + outcome, keeping the most recent trade
+        SELECT DISTINCT ON (ae.wallet, ae.condition_id, ae.outcome)
           ae.id,
           ae.fill_timestamp,
           ae.wallet,
@@ -280,6 +281,7 @@ export async function GET(request: NextRequest) {
           AND ae.fill_price <= ${maxOdds}
           AND COALESCE(pso.synced_current_value, ae.position_current_value) >= ${minPosition}
           AND ae.fill_timestamp >= NOW() - INTERVAL '1 day' * ${sinceDays}
+        ORDER BY ae.wallet, ae.condition_id, ae.outcome, ae.fill_timestamp DESC
       )
       SELECT
         id,
