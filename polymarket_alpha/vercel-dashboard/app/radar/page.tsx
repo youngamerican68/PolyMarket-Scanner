@@ -50,6 +50,7 @@ interface RadarMetadata {
   minScore: number
   limit: number
   includeResolved: boolean
+  sortBy: 'score' | 'time'
   totalCandidates: number
   filteredCount: number
   returnedCount: number
@@ -119,6 +120,7 @@ export default function RadarPage() {
   const [sinceDays, setSinceDays] = useState(7)
   const [minScore, setMinScore] = useState(50)
   const [includeResolved, setIncludeResolved] = useState(false)
+  const [sortBy, setSortBy] = useState<'score' | 'time'>('time')
 
   const fetchSignals = useCallback(async () => {
     setLoading(true)
@@ -130,6 +132,7 @@ export default function RadarPage() {
         sinceDays: sinceDays.toString(),
         minScore: minScore.toString(),
         includeResolved: includeResolved.toString(),
+        sortBy,
         limit: '100',
       })
       const res = await fetch(`/api/radar?${params}`)
@@ -142,7 +145,7 @@ export default function RadarPage() {
     } finally {
       setLoading(false)
     }
-  }, [maxOdds, minPosition, sinceDays, minScore, includeResolved])
+  }, [maxOdds, minPosition, sinceDays, minScore, includeResolved, sortBy])
 
   useEffect(() => {
     fetchSignals()
@@ -277,6 +280,18 @@ export default function RadarPage() {
                 <option value={50}>50+</option>
                 <option value={70}>70+</option>
                 <option value={90}>90+</option>
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-400">Sort:</label>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value as 'score' | 'time')}
+                className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm"
+              >
+                <option value="time">Newest</option>
+                <option value="score">Score</option>
               </select>
             </div>
 

@@ -228,6 +228,7 @@ export async function GET(request: NextRequest) {
   const minScore = parseIntParam(searchParams.get('minScore'), 50, 0, 125);
   const limit = parseIntParam(searchParams.get('limit'), 50, 1, 200);
   const includeResolved = searchParams.get('includeResolved') === 'true';
+  const sortBy = searchParams.get('sortBy') === 'score' ? 'score' : 'time';  // default: time
 
   try {
     // Main query: find long-shot BUY trades with wallet stats
@@ -469,8 +470,13 @@ export async function GET(request: NextRequest) {
       });
     }
 
-    // Sort by total score (highest first)
-    signals.sort((a, b) => b.scores.total - a.scores.total);
+    // Sort by selected criteria
+    if (sortBy === 'score') {
+      signals.sort((a, b) => b.scores.total - a.scores.total);
+    } else {
+      // Sort by time (newest first)
+      signals.sort((a, b) => new Date(b.fillTimestamp).getTime() - new Date(a.fillTimestamp).getTime());
+    }
 
     // Limit results
     const limitedSignals = signals.slice(0, limit);
@@ -483,6 +489,7 @@ export async function GET(request: NextRequest) {
         minScore,
         limit,
         includeResolved,
+        sortBy,
         totalCandidates: result.rows.length,
         filteredCount: signals.length,
         returnedCount: limitedSignals.length,
