@@ -1,5 +1,162 @@
 # Polymarket Tracker - Development Progress
 
+## Session: January 4, 2026 (Long-Shot Radar Enhancements)
+
+### Radar Filter Alignment with Main Report (Completed)
+
+**Changes:**
+- Changed filter from `fill_value_usd >= minBet` to `position_current_value >= minPosition`
+- Updated defaults: maxOdds 0.20 → 0.25, minPosition $500 → $2,500
+- Now consistent with main report's filtering logic
+
+### Position Cost Calculation Fix (Completed)
+
+**Problem:** Radar showed "Bet Size" using individual trade's `fill_value_usd` instead of total position cost.
+
+**Solution:** Changed to use `synced_avg_price × synced_position_size` (matching main report):
+```typescript
+const positionCost = (positionSize !== null && positionAvgPrice !== null)
+  ? positionSize * positionAvgPrice
+  : null;
+```
+
+Uses fallback chain: synced → lastKnown → raw snapshot data.
+
+**Commit:** `d689e02` - fix(radar): use synced_avg_price for position cost
+
+---
+
+### Duplicate Positions Bug Fix (Completed)
+
+**Problem:** Same wallet+market+outcome appeared multiple times in radar results.
+
+**Solution:** Added `DISTINCT ON` clause to deduplicate:
+```sql
+SELECT DISTINCT ON (ae.wallet, ae.condition_id, ae.outcome)
+  ...
+ORDER BY ae.wallet, ae.condition_id, ae.outcome, ae.fill_timestamp DESC
+```
+
+Keeps most recent trade per unique position.
+
+**Commit:** `b75d5be` - fix(radar): deduplicate positions by wallet+market+outcome
+
+---
+
+### Hedge Detection Feature (Completed)
+
+**Goal:** Flag wallets with positions on multiple outcomes of the same market (hedging behavior).
+
+**Why:** True insiders have high conviction on one outcome; hedging suggests risk management, not insider knowledge.
+
+**Implementation:**
+- Build map of `wallet|condition_id` → Set of outcomes
+- If 2+ outcomes exist, mark as hedger
+- Display amber "Hedged" badge next to wallet name
+
+**Commit:** `84579f6` - feat(radar): flag hedged positions with badge
+
+---
+
+### Sort Dropdown (Completed)
+
+**Feature:** Added sort option to radar filter bar.
+
+**Options:**
+- **Newest** (default) - Sort by fill timestamp, most recent first
+- **Score** - Sort by insider score, highest first
+
+**Commit:** `9846fbe` - feat(radar): add sort dropdown (newest/score)
+
+---
+
+### Hide Sports Filter (Completed)
+
+**Goal:** Filter out sports markets since insider info is less actionable (too noisy with sharp bettors/gamblers).
+
+**Implementation:**
+- Keyword detection in title/slug/eventSlug
+- Keywords: NFL, NBA, MLB, NHL, UFC, playoffs, championship, "vs", "win", etc.
+- Checkbox "Hide Sports" (checked by default)
+- `isSports` flag on each signal for transparency
+
+**Commit:** `be98031` - feat(radar): add Hide Sports filter
+
+---
+
+### Watchlist Feature (Completed)
+
+**Goal:** Allow users to save interesting trades from radar to track resolution.
+
+**Components:**
+
+1. **Database Table** (Phase 11 migration):
+```sql
+CREATE TABLE radar_watchlist (
+  id SERIAL PRIMARY KEY,
+  wallet TEXT NOT NULL,
+  condition_id TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  title TEXT,
+  fill_price NUMERIC,
+  position_cost NUMERIC,
+  potential_payout NUMERIC,
+  insider_score INTEGER,
+  notes TEXT,
+  saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  resolved_at TIMESTAMPTZ,
+  resolution_outcome TEXT,
+  UNIQUE (wallet, condition_id, outcome)
+);
+```
+
+2. **API Endpoint** (`/api/watchlist`):
+   - GET - List all saved items with market resolution status
+   - POST - Save item (upsert)
+   - DELETE - Remove item by ID or composite key
+
+3. **Radar UI**:
+   - "Save" button on each signal card
+   - "Saved" state with yellow highlight
+   - "Watchlist (N)" link in header showing count
+
+4. **Watchlist Page** (`/watchlist`):
+   - Pending section (yellow) - unresolved markets
+   - Resolved section - green for wins, red for losses
+   - Stats: total saved, pending, won, lost
+   - Remove button for each item
+
+**Setup:** One-time endpoint `/api/setup-watchlist` to create table.
+
+**Commits:**
+- `3163758` - feat(radar): add watchlist to save and track trades
+- `57b80d9` - feat: add simple setup-watchlist endpoint
+
+---
+
+### Files Created
+- `app/api/watchlist/route.ts` - Watchlist CRUD API
+- `app/watchlist/page.tsx` - Watchlist viewing page
+- `app/api/setup-watchlist/route.ts` - One-time table setup
+
+### Files Modified
+- `app/api/radar/route.ts` - All radar enhancements
+- `app/radar/page.tsx` - UI for all features
+- `app/api/admin/migrate/route.ts` - Phase 11 watchlist migration
+
+### Commits Summary
+| Commit | Description |
+|--------|-------------|
+| `d689e02` | fix(radar): use synced_avg_price for position cost |
+| `b75d5be` | fix(radar): deduplicate positions by wallet+market+outcome |
+| `84579f6` | feat(radar): flag hedged positions with badge |
+| `9846fbe` | feat(radar): add sort dropdown (newest/score) |
+| `be98031` | feat(radar): add Hide Sports filter |
+| `3163758` | feat(radar): add watchlist to save and track trades |
+| `57b80d9` | feat: add simple setup-watchlist endpoint |
+
+---
+
 ## Session: December 29-30, 2025 (UI Fixes & Position Cost Filtering)
 
 ### Bug: Inconsistent Lost/Won Badges in Resolved Markets (Fixed)
