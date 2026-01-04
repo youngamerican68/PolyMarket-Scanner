@@ -146,12 +146,12 @@ interface RadarSignal {
   // Trade details
   fillPrice: number;
   fillPriceFormatted: string;
-  fillValueUsd: number;
-  fillValueFormatted: string;
 
-  // Position details
+  // Position details (from synced data or snapshot)
   positionSize: number | null;
-  positionValueUsd: number | null;
+  positionCost: number | null;  // position_size × fill_price (actual cost basis)
+  positionCostFormatted: string;
+  positionValueUsd: number | null;  // current value
   positionValueFormatted: string;
   potentialPayout: number | null;
   potentialPayoutFormatted: string;
@@ -205,19 +205,22 @@ interface DbRow {
   winning_outcome: string | null;
   is_whale: boolean;
   whale_label: string | null;
-  // Synced position data
+  // Synced position data (matches main report)
   synced_position_size: string | null;
+  synced_avg_price: string | null;
   synced_current_value: string | null;
   synced_payout_if_wins: string | null;
+  last_known_position_size: string | null;
+  last_known_avg_price: string | null;
   synced_at: string | null;
 }
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
 
-  // Parse parameters
-  const maxOdds = parseFloatParam(searchParams.get('maxOdds'), 0.20, 0.01, 0.50);
-  const minBet = parseFloatParam(searchParams.get('minBet'), 500, 0, 100000);
+  // Parse parameters (defaults match main report)
+  const maxOdds = parseFloatParam(searchParams.get('maxOdds'), 0.25, 0.01, 0.50);
+  const minPosition = parseFloatParam(searchParams.get('minPosition'), 2500, 0, 100000);
   const sinceDays = parseIntParam(searchParams.get('sinceDays'), 7, 1, 90);
   const minScore = parseIntParam(searchParams.get('minScore'), 50, 0, 125);
   const limit = parseIntParam(searchParams.get('limit'), 50, 1, 200);
@@ -258,10 +261,13 @@ export async function GET(request: NextRequest) {
           ms.winning_outcome,
           ae.is_whale,
           ae.whale_label,
-          -- Synced position data (from position_sync_overlay)
+          -- Synced position data (from position_sync_overlay, matches main report)
           pso.synced_position_size,
+          pso.synced_avg_price,
           pso.synced_current_value,
           pso.synced_payout_if_wins,
+          pso.last_known_position_size,
+          pso.last_known_avg_price,
           pso.synced_at
         FROM alert_events ae
         INNER JOIN wallet_stats ws ON ae.wallet = ws.wallet
@@ -272,7 +278,7 @@ export async function GET(request: NextRequest) {
           AND ae.outcome = pso.outcome
         WHERE ae.side = 'BUY'
           AND ae.fill_price <= ${maxOdds}
-          AND ae.fill_value_usd >= ${minBet}
+          AND COALESCE(pso.synced_current_value, ae.position_current_value) >= ${minPosition}
           AND ae.fill_timestamp >= NOW() - INTERVAL '1 day' * ${sinceDays}
       )
       SELECT
@@ -297,8 +303,11 @@ export async function GET(request: NextRequest) {
         is_whale,
         whale_label,
         synced_position_size::text,
+        synced_avg_price::text,
         synced_current_value::text,
         synced_payout_if_wins::text,
+        last_known_position_size::text,
+        last_known_avg_price::text,
         synced_at::text
       FROM radar_candidates
       ORDER BY fill_timestamp DESC
@@ -338,19 +347,35 @@ export async function GET(request: NextRequest) {
 
     for (const row of filteredRows) {
       const fillPrice = parseFloat(row.fill_price) || 0;
-      const fillValueUsd = parseFloat(row.fill_value_usd) || 0;
 
-      // Use synced data if available, otherwise fall back to snapshot
-      const hasSyncedData = row.synced_position_size !== null;
-      const positionSize = hasSyncedData
-        ? (row.synced_position_size ? parseFloat(row.synced_position_size) : null)
-        : (row.position_size ? parseFloat(row.position_size) : null);
-      const positionValue = hasSyncedData
-        ? (row.synced_current_value ? parseFloat(row.synced_current_value) : null)
-        : (row.position_current_value ? parseFloat(row.position_current_value) : null);
-      const potentialPayout = hasSyncedData
-        ? (row.synced_payout_if_wins ? parseFloat(row.synced_payout_if_wins) : null)
-        : (positionSize ? positionSize * 1.0 : null);
+      // ========================================================================
+      // EFFECTIVE VALUES: Prefer synced → lastKnown → alert_events fallback
+      // This matches main report's approach for consistency
+      // ========================================================================
+      const syncedPositionSize = row.synced_position_size ? parseFloat(row.synced_position_size) : null;
+      const syncedAvgPrice = row.synced_avg_price ? parseFloat(row.synced_avg_price) : null;
+      const syncedCurrentValue = row.synced_current_value ? parseFloat(row.synced_current_value) : null;
+      const syncedPayoutIfWins = row.synced_payout_if_wins ? parseFloat(row.synced_payout_if_wins) : null;
+
+      const lastKnownPositionSize = row.last_known_position_size ? parseFloat(row.last_known_position_size) : null;
+      const lastKnownAvgPrice = row.last_known_avg_price ? parseFloat(row.last_known_avg_price) : null;
+
+      const rawPositionSize = row.position_size ? parseFloat(row.position_size) : null;
+      const rawPositionValue = row.position_current_value ? parseFloat(row.position_current_value) : null;
+
+      // Effective values (synced → lastKnown → raw)
+      const positionSize = syncedPositionSize ?? lastKnownPositionSize ?? rawPositionSize;
+      const positionAvgPrice = syncedAvgPrice ?? lastKnownAvgPrice ?? fillPrice;
+      const positionValue = syncedCurrentValue ?? rawPositionValue;
+      const potentialPayout = syncedPayoutIfWins ?? positionSize;
+
+      // Position cost = shares × avg price (matches main report)
+      const positionCost = (positionSize !== null && positionAvgPrice !== null)
+        ? positionSize * positionAvgPrice
+        : null;
+
+      // Has synced data indicator
+      const hasSyncedData = syncedPositionSize !== null;
 
       // Get real wallet stats from Polymarket API
       const walletStats = walletStatsMap.get(row.wallet) || { tradeCount: 999, daysOld: 999 };
@@ -361,7 +386,8 @@ export async function GET(request: NextRequest) {
       const freshnessScore = scoreWalletFreshness(walletDaysOld);
       const activityScore = scoreWalletActivity(walletTradeCount);
       const oddsScore = scoreOddsExtremity(fillPrice);
-      const betSizeScore = scoreBetSize(fillValueUsd);
+      // Use position cost (actual risk) for bet size scoring, not individual trade value
+      const betSizeScore = scoreBetSize(positionCost || 0);
       const payoutScore = scorePotentialPayout(potentialPayout || 0);
 
       const totalScore = freshnessScore + activityScore + oddsScore + betSizeScore + payoutScore;
@@ -381,9 +407,11 @@ export async function GET(request: NextRequest) {
         slug: row.slug,
         fillPrice,
         fillPriceFormatted: `${(fillPrice * 100).toFixed(1)}%`,
-        fillValueUsd,
-        fillValueFormatted: `$${fillValueUsd.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`,
         positionSize,
+        positionCost,
+        positionCostFormatted: positionCost
+          ? `$${positionCost.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+          : '-',
         positionValueUsd: positionValue,
         positionValueFormatted: positionValue
           ? `$${positionValue.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
@@ -421,7 +449,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       metadata: {
         maxOdds,
-        minBet,
+        minPosition,
         sinceDays,
         minScore,
         limit,

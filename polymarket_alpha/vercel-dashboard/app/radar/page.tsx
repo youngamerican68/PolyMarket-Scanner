@@ -16,9 +16,9 @@ interface RadarSignal {
   slug: string | null
   fillPrice: number
   fillPriceFormatted: string
-  fillValueUsd: number
-  fillValueFormatted: string
   positionSize: number | null
+  positionCost: number | null
+  positionCostFormatted: string
   positionValueUsd: number | null
   positionValueFormatted: string
   potentialPayout: number | null
@@ -44,7 +44,7 @@ interface RadarSignal {
 
 interface RadarMetadata {
   maxOdds: number
-  minBet: number
+  minPosition: number
   sinceDays: number
   minScore: number
   limit: number
@@ -112,9 +112,9 @@ export default function RadarPage() {
   const [syncLoading, setSyncLoading] = useState(false)
   const [syncResult, setSyncResult] = useState<{ walletsSynced: number } | null>(null)
 
-  // Filters
-  const [maxOdds, setMaxOdds] = useState(0.20)
-  const [minBet, setMinBet] = useState(500)
+  // Filters (defaults match main report)
+  const [maxOdds, setMaxOdds] = useState(0.25)
+  const [minPosition, setMinPosition] = useState(2500)
   const [sinceDays, setSinceDays] = useState(7)
   const [minScore, setMinScore] = useState(50)
   const [includeResolved, setIncludeResolved] = useState(false)
@@ -125,7 +125,7 @@ export default function RadarPage() {
     try {
       const params = new URLSearchParams({
         maxOdds: maxOdds.toString(),
-        minBet: minBet.toString(),
+        minPosition: minPosition.toString(),
         sinceDays: sinceDays.toString(),
         minScore: minScore.toString(),
         includeResolved: includeResolved.toString(),
@@ -141,7 +141,7 @@ export default function RadarPage() {
     } finally {
       setLoading(false)
     }
-  }, [maxOdds, minBet, sinceDays, minScore, includeResolved])
+  }, [maxOdds, minPosition, sinceDays, minScore, includeResolved])
 
   useEffect(() => {
     fetchSignals()
@@ -161,7 +161,7 @@ export default function RadarPage() {
           whalesOnly: false,
           includeResolved,
           maxOdds,
-          minPosition: minBet,
+          minPosition,
         }),
       })
       if (res.ok) {
@@ -177,7 +177,7 @@ export default function RadarPage() {
     } finally {
       setSyncLoading(false)
     }
-  }, [sinceDays, includeResolved, maxOdds, minBet, fetchSignals])
+  }, [sinceDays, includeResolved, maxOdds, minPosition, fetchSignals])
 
   const formatTimeAgo = (timestamp: string): string => {
     const date = new Date(timestamp)
@@ -236,17 +236,17 @@ export default function RadarPage() {
             </div>
 
             <div className="flex items-center gap-2">
-              <label className="text-sm text-gray-400">Min Bet:</label>
+              <label className="text-sm text-gray-400">Min Position:</label>
               <select
-                value={minBet}
-                onChange={(e) => setMinBet(parseFloat(e.target.value))}
+                value={minPosition}
+                onChange={(e) => setMinPosition(parseFloat(e.target.value))}
                 className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm"
               >
-                <option value={100}>$100</option>
                 <option value={500}>$500</option>
                 <option value={1000}>$1,000</option>
-                <option value={2000}>$2,000</option>
+                <option value={2500}>$2,500</option>
                 <option value={5000}>$5,000</option>
+                <option value={10000}>$10,000</option>
               </select>
             </div>
 
@@ -413,16 +413,16 @@ export default function RadarPage() {
                     {/* Trade details */}
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
                       <div>
-                        <div className="text-xs text-gray-500">Bet Size</div>
-                        <div className="text-sm font-medium text-white">{signal.fillValueFormatted}</div>
-                      </div>
-                      <div>
                         <div className="text-xs text-gray-500 flex items-center gap-1">
-                          Position Value
+                          Position Cost
                           {signal.hasSyncedData && (
                             <span className="text-emerald-400" title={`Synced ${signal.syncedAt ? new Date(signal.syncedAt).toLocaleString() : ''}`}>⟳</span>
                           )}
                         </div>
+                        <div className="text-sm font-medium text-white">{signal.positionCostFormatted}</div>
+                      </div>
+                      <div>
+                        <div className="text-xs text-gray-500">Current Value</div>
                         <div className="text-sm font-medium text-white">{signal.positionValueFormatted}</div>
                       </div>
                       <div>
@@ -432,8 +432,8 @@ export default function RadarPage() {
                       <div>
                         <div className="text-xs text-gray-500">Potential Return</div>
                         <div className="text-sm font-medium text-green-400">
-                          {signal.potentialPayout && signal.fillValueUsd
-                            ? `${(((signal.potentialPayout / signal.fillValueUsd) - 1) * 100).toFixed(0)}%`
+                          {signal.potentialPayout && signal.positionCost
+                            ? `${(((signal.potentialPayout / signal.positionCost) - 1) * 100).toFixed(0)}%`
                             : '-'}
                         </div>
                       </div>
@@ -474,7 +474,7 @@ export default function RadarPage() {
                         <ScoreBar score={signal.scores.freshness} max={25} label="Fresh" />
                         <ScoreBar score={signal.scores.activity} max={25} label="Activity" />
                         <ScoreBar score={signal.scores.odds} max={25} label="Odds" />
-                        <ScoreBar score={signal.scores.betSize} max={25} label="Bet Size" />
+                        <ScoreBar score={signal.scores.betSize} max={25} label="Position" />
                         <ScoreBar score={signal.scores.payout} max={25} label="Payout" />
                       </div>
                     </div>
