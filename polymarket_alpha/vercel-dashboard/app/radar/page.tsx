@@ -116,6 +116,10 @@ export default function RadarPage() {
   const [syncLoading, setSyncLoading] = useState(false)
   const [syncResult, setSyncResult] = useState<{ walletsSynced: number } | null>(null)
 
+  // Watchlist state
+  const [savedItems, setSavedItems] = useState<Set<string>>(new Set())
+  const [savingItems, setSavingItems] = useState<Set<string>>(new Set())
+
   // Filters (defaults match main report)
   const [maxOdds, setMaxOdds] = useState(0.25)
   const [minPosition, setMinPosition] = useState(2500)
@@ -154,6 +158,81 @@ export default function RadarPage() {
   useEffect(() => {
     fetchSignals()
   }, [fetchSignals])
+
+  // Fetch saved watchlist items on mount
+  useEffect(() => {
+    const fetchWatchlist = async () => {
+      try {
+        const res = await fetch('/api/watchlist')
+        if (res.ok) {
+          const data = await res.json()
+          const keys = new Set<string>(
+            data.items.map((item: { wallet: string; conditionId: string; outcome: string }) =>
+              `${item.wallet.toLowerCase()}|${item.conditionId}|${item.outcome}`
+            )
+          )
+          setSavedItems(keys)
+        }
+      } catch (err) {
+        console.warn('[radar] Failed to fetch watchlist:', err)
+      }
+    }
+    fetchWatchlist()
+  }, [])
+
+  // Save/unsave a signal to watchlist
+  const toggleSave = async (signal: RadarSignal) => {
+    const key = `${signal.wallet.toLowerCase()}|${signal.conditionId}|${signal.outcome}`
+    const isSaved = savedItems.has(key)
+
+    setSavingItems(prev => new Set(prev).add(key))
+
+    try {
+      if (isSaved) {
+        // Remove from watchlist
+        const params = new URLSearchParams({
+          wallet: signal.wallet,
+          conditionId: signal.conditionId,
+          outcome: signal.outcome,
+        })
+        const res = await fetch(`/api/watchlist?${params}`, { method: 'DELETE' })
+        if (res.ok) {
+          setSavedItems(prev => {
+            const next = new Set(prev)
+            next.delete(key)
+            return next
+          })
+        }
+      } else {
+        // Add to watchlist
+        const res = await fetch('/api/watchlist', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            wallet: signal.wallet,
+            conditionId: signal.conditionId,
+            outcome: signal.outcome,
+            title: signal.title,
+            fillPrice: signal.fillPrice,
+            positionCost: signal.positionCost,
+            potentialPayout: signal.potentialPayout,
+            insiderScore: signal.scores.total,
+          }),
+        })
+        if (res.ok) {
+          setSavedItems(prev => new Set(prev).add(key))
+        }
+      }
+    } catch (err) {
+      console.error('[radar] Failed to toggle save:', err)
+    } finally {
+      setSavingItems(prev => {
+        const next = new Set(prev)
+        next.delete(key)
+        return next
+      })
+    }
+  }
 
   // Sync positions from Polymarket API
   const syncPositions = useCallback(async () => {
@@ -215,12 +294,20 @@ export default function RadarPage() {
                 Detecting high-conviction bets on extreme long-shots
               </p>
             </div>
-            <Link
-              href="/report"
-              className="text-sm text-blue-400 hover:text-blue-300"
-            >
-              Back to Report
-            </Link>
+            <div className="flex items-center gap-4">
+              <Link
+                href="/watchlist"
+                className="text-sm text-yellow-400 hover:text-yellow-300"
+              >
+                Watchlist {savedItems.size > 0 && `(${savedItems.size})`}
+              </Link>
+              <Link
+                href="/report"
+                className="text-sm text-blue-400 hover:text-blue-300"
+              >
+                Back to Report
+              </Link>
+            </div>
           </div>
         </div>
       </header>
@@ -536,6 +623,21 @@ export default function RadarPage() {
                       >
                         View Profile
                       </a>
+                      <button
+                        onClick={() => toggleSave(signal)}
+                        disabled={savingItems.has(`${signal.wallet.toLowerCase()}|${signal.conditionId}|${signal.outcome}`)}
+                        className={`px-2 py-0.5 rounded text-xs font-medium transition-colors ${
+                          savedItems.has(`${signal.wallet.toLowerCase()}|${signal.conditionId}|${signal.outcome}`)
+                            ? 'bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30'
+                            : 'bg-gray-700 text-gray-300 hover:bg-gray-600'
+                        }`}
+                      >
+                        {savingItems.has(`${signal.wallet.toLowerCase()}|${signal.conditionId}|${signal.outcome}`)
+                          ? '...'
+                          : savedItems.has(`${signal.wallet.toLowerCase()}|${signal.conditionId}|${signal.outcome}`)
+                            ? 'Saved'
+                            : 'Save'}
+                      </button>
                     </div>
                   </div>
                 </div>

@@ -773,6 +773,36 @@ export async function POST(request: Request) {
 
     console.log('[migrate] Phase 10.3 + 10.4 hardening complete');
 
+    // =========================================================================
+    // Phase 11: Watchlist for Radar Trades
+    // Allows users to save interesting trades to track for later
+    // =========================================================================
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS radar_watchlist (
+        id SERIAL PRIMARY KEY,
+        wallet TEXT NOT NULL,
+        condition_id TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        title TEXT,
+        fill_price NUMERIC,
+        position_cost NUMERIC,
+        potential_payout NUMERIC,
+        insider_score INTEGER,
+        notes TEXT,
+        saved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        resolved_at TIMESTAMPTZ,
+        resolution_outcome TEXT,
+        UNIQUE (wallet, condition_id, outcome)
+      )
+    `;
+    console.log('[migrate] Created radar_watchlist table');
+
+    // Indexes for watchlist
+    await sql`CREATE INDEX IF NOT EXISTS idx_radar_watchlist_saved_at ON radar_watchlist (saved_at DESC)`;
+    await sql`CREATE INDEX IF NOT EXISTS idx_radar_watchlist_condition ON radar_watchlist (condition_id)`;
+    console.log('[migrate] Created radar_watchlist indexes');
+
     // Post-migration: run ANALYZE on touched tables for query planner
     try {
       await sql`ANALYZE outcome_price_cache`;
@@ -785,6 +815,7 @@ export async function POST(request: Request) {
       await sql`ANALYZE wallet_position_snapshot`;
       await sql`ANALYZE position_sync_overlay`;
       await sql`ANALYZE wallet_sync_state`;
+      await sql`ANALYZE radar_watchlist`;
       console.log('[migrate] ANALYZE completed on all tables');
     } catch (err) {
       console.warn('[migrate] ANALYZE failed (non-critical):', String(err).slice(0, 100));
@@ -795,8 +826,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: 'Phases 1-10.4 migration complete (includes ultra hardening)',
-      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status', 'trade_history_longshot_positions', 'market_final_pnl', 'wallet_position_snapshot', 'position_sync_overlay', 'wallet_sync_state'],
+      message: 'Phases 1-11 migration complete (includes watchlist)',
+      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status', 'trade_history_longshot_positions', 'market_final_pnl', 'wallet_position_snapshot', 'position_sync_overlay', 'wallet_sync_state', 'radar_watchlist'],
       indexes: [
         'idx_alert_events_fill_timestamp',
         'idx_alert_events_wallet_timestamp',
