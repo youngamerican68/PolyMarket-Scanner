@@ -129,6 +129,26 @@ function scorePotentialPayout(payoutUsd: number): number {
   return 0;
 }
 
+// Sports detection keywords
+const SPORTS_KEYWORDS = [
+  // Leagues
+  'nfl', 'nba', 'mlb', 'nhl', 'mls', 'ufc', 'pga', 'atp', 'wta', 'fifa', 'ncaa', 'wnba',
+  // Sports terms
+  'super bowl', 'world series', 'stanley cup', 'playoffs', 'championship', 'finals',
+  'game ', 'match ', 'vs ', ' vs.', 'versus',
+  // Team indicators
+  'win ', 'wins ', 'beat ', 'defeat ',
+  // Common sports
+  'football', 'basketball', 'baseball', 'hockey', 'soccer', 'tennis', 'golf', 'boxing', 'mma',
+  // Specific events
+  'bowl game', 'march madness', 'world cup', 'olympics', 'grand slam',
+];
+
+function isSportsMarket(title: string | null, slug: string | null, eventSlug: string | null): boolean {
+  const text = `${title || ''} ${slug || ''} ${eventSlug || ''}`.toLowerCase();
+  return SPORTS_KEYWORDS.some(keyword => text.includes(keyword));
+}
+
 interface RadarSignal {
   // Trade identity
   id: string;
@@ -185,6 +205,9 @@ interface RadarSignal {
 
   // Hedge detection
   isHedger: boolean;  // true if wallet has positions on multiple outcomes of this market
+
+  // Sports detection
+  isSports: boolean;  // true if market appears to be sports-related
 }
 
 interface DbRow {
@@ -229,6 +252,7 @@ export async function GET(request: NextRequest) {
   const limit = parseIntParam(searchParams.get('limit'), 50, 1, 200);
   const includeResolved = searchParams.get('includeResolved') === 'true';
   const sortBy = searchParams.get('sortBy') === 'score' ? 'score' : 'time';  // default: time
+  const hideSports = searchParams.get('hideSports') === 'true';
 
   try {
     // Main query: find long-shot BUY trades with wallet stats
@@ -424,6 +448,12 @@ export async function GET(request: NextRequest) {
       const hedgeKey = `${row.wallet}|${row.condition_id}`;
       const isHedger = hedgerKeys.has(hedgeKey);
 
+      // Check if this is a sports market
+      const isSports = isSportsMarket(row.title, row.slug, row.event_slug);
+
+      // Filter out sports if requested
+      if (hideSports && isSports) continue;
+
       signals.push({
         id: row.id,
         fillTimestamp: row.fill_timestamp,
@@ -467,6 +497,7 @@ export async function GET(request: NextRequest) {
         hasSyncedData,
         syncedAt: row.synced_at,
         isHedger,
+        isSports,
       });
     }
 
@@ -490,6 +521,7 @@ export async function GET(request: NextRequest) {
         limit,
         includeResolved,
         sortBy,
+        hideSports,
         totalCandidates: result.rows.length,
         filteredCount: signals.length,
         returnedCount: limitedSignals.length,

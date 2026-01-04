@@ -41,6 +41,7 @@ interface RadarSignal {
   hasSyncedData: boolean
   syncedAt: string | null
   isHedger: boolean
+  isSports: boolean
 }
 
 interface RadarMetadata {
@@ -51,6 +52,7 @@ interface RadarMetadata {
   limit: number
   includeResolved: boolean
   sortBy: 'score' | 'time'
+  hideSports: boolean
   totalCandidates: number
   filteredCount: number
   returnedCount: number
@@ -121,6 +123,7 @@ export default function RadarPage() {
   const [minScore, setMinScore] = useState(50)
   const [includeResolved, setIncludeResolved] = useState(false)
   const [sortBy, setSortBy] = useState<'score' | 'time'>('time')
+  const [hideSports, setHideSports] = useState(true)  // default: hide sports
 
   const fetchSignals = useCallback(async () => {
     setLoading(true)
@@ -133,6 +136,7 @@ export default function RadarPage() {
         minScore: minScore.toString(),
         includeResolved: includeResolved.toString(),
         sortBy,
+        hideSports: hideSports.toString(),
         limit: '100',
       })
       const res = await fetch(`/api/radar?${params}`)
@@ -145,7 +149,7 @@ export default function RadarPage() {
     } finally {
       setLoading(false)
     }
-  }, [maxOdds, minPosition, sinceDays, minScore, includeResolved, sortBy])
+  }, [maxOdds, minPosition, sinceDays, minScore, includeResolved, sortBy, hideSports])
 
   useEffect(() => {
     fetchSignals()
@@ -293,6 +297,18 @@ export default function RadarPage() {
                 <option value="time">Newest</option>
                 <option value="score">Score</option>
               </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-400">
+                <input
+                  type="checkbox"
+                  checked={hideSports}
+                  onChange={(e) => setHideSports(e.target.checked)}
+                  className="mr-2"
+                />
+                Hide Sports
+              </label>
             </div>
 
             <div className="flex items-center gap-2">
