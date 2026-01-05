@@ -568,8 +568,9 @@ export default function RadarPage() {
                           target="_blank"
                           rel="noopener noreferrer"
                           className="text-blue-400 hover:text-blue-300 font-mono text-xs"
+                          title={signal.wallet}
                         >
-                          {signal.traderName || `${signal.wallet.slice(0, 6)}...${signal.wallet.slice(-4)}`}
+                          {`${signal.wallet.slice(0, 6)}...${signal.wallet.slice(-4)}`}
                         </a>
                         {signal.isWhale && (
                           <span className="px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">
