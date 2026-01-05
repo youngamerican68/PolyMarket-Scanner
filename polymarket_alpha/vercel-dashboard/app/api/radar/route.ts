@@ -251,7 +251,8 @@ export async function GET(request: NextRequest) {
   const minScore = parseIntParam(searchParams.get('minScore'), 50, 0, 125);
   const limit = parseIntParam(searchParams.get('limit'), 50, 1, 200);
   const includeResolved = searchParams.get('includeResolved') === 'true';
-  const sortBy = searchParams.get('sortBy') === 'score' ? 'score' : 'time';  // default: time
+  const sortByParam = searchParams.get('sortBy');
+  const sortBy = sortByParam === 'score' ? 'score' : sortByParam === 'return' ? 'return' : 'time';  // default: time
   const hideSports = searchParams.get('hideSports') === 'true';
 
   try {
@@ -504,6 +505,15 @@ export async function GET(request: NextRequest) {
     // Sort by selected criteria
     if (sortBy === 'score') {
       signals.sort((a, b) => b.scores.total - a.scores.total);
+    } else if (sortBy === 'return') {
+      // Sort by potential return % (highest first)
+      signals.sort((a, b) => {
+        const returnA = (a.potentialPayout && a.positionCost && a.positionCost > 0)
+          ? (a.potentialPayout / a.positionCost - 1) : -Infinity;
+        const returnB = (b.potentialPayout && b.positionCost && b.positionCost > 0)
+          ? (b.potentialPayout / b.positionCost - 1) : -Infinity;
+        return returnB - returnA;
+      });
     } else {
       // Sort by time (newest first)
       signals.sort((a, b) => new Date(b.fillTimestamp).getTime() - new Date(a.fillTimestamp).getTime());
