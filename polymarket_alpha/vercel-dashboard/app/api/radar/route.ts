@@ -239,6 +239,8 @@ interface DbRow {
   last_known_position_size: string | null;
   last_known_avg_price: string | null;
   synced_at: string | null;
+  // Hedge detection
+  has_opposite_position: boolean;
 }
 
 export async function GET(request: NextRequest) {
@@ -298,7 +300,15 @@ export async function GET(request: NextRequest) {
           pso.synced_payout_if_wins,
           pso.last_known_position_size,
           pso.last_known_avg_price,
-          pso.synced_at
+          pso.synced_at,
+          -- Check if wallet has position on opposite outcome (hedge detection)
+          EXISTS (
+            SELECT 1 FROM position_sync_overlay opp
+            WHERE opp.wallet = ae.wallet
+              AND opp.condition_id = ae.condition_id
+              AND opp.outcome != ae.outcome
+              AND COALESCE(opp.synced_position_size, 0) > 0
+          ) as has_opposite_position
         FROM alert_events ae
         INNER JOIN wallet_stats ws ON ae.wallet = ws.wallet
         LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
@@ -339,7 +349,8 @@ export async function GET(request: NextRequest) {
         synced_payout_if_wins::text,
         last_known_position_size::text,
         last_known_avg_price::text,
-        synced_at::text
+        synced_at::text,
+        has_opposite_position
       FROM radar_candidates
       ORDER BY fill_timestamp DESC
       LIMIT 500
@@ -352,9 +363,19 @@ export async function GET(request: NextRequest) {
     });
 
     // ========================================================================
-    // HEDGE DETECTION: Find wallets with positions on multiple outcomes of same market
+    // HEDGE DETECTION: Find wallets with positions on opposite outcomes of same market
+    // Now uses has_opposite_position from DB which checks position_sync_overlay
     // ========================================================================
-    const hedgeMap = new Map<string, Set<string>>();  // key: wallet|condition_id → Set of outcomes
+    const hedgerKeys = new Set<string>();
+    for (const row of filteredRows) {
+      // If DB detected opposite position in position_sync_overlay, mark as hedger
+      if (row.has_opposite_position) {
+        const key = `${row.wallet}|${row.condition_id}`;
+        hedgerKeys.add(key);
+      }
+    }
+    // Also check for multiple long-shot outcomes in current results (rare but possible)
+    const hedgeMap = new Map<string, Set<string>>();
     for (const row of filteredRows) {
       const key = `${row.wallet}|${row.condition_id}`;
       if (!hedgeMap.has(key)) {
@@ -362,8 +383,6 @@ export async function GET(request: NextRequest) {
       }
       hedgeMap.get(key)!.add(row.outcome);
     }
-    // A wallet is hedging if they have 2+ outcomes on the same market
-    const hedgerKeys = new Set<string>();
     hedgeMap.forEach((outcomes, key) => {
       if (outcomes.size > 1) {
         hedgerKeys.add(key);
