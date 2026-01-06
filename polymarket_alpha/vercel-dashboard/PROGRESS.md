@@ -1,5 +1,73 @@
 # Polymarket Tracker - Development Progress
 
+## Session: January 5, 2026 (Radar Sort & Hedge Detection Improvements)
+
+### Sort by Potential Return (Completed)
+
+**Feature:** Added "Return" option to the Sort dropdown in the Radar page.
+
+**Options:**
+- **Newest** (default) - Sort by fill timestamp, most recent first
+- **Score** - Sort by insider score, highest first
+- **Return** - Sort by potential return percentage, highest first
+
+**Calculation:** `(potentialPayout / positionCost - 1) * 100`
+
+**Commit:** `3f4bb39` - feat(radar): add sort by potential return option
+
+---
+
+### Wallet Address Display Fix (Completed)
+
+**Problem:** Clicking on trader names (e.g., "michaelIsaylor") navigated to a different user's profile. The `trader_name` stored in `alert_events` didn't match the actual wallet address owner.
+
+**Solution:** Now always display the truncated wallet address (e.g., `0x1234...5678`) instead of potentially incorrect trader names. The link correctly uses `signal.wallet`, so now what you see matches what you get.
+
+**Commit:** `088a88e` - fix(radar): show wallet address instead of unreliable trader name
+
+---
+
+### Improved Hedge Detection (Completed)
+
+**Problem:** Hedge detection only caught cases where both outcomes were long-shots (≤25% odds). Real hedges typically have one long-shot side (e.g., Yes @ 0.7%) and one favorite side (e.g., No @ 99%), so the opposite position never appeared in filtered results.
+
+**Example:** User "onedayiwillberight" had:
+- Yes @ 0.7% on "MicroStrategy sells Bitcoin" (long-shot, in radar)
+- No @ 50% on same market (not a long-shot, invisible to radar)
+
+Previous hedge detection missed this because No @ 50% wasn't in the filtered results.
+
+**Solution:** Query `position_sync_overlay` for any opposite-side position on the same market, regardless of odds:
+
+```sql
+EXISTS (
+  SELECT 1 FROM position_sync_overlay opp
+  WHERE opp.wallet = ae.wallet
+    AND opp.condition_id = ae.condition_id
+    AND opp.outcome != ae.outcome
+    AND COALESCE(opp.synced_position_size, 0) > 0
+) as has_opposite_position
+```
+
+**Note:** Only works for wallets that have been synced (have entries in `position_sync_overlay`). Unsynced wallets won't show hedge detection.
+
+**Commit:** `da5eb2e` - fix(radar): improve hedge detection to find opposite-side positions
+
+---
+
+### Files Modified
+- `app/api/radar/route.ts` - Sort by return, hedge detection query
+- `app/radar/page.tsx` - Sort dropdown, wallet address display
+
+### Commits Summary
+| Commit | Description |
+|--------|-------------|
+| `3f4bb39` | feat(radar): add sort by potential return option |
+| `088a88e` | fix(radar): show wallet address instead of unreliable trader name |
+| `da5eb2e` | fix(radar): improve hedge detection to find opposite-side positions |
+
+---
+
 ## Session: January 4, 2026 (Long-Shot Radar Enhancements)
 
 ### Radar Filter Alignment with Main Report (Completed)
