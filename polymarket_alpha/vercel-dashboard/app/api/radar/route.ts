@@ -55,14 +55,17 @@ function scoreWalletActivity(tradeCount: number): number {
 }
 
 // Fetch actual wallet stats from Polymarket API
-// Returns { tradeCount, firstTradeDate, daysOld }
+// Returns { tradeCount, firstTradeDate, daysOld, tradeCountAtLimit }
+const POLYMARKET_TRADE_LIMIT = 500;  // API returns max 500 trades
+
 async function fetchWalletStats(wallet: string): Promise<{
   tradeCount: number;
   firstTradeTimestamp: number | null;
   daysOld: number;
+  tradeCountAtLimit: boolean;
 }> {
   try {
-    // Fetch trades for this wallet (up to 1000)
+    // Fetch trades for this wallet
     const res = await fetch(
       `https://data-api.polymarket.com/trades?user=${wallet}&limit=1000`,
       { cache: 'no-store' }
@@ -70,16 +73,17 @@ async function fetchWalletStats(wallet: string): Promise<{
 
     if (!res.ok) {
       console.warn(`[fetchWalletStats] Failed to fetch for ${wallet}: ${res.status}`);
-      return { tradeCount: 0, firstTradeTimestamp: null, daysOld: 999 };
+      return { tradeCount: 0, firstTradeTimestamp: null, daysOld: 999, tradeCountAtLimit: false };
     }
 
     const trades = await res.json();
 
     if (!Array.isArray(trades) || trades.length === 0) {
-      return { tradeCount: 0, firstTradeTimestamp: null, daysOld: 999 };
+      return { tradeCount: 0, firstTradeTimestamp: null, daysOld: 999, tradeCountAtLimit: false };
     }
 
     const tradeCount = trades.length;
+    const tradeCountAtLimit = tradeCount >= POLYMARKET_TRADE_LIMIT;
 
     // Find oldest trade timestamp
     const timestamps = trades.map((t: { timestamp: number }) => t.timestamp);
@@ -89,10 +93,10 @@ async function fetchWalletStats(wallet: string): Promise<{
     const now = Date.now() / 1000;
     const daysOld = Math.floor((now - oldestTimestamp) / (60 * 60 * 24));
 
-    return { tradeCount, firstTradeTimestamp: oldestTimestamp, daysOld };
+    return { tradeCount, firstTradeTimestamp: oldestTimestamp, daysOld, tradeCountAtLimit };
   } catch (err) {
     console.error(`[fetchWalletStats] Error for ${wallet}:`, err);
-    return { tradeCount: 0, firstTradeTimestamp: null, daysOld: 999 };
+    return { tradeCount: 0, firstTradeTimestamp: null, daysOld: 999, tradeCountAtLimit: false };
   }
 }
 
@@ -180,6 +184,7 @@ interface RadarSignal {
   walletFirstSeen: string;
   walletDaysOld: number;
   walletTradeCount: number;
+  walletTradeCountAtLimit: boolean;  // true if 500+ trades (API limit)
 
   // Scoring breakdown
   scores: {
@@ -394,7 +399,7 @@ export async function GET(request: NextRequest) {
     console.log(`[radar] Fetching stats for ${uniqueWallets.length} unique wallets`);
 
     // Fetch real wallet stats from Polymarket API (in parallel, max 10 concurrent)
-    const walletStatsMap = new Map<string, { tradeCount: number; daysOld: number }>();
+    const walletStatsMap = new Map<string, { tradeCount: number; daysOld: number; tradeCountAtLimit: boolean }>();
 
     // Process in batches of 10 to avoid rate limiting
     const BATCH_SIZE = 10;
@@ -407,7 +412,7 @@ export async function GET(request: NextRequest) {
 
       const batchResults = await Promise.all(statsPromises);
       for (const { wallet, stats } of batchResults) {
-        walletStatsMap.set(wallet, { tradeCount: stats.tradeCount, daysOld: stats.daysOld });
+        walletStatsMap.set(wallet, { tradeCount: stats.tradeCount, daysOld: stats.daysOld, tradeCountAtLimit: stats.tradeCountAtLimit });
       }
     }
 
@@ -447,9 +452,10 @@ export async function GET(request: NextRequest) {
       const hasSyncedData = syncedPositionSize !== null;
 
       // Get real wallet stats from Polymarket API
-      const walletStats = walletStatsMap.get(row.wallet) || { tradeCount: 999, daysOld: 999 };
+      const walletStats = walletStatsMap.get(row.wallet) || { tradeCount: 999, daysOld: 999, tradeCountAtLimit: false };
       const walletDaysOld = walletStats.daysOld;
       const walletTradeCount = walletStats.tradeCount;
+      const walletTradeCountAtLimit = walletStats.tradeCountAtLimit;
 
       // Compute scores using REAL data
       const freshnessScore = scoreWalletFreshness(walletDaysOld);
@@ -502,6 +508,7 @@ export async function GET(request: NextRequest) {
         walletFirstSeen: row.wallet_first_seen,
         walletDaysOld,
         walletTradeCount,
+        walletTradeCountAtLimit,
         scores: {
           freshness: freshnessScore,
           activity: activityScore,

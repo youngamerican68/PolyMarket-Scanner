@@ -26,6 +26,7 @@ interface RadarSignal {
   walletFirstSeen: string
   walletDaysOld: number
   walletTradeCount: number
+  walletTradeCountAtLimit: boolean
   scores: {
     freshness: number
     activity: number
@@ -589,7 +590,7 @@ export default function RadarPage() {
                       </span>
                       <span className="text-gray-600">|</span>
                       <span className="text-gray-400">
-                        <span className="text-yellow-400">{signal.walletTradeCount}</span> total trades
+                        <span className="text-yellow-400">{signal.walletTradeCount}{signal.walletTradeCountAtLimit ? '+' : ''}</span> total trades
                       </span>
                     </div>
 
