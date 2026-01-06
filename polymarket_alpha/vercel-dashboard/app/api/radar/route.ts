@@ -55,48 +55,51 @@ function scoreWalletActivity(tradeCount: number): number {
 }
 
 // Fetch actual wallet stats from Polymarket API
-// Returns { tradeCount, firstTradeDate, daysOld, tradeCountAtLimit }
 const POLYMARKET_TRADE_LIMIT = 500;  // API returns max 500 trades
 
-async function fetchWalletStats(wallet: string): Promise<{
+interface WalletStats {
   tradeCount: number;
   firstTradeTimestamp: number | null;
   daysOld: number;
   tradeCountAtLimit: boolean;
-}> {
-  try {
-    // Fetch trades for this wallet
-    const res = await fetch(
-      `https://data-api.polymarket.com/trades?user=${wallet}&limit=1000`,
-      { cache: 'no-store' }
-    );
+}
 
-    if (!res.ok) {
-      console.warn(`[fetchWalletStats] Failed to fetch for ${wallet}: ${res.status}`);
-      return { tradeCount: 0, firstTradeTimestamp: null, daysOld: 999, tradeCountAtLimit: false };
+async function fetchWalletStats(wallet: string): Promise<WalletStats> {
+  const defaultStats: WalletStats = {
+    tradeCount: 0,
+    firstTradeTimestamp: null,
+    daysOld: 999,
+    tradeCountAtLimit: false,
+  };
+
+  try {
+    const tradesRes = await fetch(`https://data-api.polymarket.com/trades?user=${wallet}&limit=1000`, { cache: 'no-store' });
+
+    if (!tradesRes.ok) {
+      return defaultStats;
     }
 
-    const trades = await res.json();
-
+    const trades = await tradesRes.json();
     if (!Array.isArray(trades) || trades.length === 0) {
-      return { tradeCount: 0, firstTradeTimestamp: null, daysOld: 999, tradeCountAtLimit: false };
+      return defaultStats;
     }
 
     const tradeCount = trades.length;
     const tradeCountAtLimit = tradeCount >= POLYMARKET_TRADE_LIMIT;
-
-    // Find oldest trade timestamp
     const timestamps = trades.map((t: { timestamp: number }) => t.timestamp);
-    const oldestTimestamp = Math.min(...timestamps);
-
-    // Calculate days old
+    const firstTradeTimestamp = Math.min(...timestamps);
     const now = Date.now() / 1000;
-    const daysOld = Math.floor((now - oldestTimestamp) / (60 * 60 * 24));
+    const daysOld = Math.floor((now - firstTradeTimestamp) / (60 * 60 * 24));
 
-    return { tradeCount, firstTradeTimestamp: oldestTimestamp, daysOld, tradeCountAtLimit };
+    return {
+      tradeCount,
+      firstTradeTimestamp,
+      daysOld,
+      tradeCountAtLimit,
+    };
   } catch (err) {
     console.error(`[fetchWalletStats] Error for ${wallet}:`, err);
-    return { tradeCount: 0, firstTradeTimestamp: null, daysOld: 999, tradeCountAtLimit: false };
+    return defaultStats;
   }
 }
 
@@ -213,6 +216,9 @@ interface RadarSignal {
 
   // Sports detection
   isSports: boolean;  // true if market appears to be sports-related
+
+  // Sold detection (position no longer exists)
+  isSold: boolean;  // true if position was synced but no longer found (trader exited)
 }
 
 interface DbRow {
@@ -244,6 +250,7 @@ interface DbRow {
   last_known_position_size: string | null;
   last_known_avg_price: string | null;
   synced_at: string | null;
+  sync_status: string | null;
   // Hedge detection
   has_opposite_position: boolean;
 }
@@ -306,6 +313,7 @@ export async function GET(request: NextRequest) {
           pso.last_known_position_size,
           pso.last_known_avg_price,
           pso.synced_at,
+          pso.sync_status,
           -- Check if wallet has position on opposite outcome (hedge detection)
           EXISTS (
             SELECT 1 FROM position_sync_overlay opp
@@ -355,6 +363,7 @@ export async function GET(request: NextRequest) {
         last_known_position_size::text,
         last_known_avg_price::text,
         synced_at::text,
+        sync_status,
         has_opposite_position
       FROM radar_candidates
       ORDER BY fill_timestamp DESC
@@ -399,7 +408,7 @@ export async function GET(request: NextRequest) {
     console.log(`[radar] Fetching stats for ${uniqueWallets.length} unique wallets`);
 
     // Fetch real wallet stats from Polymarket API (in parallel, max 10 concurrent)
-    const walletStatsMap = new Map<string, { tradeCount: number; daysOld: number; tradeCountAtLimit: boolean }>();
+    const walletStatsMap = new Map<string, WalletStats>();
 
     // Process in batches of 10 to avoid rate limiting
     const BATCH_SIZE = 10;
@@ -412,7 +421,7 @@ export async function GET(request: NextRequest) {
 
       const batchResults = await Promise.all(statsPromises);
       for (const { wallet, stats } of batchResults) {
-        walletStatsMap.set(wallet, { tradeCount: stats.tradeCount, daysOld: stats.daysOld, tradeCountAtLimit: stats.tradeCountAtLimit });
+        walletStatsMap.set(wallet, stats);
       }
     }
 
@@ -452,7 +461,12 @@ export async function GET(request: NextRequest) {
       const hasSyncedData = syncedPositionSize !== null;
 
       // Get real wallet stats from Polymarket API
-      const walletStats = walletStatsMap.get(row.wallet) || { tradeCount: 999, daysOld: 999, tradeCountAtLimit: false };
+      const walletStats = walletStatsMap.get(row.wallet) || {
+        tradeCount: 999,
+        firstTradeTimestamp: null,
+        daysOld: 999,
+        tradeCountAtLimit: false,
+      };
       const walletDaysOld = walletStats.daysOld;
       const walletTradeCount = walletStats.tradeCount;
       const walletTradeCountAtLimit = walletStats.tradeCountAtLimit;
@@ -479,6 +493,9 @@ export async function GET(request: NextRequest) {
 
       // Filter out sports if requested
       if (hideSports && isSports) continue;
+
+      // Check if position was sold (synced but not found = trader exited)
+      const isSold = row.sync_status === 'not_found' && row.synced_at !== null;
 
       signals.push({
         id: row.id,
@@ -525,6 +542,7 @@ export async function GET(request: NextRequest) {
         syncedAt: row.synced_at,
         isHedger,
         isSports,
+        isSold,
       });
     }
 

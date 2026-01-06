@@ -43,6 +43,7 @@ interface RadarSignal {
   syncedAt: string | null
   isHedger: boolean
   isSports: boolean
+  isSold: boolean
 }
 
 interface RadarMetadata {
@@ -487,7 +488,9 @@ export default function RadarPage() {
                     ? signal.winningOutcome === signal.outcome
                       ? 'border-green-700 bg-green-900/10'
                       : 'border-red-700 bg-red-900/10'
-                    : 'border-gray-700 bg-gray-900/50'
+                    : signal.isSold
+                      ? 'border-gray-600 bg-gray-800/30 opacity-75'
+                      : 'border-gray-700 bg-gray-900/50'
                 }`}
               >
                 <div className="flex items-start gap-4">
@@ -581,6 +584,11 @@ export default function RadarPage() {
                         {signal.isHedger && (
                           <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded text-xs" title="Wallet has positions on multiple outcomes of this market">
                             Hedged
+                          </span>
+                        )}
+                        {signal.isSold && (
+                          <span className="px-1.5 py-0.5 bg-gray-500/20 text-gray-400 rounded text-xs" title="Position was sold - trader exited">
+                            Sold
                           </span>
                         )}
                       </div>
