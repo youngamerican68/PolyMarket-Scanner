@@ -125,8 +125,8 @@ export default function RadarPage() {
   // Filters (defaults match main report)
   const [maxOdds, setMaxOdds] = useState(0.25)
   const [minPosition, setMinPosition] = useState(2500)
-  const [sinceDays, setSinceDays] = useState(7)
-  const [minScore, setMinScore] = useState(50)
+  const [sinceDays, setSinceDays] = useState(1)
+  const [minScore, setMinScore] = useState(90)
   const [includeResolved, setIncludeResolved] = useState(false)
   const [sortBy, setSortBy] = useState<'score' | 'time' | 'return'>('time')
   const [hideSports, setHideSports] = useState(true)  // default: hide sports

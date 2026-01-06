@@ -1,5 +1,67 @@
 # Polymarket Tracker - Development Progress
 
+## Session: January 6, 2026 (Radar Sold Badge & P&L Removal)
+
+### Sold Badge for Closed Positions (Completed)
+
+**Problem:** The radar was showing positions that had been sold (trader exited) as if they were still active. Example: jdk1's Khamenei position showed in radar but appeared under "Closed" on Polymarket with a -35% loss.
+
+**Root Cause:** The position sync already tracked sold positions (`sync_status = 'not_found'` when position disappears from API), but the radar wasn't using this information.
+
+**Solution:** Added "Sold" badge to radar without any migration - used existing `sync_status` column:
+
+1. **API Changes** (`app/api/radar/route.ts`):
+   - Added `sync_status` to SQL query SELECT
+   - Added `isSold` flag: `true` when `sync_status = 'not_found' AND synced_at IS NOT NULL`
+   - Position was synced but no longer found = trader exited
+
+2. **Frontend Changes** (`app/radar/page.tsx`):
+   - Added `isSold` to RadarSignal interface
+   - Added gray "Sold" badge next to Hedged badge
+   - Sold position cards show at 75% opacity with muted border styling
+
+**How It Works:**
+- User clicks "Sync Positions" → fetches current positions from Polymarket API
+- If a previously tracked position is missing → sync sets `sync_status = 'not_found'`
+- Radar detects this and displays "Sold" badge
+- Card appears slightly faded to indicate position is no longer active
+
+**Commit:** `0947d43` - feat(radar): add Sold badge for positions that no longer exist
+
+---
+
+### P&L and Win Rate Feature (Removed)
+
+**Attempted:** Added total P&L and win rate for each wallet using Polymarket API:
+- `/positions` endpoint for `cashPnl` (total P&L)
+- `/activity?type=REDEEM` endpoint for win rate calculation
+
+**Issue:** Data accuracy concerns:
+- API limited to 500 redeems (incomplete for active wallets)
+- Field interpretation not verified against Polymarket documentation
+- No way to validate accuracy without manual cross-checking
+
+**Decision:** Removed the feature. User prefers no data over potentially inaccurate data. May revisit with a paid API that provides verified stats.
+
+---
+
+### Trade Count 500+ Indicator (Previous Session - Noted)
+
+**Feature:** The radar now shows "500+" when a wallet's trade count hits the Polymarket API limit, indicating the count may be higher.
+
+---
+
+### Files Modified
+- `app/api/radar/route.ts` - Sold detection using sync_status, simplified fetchWalletStats
+- `app/radar/page.tsx` - Sold badge display, card styling for sold positions
+
+### Commits Summary
+| Commit | Description |
+|--------|-------------|
+| `0947d43` | feat(radar): add Sold badge for positions that no longer exist |
+
+---
+
 ## Session: January 5, 2026 (Radar Sort & Hedge Detection Improvements)
 
 ### Sort by Potential Return (Completed)
