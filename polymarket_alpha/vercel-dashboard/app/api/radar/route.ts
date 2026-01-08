@@ -560,8 +560,8 @@ export async function GET(request: NextRequest) {
         return returnB - returnA;
       });
     } else if (sortBy === 'walletAge') {
-      // Sort by wallet creation date (newer wallets first)
-      signals.sort((a, b) => new Date(b.walletFirstSeen).getTime() - new Date(a.walletFirstSeen).getTime());
+      // Sort by wallet age (newer wallets first = fewer days old)
+      signals.sort((a, b) => a.walletDaysOld - b.walletDaysOld);
     } else if (sortBy === 'trades') {
       // Sort by trade count (fewer trades first)
       signals.sort((a, b) => a.walletTradeCount - b.walletTradeCount);
