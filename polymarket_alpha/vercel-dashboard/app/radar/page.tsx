@@ -339,8 +339,6 @@ export default function RadarPage() {
                 onChange={(e) => setMinPosition(parseFloat(e.target.value))}
                 className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm"
               >
-                <option value={500}>$500</option>
-                <option value={1000}>$1,000</option>
                 <option value={2500}>$2,500</option>
                 <option value={5000}>$5,000</option>
                 <option value={10000}>$10,000</option>
