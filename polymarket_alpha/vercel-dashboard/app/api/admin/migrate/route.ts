@@ -774,6 +774,34 @@ export async function POST(request: Request) {
     console.log('[migrate] Phase 10.3 + 10.4 hardening complete');
 
     // =========================================================================
+    // Phase 12: Trade Ingest Watermark for Robust Pagination
+    // Stores composite watermark (timestamp + trade_id) to ensure no trades missed
+    // =========================================================================
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS trade_ingest_watermark (
+        id TEXT PRIMARY KEY DEFAULT 'default',
+        last_timestamp BIGINT NOT NULL DEFAULT 0,
+        last_trade_dedupe_id TEXT NOT NULL DEFAULT '',
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `;
+    console.log('[migrate] Created trade_ingest_watermark table');
+
+    // Insert default watermark seeded to now - 2 minutes (lookback window)
+    // This ensures first run captures going-forward only, not unbounded history
+    await sql`
+      INSERT INTO trade_ingest_watermark (id, last_timestamp, last_trade_dedupe_id)
+      VALUES (
+        'default',
+        EXTRACT(EPOCH FROM NOW())::bigint - 120,
+        ''
+      )
+      ON CONFLICT (id) DO NOTHING
+    `;
+    console.log('[migrate] Initialized default watermark to now - 120s');
+
+    // =========================================================================
     // Phase 11: Watchlist for Radar Trades
     // Allows users to save interesting trades to track for later
     // =========================================================================
@@ -816,6 +844,7 @@ export async function POST(request: Request) {
       await sql`ANALYZE position_sync_overlay`;
       await sql`ANALYZE wallet_sync_state`;
       await sql`ANALYZE radar_watchlist`;
+      await sql`ANALYZE trade_ingest_watermark`;
       console.log('[migrate] ANALYZE completed on all tables');
     } catch (err) {
       console.warn('[migrate] ANALYZE failed (non-critical):', String(err).slice(0, 100));
@@ -826,8 +855,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: 'Phases 1-11 migration complete (includes watchlist)',
-      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status', 'trade_history_longshot_positions', 'market_final_pnl', 'wallet_position_snapshot', 'position_sync_overlay', 'wallet_sync_state', 'radar_watchlist'],
+      message: 'Phases 1-12 migration complete (includes watermark)',
+      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status', 'trade_history_longshot_positions', 'market_final_pnl', 'wallet_position_snapshot', 'position_sync_overlay', 'wallet_sync_state', 'radar_watchlist', 'trade_ingest_watermark'],
       indexes: [
         'idx_alert_events_fill_timestamp',
         'idx_alert_events_wallet_timestamp',

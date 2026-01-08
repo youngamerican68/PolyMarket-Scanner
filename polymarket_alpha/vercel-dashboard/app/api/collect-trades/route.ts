@@ -1,6 +1,7 @@
 // /app/api/collect-trades/route.ts
 // Phase 1: Ingestion into alert_events table
 // Phase 5: Conviction sizing anomaly detection (hardened)
+// Phase 12: Robust pagination with composite watermark
 // Runs on schedule via Vercel cron
 
 import { NextResponse } from 'next/server';
@@ -9,6 +10,7 @@ import {
   fetchRawTrades,
   fetchPositionsForWallets,
   matchTradeToPosition,
+  Trade,
 } from '@/lib/polymarket';
 import { generateTradeDedupeId } from '@/lib/dedupe';
 import { computeFillValue } from '@/lib/decimal';
@@ -29,11 +31,17 @@ export const maxDuration = 120;
 const LONGSHOT_THRESHOLD = 0.25;
 const MIN_POSITION_THRESHOLD = 2500;
 
+// Pagination configuration
+const PAGE_SIZE = 500;
+const MAX_PAGES = 20; // Safety limit: 10k trades max per run
+const LOOKBACK_SECONDS = 120; // 2 minute lookback for eventual consistency
+
 // Auth check delegated to shared helper (lib/cronAuth.ts)
 // Validates: Authorization: Bearer <CRON_SECRET> or x-cron-secret header (legacy)
 
 interface IngestionSummary {
   trades_fetched: number;
+  pages_fetched: number;
   candidates_after_filter: number;
   unique_wallets_queried: number;
   positions_fetched: number;
@@ -43,13 +51,54 @@ interface IngestionSummary {
   skipped_no_position_match: number;
   skipped_validation_failed: number;
   skipped_below_threshold: number;
+  skipped_before_watermark: number;
   // Phase 5: Conviction anomalies (hardened)
   anomalies_inserted: number;
-  anomalies_updated: number;  // Dedupe: existing anomaly updated instead of inserted
+  anomalies_updated: number;
   anomalies_no_baseline: number;
   anomalies_skipped_small_median: number;
   anomalies_skipped_below_threshold: number;
+  // Watermark info
+  watermark_before: { timestamp: number; dedupeId: string };
+  watermark_after: { timestamp: number; dedupeId: string };
+  // Safety metrics
+  crossed_watermark_boundary: boolean;
+  hit_page_limit: boolean;
   errors: string[];
+}
+
+interface TradeWithDedupeId {
+  trade: Trade;
+  dedupeId: string;
+  timestampSeconds: number;
+}
+
+/**
+ * Composite watermark comparison.
+ * Returns true if trade is "newer" than watermark.
+ * Handles ties by comparing dedupe IDs lexicographically.
+ */
+function isNewerThanWatermark(
+  tradeTs: number,
+  tradeDedupeId: string,
+  watermarkTs: number,
+  watermarkDedupeId: string
+): boolean {
+  if (tradeTs > watermarkTs) return true;
+  if (tradeTs === watermarkTs && tradeDedupeId > watermarkDedupeId) return true;
+  return false;
+}
+
+/**
+ * Check if we've crossed the watermark boundary (accounting for lookback).
+ * Returns true if the oldest trade in page is at or before watermark - lookback.
+ */
+function crossedWatermarkBoundary(
+  oldestTradeTs: number,
+  watermarkTs: number,
+  lookbackSeconds: number
+): boolean {
+  return oldestTradeTs <= watermarkTs - lookbackSeconds;
 }
 
 // POST-only, requires Authorization: Bearer <CRON_SECRET> or x-cron-secret header
@@ -66,6 +115,7 @@ export async function POST(request: Request) {
 
   const summary: IngestionSummary = {
     trades_fetched: 0,
+    pages_fetched: 0,
     candidates_after_filter: 0,
     unique_wallets_queried: 0,
     positions_fetched: 0,
@@ -75,41 +125,168 @@ export async function POST(request: Request) {
     skipped_no_position_match: 0,
     skipped_validation_failed: 0,
     skipped_below_threshold: 0,
+    skipped_before_watermark: 0,
     anomalies_inserted: 0,
     anomalies_updated: 0,
     anomalies_no_baseline: 0,
     anomalies_skipped_small_median: 0,
     anomalies_skipped_below_threshold: 0,
+    watermark_before: { timestamp: 0, dedupeId: '' },
+    watermark_after: { timestamp: 0, dedupeId: '' },
+    crossed_watermark_boundary: false,
+    hit_page_limit: false,
     errors: [],
   };
 
   try {
-    console.log('[collect-trades] Starting Phase 1 ingestion...');
+    console.log('[collect-trades] Starting Phase 12 ingestion with watermark pagination...');
 
-    // Step 1: Fetch recent trades with per-item validation
-    const { trades, skipped: validationSkipped, errors: validationErrors } = await fetchRawTrades({
-      minValue: 100,
-      limit: 500,
-    });
+    // Step 1: Read current watermark
+    const watermarkResult = await sql<{
+      last_timestamp: string;
+      last_trade_dedupe_id: string;
+    }>`
+      SELECT last_timestamp, last_trade_dedupe_id
+      FROM trade_ingest_watermark
+      WHERE id = 'default'
+    `;
 
-    summary.trades_fetched = trades.length + validationSkipped;
-    summary.skipped_validation_failed = validationSkipped;
+    let watermarkTs = 0;
+    let watermarkDedupeId = '';
 
-    if (validationErrors.length > 0) {
-      summary.errors.push(...validationErrors.slice(0, 5));
+    if (watermarkResult.rows.length > 0) {
+      watermarkTs = parseInt(watermarkResult.rows[0].last_timestamp, 10) || 0;
+      watermarkDedupeId = watermarkResult.rows[0].last_trade_dedupe_id || '';
+    } else {
+      // Initialize watermark if not exists
+      await sql`
+        INSERT INTO trade_ingest_watermark (id, last_timestamp, last_trade_dedupe_id)
+        VALUES ('default', 0, '')
+        ON CONFLICT (id) DO NOTHING
+      `;
     }
 
-    console.log(`[collect-trades] Fetched ${trades.length} valid trades (${validationSkipped} failed validation)`);
+    summary.watermark_before = { timestamp: watermarkTs, dedupeId: watermarkDedupeId };
+    console.log(`[collect-trades] Current watermark: ts=${watermarkTs}, id=${watermarkDedupeId.slice(0, 30)}...`);
 
-    // Step 2: Filter to longshot candidates (BUY side, price <= 25%)
-    const candidates = trades.filter(
-      (t) => t.side === 'BUY' && t.price <= LONGSHOT_THRESHOLD
+    // Step 2: Paginate through trades until we cross the watermark boundary
+    const allNewTrades: TradeWithDedupeId[] = [];
+    let offset = 0;
+    let shouldContinue = true;
+    let crossedBoundary = false;
+
+    for (let page = 0; page < MAX_PAGES && shouldContinue; page++) {
+      const { trades, skipped: validationSkipped, errors: validationErrors } = await fetchRawTrades({
+        minValue: 100,
+        limit: PAGE_SIZE,
+        offset,
+      });
+
+      summary.pages_fetched++;
+      summary.trades_fetched += trades.length + validationSkipped;
+      summary.skipped_validation_failed += validationSkipped;
+
+      if (validationErrors.length > 0) {
+        summary.errors.push(...validationErrors.slice(0, 3));
+      }
+
+      console.log(`[collect-trades] Page ${page + 1}: fetched ${trades.length} valid trades (offset=${offset})`);
+
+      if (trades.length === 0) {
+        console.log('[collect-trades] Empty page, stopping pagination');
+        crossedBoundary = true; // Empty page means we've seen everything
+        break;
+      }
+
+      // Process trades in this page
+      let oldestTradeTs = Infinity;
+      let newTradesThisPage = 0;
+
+      for (const trade of trades) {
+        const timestampSeconds = normalizeTimestamp(trade.timestamp);
+        oldestTradeTs = Math.min(oldestTradeTs, timestampSeconds);
+
+        const dedupeId = generateTradeDedupeId({
+          transactionHash: trade.transactionHash,
+          wallet: trade.proxyWallet,
+          asset: trade.asset,
+          side: trade.side,
+          timestamp: trade.timestamp,
+          price: trade.price,
+          size: trade.size,
+        });
+
+        // Check if this trade is newer than watermark (with lookback)
+        // We include trades within the lookback window to handle eventual consistency
+        const effectiveWatermarkTs = Math.max(0, watermarkTs - LOOKBACK_SECONDS);
+
+        if (isNewerThanWatermark(timestampSeconds, dedupeId, effectiveWatermarkTs, watermarkDedupeId)) {
+          allNewTrades.push({ trade, dedupeId, timestampSeconds });
+          newTradesThisPage++;
+        } else {
+          summary.skipped_before_watermark++;
+        }
+      }
+
+      console.log(`[collect-trades] Page ${page + 1}: ${newTradesThisPage} new trades, oldest_ts=${oldestTradeTs}`);
+
+      // Check if we've crossed the watermark boundary
+      if (crossedWatermarkBoundary(oldestTradeTs, watermarkTs, LOOKBACK_SECONDS)) {
+        console.log(`[collect-trades] Crossed watermark boundary at page ${page + 1}, stopping pagination`);
+        crossedBoundary = true;
+        shouldContinue = false;
+      } else if (trades.length < PAGE_SIZE) {
+        // End of data (partial page)
+        console.log('[collect-trades] Partial page, end of data');
+        crossedBoundary = true;
+        shouldContinue = false;
+      } else {
+        offset += PAGE_SIZE;
+      }
+    }
+
+    // Check if we hit page limit without crossing boundary
+    summary.crossed_watermark_boundary = crossedBoundary;
+    summary.hit_page_limit = !crossedBoundary && summary.pages_fetched >= MAX_PAGES;
+
+    if (summary.hit_page_limit) {
+      console.warn(`[collect-trades] WARNING: Hit page limit (${MAX_PAGES}) without crossing watermark boundary. Watermark will NOT be advanced to prevent missing trades.`);
+    }
+
+    console.log(`[collect-trades] Pagination complete: ${allNewTrades.length} new trades across ${summary.pages_fetched} pages (crossed_boundary=${crossedBoundary})`);
+
+    // SAFETY: If we hit page limit without crossing boundary, we cannot safely advance watermark
+    // The idempotent upsert (ON CONFLICT DO NOTHING) makes re-processing safe
+    const canAdvanceWatermark = crossedBoundary;
+
+    // Step 3: Filter to longshot candidates (BUY side, price <= 25%)
+    const candidates = allNewTrades.filter(
+      (t) => t.trade.side === 'BUY' && t.trade.price <= LONGSHOT_THRESHOLD
     );
     summary.candidates_after_filter = candidates.length;
 
     console.log(`[collect-trades] ${candidates.length} longshot candidates after filter`);
 
     if (candidates.length === 0) {
+      // Only update watermark if we safely crossed the boundary
+      if (canAdvanceWatermark && allNewTrades.length > 0) {
+        const maxTrade = allNewTrades.reduce((max, t) =>
+          t.timestampSeconds > max.timestampSeconds ||
+          (t.timestampSeconds === max.timestampSeconds && t.dedupeId > max.dedupeId)
+            ? t : max
+        );
+        await sql`
+          UPDATE trade_ingest_watermark
+          SET last_timestamp = ${maxTrade.timestampSeconds},
+              last_trade_dedupe_id = ${maxTrade.dedupeId},
+              updated_at = NOW()
+          WHERE id = 'default'
+        `;
+        summary.watermark_after = { timestamp: maxTrade.timestampSeconds, dedupeId: maxTrade.dedupeId };
+      } else {
+        summary.watermark_after = summary.watermark_before;
+      }
+
       return NextResponse.json({
         success: true,
         summary,
@@ -117,25 +294,10 @@ export async function POST(request: Request) {
       });
     }
 
-    // Step 3: Generate dedupe IDs and check for existing entries
-    const candidatesWithDedupeId = candidates.map((trade) => ({
-      trade,
-      dedupeId: generateTradeDedupeId({
-        transactionHash: trade.transactionHash,
-        wallet: trade.proxyWallet,
-        asset: trade.asset,
-        side: trade.side,
-        timestamp: trade.timestamp,
-        price: trade.price,
-        size: trade.size,
-      }),
-    }));
-
-    // Check which dedupe IDs already exist in database
-    const dedupeIds = candidatesWithDedupeId.map((c) => c.dedupeId);
-
-    // Build the query with proper array handling for Vercel Postgres
+    // Step 4: Check which dedupe IDs already exist in database (idempotent deduplication)
+    const dedupeIds = candidates.map((c) => c.dedupeId);
     const existingDedupeIds = new Set<string>();
+
     if (dedupeIds.length > 0) {
       const existingResult = await sql.query(
         `SELECT trade_dedupe_id FROM alert_events WHERE trade_dedupe_id = ANY($1::text[])`,
@@ -147,12 +309,31 @@ export async function POST(request: Request) {
     }
 
     // Filter out already-ingested trades
-    const newCandidates = candidatesWithDedupeId.filter((c) => !existingDedupeIds.has(c.dedupeId));
-    summary.skipped_duplicate = candidatesWithDedupeId.length - newCandidates.length;
+    const newCandidates = candidates.filter((c) => !existingDedupeIds.has(c.dedupeId));
+    summary.skipped_duplicate = candidates.length - newCandidates.length;
 
     console.log(`[collect-trades] ${newCandidates.length} new candidates (${summary.skipped_duplicate} duplicates skipped)`);
 
     if (newCandidates.length === 0) {
+      // Only update watermark if we safely crossed the boundary
+      if (canAdvanceWatermark && candidates.length > 0) {
+        const maxTrade = candidates.reduce((max, t) =>
+          t.timestampSeconds > max.timestampSeconds ||
+          (t.timestampSeconds === max.timestampSeconds && t.dedupeId > max.dedupeId)
+            ? t : max
+        );
+        await sql`
+          UPDATE trade_ingest_watermark
+          SET last_timestamp = ${maxTrade.timestampSeconds},
+              last_trade_dedupe_id = ${maxTrade.dedupeId},
+              updated_at = NOW()
+          WHERE id = 'default'
+        `;
+        summary.watermark_after = { timestamp: maxTrade.timestampSeconds, dedupeId: maxTrade.dedupeId };
+      } else {
+        summary.watermark_after = summary.watermark_before;
+      }
+
       return NextResponse.json({
         success: true,
         summary,
@@ -160,14 +341,13 @@ export async function POST(request: Request) {
       });
     }
 
-    // Step 4: Group candidates by wallet
+    // Step 5: Group candidates by wallet and fetch positions
     const walletSet = new Set(newCandidates.map((c) => c.trade.proxyWallet));
     const uniqueWallets = Array.from(walletSet);
     summary.unique_wallets_queried = uniqueWallets.length;
 
     console.log(`[collect-trades] Fetching positions for ${uniqueWallets.length} unique wallets...`);
 
-    // Step 5: Fetch positions for all wallets (with concurrency control)
     const { positionsByWallet, atLimitWallets } = await fetchPositionsForWallets(uniqueWallets);
 
     summary.positions_at_limit_warning = atLimitWallets.length;
@@ -189,10 +369,20 @@ export async function POST(request: Request) {
       whaleResult.rows.map((r) => [r.wallet, { label: r.label, tier: r.tier, category: r.category }])
     );
 
-    // Step 7: Process each candidate
+    // Step 7: Process each candidate and track max watermark
     const snapshotAt = new Date().toISOString();
+    let maxPersistedTs = watermarkTs;
+    let maxPersistedDedupeId = watermarkDedupeId;
 
-    for (const { trade, dedupeId } of newCandidates) {
+    // Sort candidates oldest-first for deterministic processing
+    const sortedCandidates = [...newCandidates].sort((a, b) => {
+      if (a.timestampSeconds !== b.timestampSeconds) {
+        return a.timestampSeconds - b.timestampSeconds;
+      }
+      return a.dedupeId.localeCompare(b.dedupeId);
+    });
+
+    for (const { trade, dedupeId, timestampSeconds } of sortedCandidates) {
       try {
         const walletLower = trade.proxyWallet.toLowerCase();
         const positions = positionsByWallet.get(walletLower) || [];
@@ -231,14 +421,13 @@ export async function POST(request: Request) {
         const id = crypto.randomUUID();
 
         // Convert timestamp to ISO for TIMESTAMPTZ
-        const timestampSeconds = normalizeTimestamp(trade.timestamp);
         const fillTimestamp = new Date(timestampSeconds * 1000).toISOString();
 
         // Lookup whale metadata
         const whaleInfo = whalesByWallet.get(walletLower);
         const isWhale = !!whaleInfo;
 
-        // Insert into alert_events
+        // Insert into alert_events (idempotent via ON CONFLICT DO NOTHING)
         const insertResult = await sql`
           INSERT INTO alert_events (
             id,
@@ -318,6 +507,14 @@ export async function POST(request: Request) {
 
         if (insertResult.rowCount && insertResult.rowCount > 0) {
           summary.alerts_inserted++;
+
+          // Update max watermark after successful persist
+          if (timestampSeconds > maxPersistedTs ||
+              (timestampSeconds === maxPersistedTs && dedupeId > maxPersistedDedupeId)) {
+            maxPersistedTs = timestampSeconds;
+            maxPersistedDedupeId = dedupeId;
+          }
+
           console.log(
             `[collect-trades] Inserted: ${trade.name || walletLower.slice(0, 8)} - ${trade.title?.slice(0, 30) || 'Unknown'} @ ${(trade.price * 100).toFixed(1)}% = $${fillValueUsd}`
           );
@@ -350,7 +547,6 @@ export async function POST(request: Request) {
 
                 if (evaluation.qualifies) {
                   // Check for existing anomaly within dedupe window (same wallet + market)
-                  // Use COALESCE(last_seen_at, created_at) so continuing split orders stay merged
                   const dedupeWindowCutoff = new Date(Date.now() - DEDUPE_WINDOW_MINUTES * 60 * 1000).toISOString();
                   const existingResult = await sql<{
                     id: string;
@@ -452,7 +648,7 @@ export async function POST(request: Request) {
                 summary.anomalies_no_baseline++;
               }
             } catch (anomalyErr) {
-              // Non-fatal - log and continue (don't log secrets)
+              // Non-fatal - log and continue
               console.warn('[collect-trades] Anomaly check failed:', String(anomalyErr).slice(0, 100));
             }
           }
@@ -463,6 +659,26 @@ export async function POST(request: Request) {
         if (summary.errors.length <= 5) {
           console.error('[collect-trades] Insert error:', err);
         }
+      }
+    }
+
+    // Step 8: Update watermark ONLY after successful persistence AND if we crossed boundary
+    if (canAdvanceWatermark &&
+        (maxPersistedTs > watermarkTs ||
+         (maxPersistedTs === watermarkTs && maxPersistedDedupeId > watermarkDedupeId))) {
+      await sql`
+        UPDATE trade_ingest_watermark
+        SET last_timestamp = ${maxPersistedTs},
+            last_trade_dedupe_id = ${maxPersistedDedupeId},
+            updated_at = NOW()
+        WHERE id = 'default'
+      `;
+      summary.watermark_after = { timestamp: maxPersistedTs, dedupeId: maxPersistedDedupeId };
+      console.log(`[collect-trades] Watermark updated: ts=${maxPersistedTs}, id=${maxPersistedDedupeId.slice(0, 30)}...`);
+    } else {
+      summary.watermark_after = summary.watermark_before;
+      if (!canAdvanceWatermark) {
+        console.log(`[collect-trades] Watermark NOT updated (hit page limit without crossing boundary)`);
       }
     }
 
@@ -498,12 +714,14 @@ export async function POST(request: Request) {
         : { error: jobError, durationMs, summary };
 
       await sql`
-        INSERT INTO job_runs (job_name, status, started_at, finished_at, metrics)
+        INSERT INTO job_runs (id, job_name, status, started_at, finished_at, duration_ms, metrics)
         VALUES (
+          ${crypto.randomUUID()},
           'collect-trades',
           ${jobStatus},
           ${startedAt}::timestamptz,
           NOW(),
+          ${durationMs},
           ${JSON.stringify(metrics)}::jsonb
         )
       `;
