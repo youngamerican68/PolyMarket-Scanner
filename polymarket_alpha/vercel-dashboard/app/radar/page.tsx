@@ -53,7 +53,7 @@ interface RadarMetadata {
   minScore: number
   limit: number
   includeResolved: boolean
-  sortBy: 'score' | 'time' | 'return'
+  sortBy: 'score' | 'time' | 'return' | 'walletAge' | 'trades'
   hideSports: boolean
   totalCandidates: number
   filteredCount: number
@@ -128,7 +128,7 @@ export default function RadarPage() {
   const [sinceDays, setSinceDays] = useState(1)
   const [minScore, setMinScore] = useState(90)
   const [includeResolved, setIncludeResolved] = useState(false)
-  const [sortBy, setSortBy] = useState<'score' | 'time' | 'return'>('time')
+  const [sortBy, setSortBy] = useState<'score' | 'time' | 'return' | 'walletAge' | 'trades'>('time')
   const [hideSports, setHideSports] = useState(true)  // default: hide sports
 
   const fetchSignals = useCallback(async () => {
@@ -378,12 +378,14 @@ export default function RadarPage() {
               <label className="text-sm text-gray-400">Sort:</label>
               <select
                 value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as 'score' | 'time' | 'return')}
+                onChange={(e) => setSortBy(e.target.value as 'score' | 'time' | 'return' | 'walletAge' | 'trades')}
                 className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-sm"
               >
                 <option value="time">Newest</option>
                 <option value="score">Score</option>
                 <option value="return">Return</option>
+                <option value="walletAge">Wallet Age</option>
+                <option value="trades">Trade Count</option>
               </select>
             </div>
 

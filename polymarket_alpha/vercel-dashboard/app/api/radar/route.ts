@@ -266,7 +266,8 @@ export async function GET(request: NextRequest) {
   const limit = parseIntParam(searchParams.get('limit'), 50, 1, 200);
   const includeResolved = searchParams.get('includeResolved') === 'true';
   const sortByParam = searchParams.get('sortBy');
-  const sortBy = sortByParam === 'score' ? 'score' : sortByParam === 'return' ? 'return' : 'time';  // default: time
+  const validSorts = ['score', 'return', 'time', 'walletAge', 'trades'] as const;
+  const sortBy = validSorts.includes(sortByParam as any) ? sortByParam as typeof validSorts[number] : 'time';
   const hideSports = searchParams.get('hideSports') === 'true';
 
   try {
@@ -558,6 +559,12 @@ export async function GET(request: NextRequest) {
           ? (b.potentialPayout / b.positionCost - 1) : -Infinity;
         return returnB - returnA;
       });
+    } else if (sortBy === 'walletAge') {
+      // Sort by wallet creation date (newer wallets first)
+      signals.sort((a, b) => new Date(b.walletFirstSeen).getTime() - new Date(a.walletFirstSeen).getTime());
+    } else if (sortBy === 'trades') {
+      // Sort by trade count (fewer trades first)
+      signals.sort((a, b) => a.walletTradeCount - b.walletTradeCount);
     } else {
       // Sort by time (newest first)
       signals.sort((a, b) => new Date(b.fillTimestamp).getTime() - new Date(a.fillTimestamp).getTime());
