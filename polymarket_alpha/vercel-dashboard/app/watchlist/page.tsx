@@ -19,6 +19,11 @@ interface WatchlistItem {
   resolutionOutcome: string | null
   marketResolved: boolean
   winningOutcome: string | null
+  // Live position data
+  currentValue: number | null
+  currentPositionSize: number | null
+  syncedAt: string | null
+  isSold: boolean
 }
 
 function getScoreColor(score: number): string {
@@ -189,15 +194,30 @@ export default function WatchlistPage() {
                             <span>
                               Cost: {item.positionCost ? `$${item.positionCost.toLocaleString()}` : '-'}
                             </span>
+                            {item.currentValue !== null && (
+                              <span className={item.currentValue > (item.positionCost || 0) ? 'text-green-400' : 'text-red-400'}>
+                                Current: ${item.currentValue.toLocaleString()}
+                              </span>
+                            )}
                             <span>
                               Potential: {item.potentialPayout ? `$${item.potentialPayout.toLocaleString()}` : '-'}
                             </span>
                             <span>
                               Saved: {formatDate(item.savedAt)}
                             </span>
+                            {item.syncedAt && (
+                              <span className="text-gray-500" title={`Last synced: ${new Date(item.syncedAt).toLocaleString()}`}>
+                                Synced: {formatDate(item.syncedAt)}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
+                          {item.isSold && (
+                            <span className="px-2 py-0.5 bg-gray-500/20 text-gray-400 rounded text-xs">
+                              SOLD
+                            </span>
+                          )}
                           <a
                             href={`https://polymarket.com/profile/${item.wallet}`}
                             target="_blank"

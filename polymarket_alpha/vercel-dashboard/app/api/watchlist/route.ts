@@ -29,6 +29,11 @@ interface WatchlistItem {
   // Joined from market_status
   marketResolved: boolean;
   winningOutcome: string | null;
+  // Live position data from position_sync_overlay
+  currentValue: number | null;
+  currentPositionSize: number | null;
+  syncedAt: string | null;
+  isSold: boolean;
 }
 
 // GET - List all watchlist items
@@ -50,29 +55,45 @@ export async function GET() {
         w.resolved_at,
         w.resolution_outcome,
         COALESCE(ms.market_resolved, FALSE) as market_resolved,
-        ms.winning_outcome
+        ms.winning_outcome,
+        -- Live position data from position_sync_overlay
+        pso.synced_current_value,
+        pso.synced_position_size,
+        pso.synced_at
       FROM radar_watchlist w
       LEFT JOIN market_status ms ON w.condition_id = ms.condition_id
+      LEFT JOIN position_sync_overlay pso
+        ON w.wallet = pso.wallet
+        AND w.condition_id = pso.condition_id
+        AND w.outcome = pso.outcome
       ORDER BY w.saved_at DESC
     `;
 
-    const items: WatchlistItem[] = result.rows.map(row => ({
-      id: row.id,
-      wallet: row.wallet,
-      conditionId: row.condition_id,
-      outcome: row.outcome,
-      title: row.title,
-      fillPrice: row.fill_price ? parseFloat(row.fill_price) : null,
-      positionCost: row.position_cost ? parseFloat(row.position_cost) : null,
-      potentialPayout: row.potential_payout ? parseFloat(row.potential_payout) : null,
-      insiderScore: row.insider_score,
-      notes: row.notes,
-      savedAt: row.saved_at,
-      resolvedAt: row.resolved_at,
-      resolutionOutcome: row.resolution_outcome,
-      marketResolved: row.market_resolved ?? false,
-      winningOutcome: row.winning_outcome,
-    }));
+    const items: WatchlistItem[] = result.rows.map(row => {
+      const currentPositionSize = row.synced_position_size ? parseFloat(row.synced_position_size) : null;
+      return {
+        id: row.id,
+        wallet: row.wallet,
+        conditionId: row.condition_id,
+        outcome: row.outcome,
+        title: row.title,
+        fillPrice: row.fill_price ? parseFloat(row.fill_price) : null,
+        positionCost: row.position_cost ? parseFloat(row.position_cost) : null,
+        potentialPayout: row.potential_payout ? parseFloat(row.potential_payout) : null,
+        insiderScore: row.insider_score,
+        notes: row.notes,
+        savedAt: row.saved_at,
+        resolvedAt: row.resolved_at,
+        resolutionOutcome: row.resolution_outcome,
+        marketResolved: row.market_resolved ?? false,
+        winningOutcome: row.winning_outcome,
+        // Live position data
+        currentValue: row.synced_current_value ? parseFloat(row.synced_current_value) : null,
+        currentPositionSize,
+        syncedAt: row.synced_at || null,
+        isSold: currentPositionSize !== null && currentPositionSize === 0,
+      };
+    });
 
     return NextResponse.json({
       items,
