@@ -33,6 +33,29 @@ function getScoreColor(score: number): string {
   return 'text-gray-400'
 }
 
+function formatCurrency(value: number | null): string {
+  if (value === null) return '-'
+  return `$${Math.round(value).toLocaleString()}`
+}
+
+function calculatePnlPercent(cost: number | null, current: number | null): number | null {
+  if (cost === null || current === null || cost === 0) return null
+  return ((current - cost) / cost) * 100
+}
+
+function getPnlColor(pnlPercent: number | null): string {
+  if (pnlPercent === null) return ''
+  return pnlPercent >= 0 ? 'text-green-400' : 'text-red-400'
+}
+
+function getCardBgColor(pnlPercent: number | null): string {
+  if (pnlPercent === null) return 'bg-gray-900/50'
+  if (pnlPercent >= 10) return 'bg-green-900/20'
+  if (pnlPercent >= 0) return 'bg-green-900/10'
+  if (pnlPercent >= -10) return 'bg-red-900/10'
+  return 'bg-red-900/20'
+}
+
 export default function WatchlistPage() {
   const [items, setItems] = useState<WatchlistItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -165,78 +188,81 @@ export default function WatchlistPage() {
                   <span className="text-sm text-gray-500 font-normal">({unresolvedItems.length})</span>
                 </h2>
                 <div className="space-y-3">
-                  {unresolvedItems.map(item => (
-                    <div
-                      key={item.id}
-                      className="border border-gray-700 rounded-lg p-4 bg-gray-900/50"
-                    >
-                      <div className="flex items-start justify-between gap-4">
-                        <div className="flex-1 min-w-0">
-                          <h3 className="font-medium text-white truncate">
-                            {item.title || 'Unknown Market'}
-                          </h3>
-                          <div className="flex items-center gap-3 mt-2 text-sm">
-                            <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                              item.outcome === 'Yes' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                            }`}>
-                              {item.outcome}
-                            </span>
-                            <span className="text-gray-400">
-                              @ {item.fillPrice ? `${(item.fillPrice * 100).toFixed(1)}%` : '-'}
-                            </span>
-                            {item.insiderScore && (
-                              <span className={`font-medium ${getScoreColor(item.insiderScore)}`}>
-                                Score: {item.insiderScore}
+                  {unresolvedItems.map(item => {
+                    const pnlPercent = calculatePnlPercent(item.positionCost, item.currentValue)
+                    return (
+                      <div
+                        key={item.id}
+                        className={`border border-gray-700 rounded-lg p-4 ${getCardBgColor(pnlPercent)}`}
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="flex-1 min-w-0">
+                            <h3 className="font-medium text-white truncate">
+                              {item.title || 'Unknown Market'}
+                            </h3>
+                            <div className="flex items-center gap-3 mt-2 text-sm">
+                              <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                                item.outcome === 'Yes' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                              }`}>
+                                {item.outcome}
                               </span>
-                            )}
+                              <span className="text-gray-400">
+                                @ {item.fillPrice ? `${(item.fillPrice * 100).toFixed(1)}%` : '-'}
+                              </span>
+                              {item.insiderScore && (
+                                <span className={`font-medium ${getScoreColor(item.insiderScore)}`}>
+                                  Score: {item.insiderScore}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-4 mt-2 text-xs text-gray-400">
+                              <span>
+                                Cost: {formatCurrency(item.positionCost)}
+                              </span>
+                              {item.currentValue !== null && (
+                                <span className={getPnlColor(pnlPercent)}>
+                                  Current: {formatCurrency(item.currentValue)}
+                                  {pnlPercent !== null && (
+                                    <span className="ml-1">
+                                      ({pnlPercent >= 0 ? '+' : ''}{pnlPercent.toFixed(1)}%)
+                                    </span>
+                                  )}
+                                </span>
+                              )}
+                              <span>
+                                Potential: {formatCurrency(item.potentialPayout)}
+                              </span>
+                              <span>
+                                Saved: {formatDate(item.savedAt)}
+                              </span>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-4 mt-2 text-xs text-gray-400">
-                            <span>
-                              Cost: {item.positionCost ? `$${item.positionCost.toLocaleString()}` : '-'}
-                            </span>
-                            {item.currentValue !== null && (
-                              <span className={item.currentValue > (item.positionCost || 0) ? 'text-green-400' : 'text-red-400'}>
-                                Current: ${item.currentValue.toLocaleString()}
+                          <div className="flex items-center gap-2">
+                            {item.isSold && (
+                              <span className="px-2 py-0.5 bg-gray-500/20 text-gray-400 rounded text-xs">
+                                SOLD
                               </span>
                             )}
-                            <span>
-                              Potential: {item.potentialPayout ? `$${item.potentialPayout.toLocaleString()}` : '-'}
-                            </span>
-                            <span>
-                              Saved: {formatDate(item.savedAt)}
-                            </span>
-                            {item.syncedAt && (
-                              <span className="text-gray-500" title={`Last synced: ${new Date(item.syncedAt).toLocaleString()}`}>
-                                Synced: {formatDate(item.syncedAt)}
-                              </span>
-                            )}
+                            <a
+                              href={`https://polymarket.com/profile/${item.wallet}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-blue-400 hover:text-blue-300"
+                            >
+                              Profile
+                            </a>
+                            <button
+                              onClick={() => removeItem(item)}
+                              disabled={deleting.has(item.id)}
+                              className="text-xs text-gray-500 hover:text-red-400"
+                            >
+                              {deleting.has(item.id) ? '...' : 'Remove'}
+                            </button>
                           </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          {item.isSold && (
-                            <span className="px-2 py-0.5 bg-gray-500/20 text-gray-400 rounded text-xs">
-                              SOLD
-                            </span>
-                          )}
-                          <a
-                            href={`https://polymarket.com/profile/${item.wallet}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-blue-400 hover:text-blue-300"
-                          >
-                            Profile
-                          </a>
-                          <button
-                            onClick={() => removeItem(item)}
-                            disabled={deleting.has(item.id)}
-                            className="text-xs text-gray-500 hover:text-red-400"
-                          >
-                            {deleting.has(item.id) ? '...' : 'Remove'}
-                          </button>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    )
+                  })}
                 </div>
               </div>
             )}
@@ -282,11 +308,11 @@ export default function WatchlistPage() {
                             </div>
                             <div className="flex items-center gap-4 mt-2 text-xs text-gray-400">
                               <span>
-                                Cost: {item.positionCost ? `$${item.positionCost.toLocaleString()}` : '-'}
+                                Cost: {formatCurrency(item.positionCost)}
                               </span>
                               {won && (
                                 <span className="text-green-400">
-                                  Payout: {item.potentialPayout ? `$${item.potentialPayout.toLocaleString()}` : '-'}
+                                  Payout: {formatCurrency(item.potentialPayout)}
                                 </span>
                               )}
                               <span>
