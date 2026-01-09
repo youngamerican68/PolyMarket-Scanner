@@ -135,13 +135,15 @@ async function insertPosition(
   const currentValue = positionSize * curPrice;
   const initialValue = position.initialValue ?? currentValue;
 
-  // Generate a unique dedupe_id for this position discovery
-  const dedupeId = `scan-${walletLower}-${conditionId}-${outcome}-${Date.now()}`;
+  // Generate UUID and dedupe_id for this position discovery
+  const id = crypto.randomUUID();
+  const tradeDedupeId = `scan-${walletLower}-${conditionId}-${outcome}-${Date.now()}`;
   const now = new Date().toISOString();
 
   await sql`
     INSERT INTO alert_events (
-      dedupe_id,
+      id,
+      trade_dedupe_id,
       wallet,
       condition_id,
       outcome,
@@ -157,15 +159,16 @@ async function insertPosition(
       position_initial_value,
       position_current_value,
       position_cash_pnl,
-      snapshot_at,
+      position_snapshot_at,
       longshot_threshold,
       min_position_threshold,
       qualifies_longshot,
       qualifies_min_position,
-      threshold_value,
+      threshold_value_used,
       threshold_source
     ) VALUES (
-      ${dedupeId},
+      ${id},
+      ${tradeDedupeId},
       ${walletLower},
       ${conditionId},
       ${outcome},
@@ -182,13 +185,14 @@ async function insertPosition(
       ${currentValue},
       ${position.cashPnl || 0},
       ${now}::timestamptz,
-      ${0.25},
+      ${LONGSHOT_THRESHOLD},
       ${MIN_POSITION_VALUE},
-      ${avgPrice <= 0.25},
+      ${avgPrice <= LONGSHOT_THRESHOLD},
       ${true},
       ${currentValue},
       ${'scan-positions'}
     )
+    ON CONFLICT (trade_dedupe_id) DO NOTHING
   `;
 
   metrics.positionsInserted++;
