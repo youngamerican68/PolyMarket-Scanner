@@ -1,0 +1,68 @@
+# .github/workflows/scan-pending.yml
+# Re-scans pending longshot wallets to capture positions once they meet the $2,500 threshold
+# Runs every hour
+#
+# Required GitHub Secrets:
+# - CRON_SECRET: Bearer token for job endpoint authentication
+# - SCAN_PENDING_URL: Full URL to the scan-pending endpoint
+
+name: Scan Pending Wallets
+
+on:
+  schedule:
+    # Run every hour at minute 30
+    - cron: '30 * * * *'
+  workflow_dispatch:
+    # Allow manual triggering for testing
+
+jobs:
+  scan-pending:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Scan pending longshot wallets
+        env:
+          SCAN_PENDING_URL: ${{ secrets.SCAN_PENDING_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: |
+          if [ -z "$SCAN_PENDING_URL" ]; then
+            echo "::error::SCAN_PENDING_URL secret is not set"
+            exit 1
+          fi
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET secret is not set"
+            exit 1
+          fi
+
+          echo "Running scan-pending job"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$SCAN_PENDING_URL")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP Status: $HTTP_CODE"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::scan-pending returned HTTP $HTTP_CODE"
+            echo "Response: $BODY"
+            exit 1
+          fi
+
+          echo "$BODY" | jq .
+
+          # Extract metrics
+          PENDING=$(echo "$BODY" | jq -r '.pendingWalletsFound // 0')
+          SCANNED=$(echo "$BODY" | jq -r '.walletsScanned // 0')
+          INSERTED=$(echo "$BODY" | jq -r '.positionsInserted // 0')
+          CAPTURED=$(echo "$BODY" | jq -r '.walletsCaptured // 0')
+
+          echo ""
+          echo "Summary:"
+          echo "  Pending wallets found: $PENDING"
+          echo "  Wallets scanned: $SCANNED"
+          echo "  Positions inserted: $INSERTED"
+          echo "  Wallets captured: $CAPTURED"
