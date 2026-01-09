@@ -831,6 +831,34 @@ export async function POST(request: Request) {
     await sql`CREATE INDEX IF NOT EXISTS idx_radar_watchlist_condition ON radar_watchlist (condition_id)`;
     console.log('[migrate] Created radar_watchlist indexes');
 
+    // =========================================================================
+    // Phase 13: Pending Longshot Wallets
+    // Tracks wallets that made longshot trades but were skipped due to position < $2,500
+    // Re-scanned periodically by scan-pending job to capture once threshold met
+    // =========================================================================
+
+    await sql`
+      CREATE TABLE IF NOT EXISTS pending_longshot_wallets (
+        wallet TEXT PRIMARY KEY CONSTRAINT pending_longshot_wallets_lower CHECK (wallet = LOWER(wallet)),
+        first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        last_trade_at TIMESTAMPTZ NOT NULL,
+        last_condition_id TEXT NOT NULL,
+        last_trade_price NUMERIC NOT NULL,
+        last_trade_size NUMERIC NOT NULL,
+        last_position_value NUMERIC NULL,
+        times_skipped INT NOT NULL DEFAULT 1,
+        last_scanned_at TIMESTAMPTZ NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'captured', 'expired'))
+      )
+    `;
+    console.log('[migrate] Created pending_longshot_wallets table');
+
+    // Index for re-scan job to find pending wallets
+    await sql`CREATE INDEX IF NOT EXISTS idx_pending_longshot_wallets_status ON pending_longshot_wallets(status) WHERE status = 'pending'`;
+    // Index for cleanup of old entries
+    await sql`CREATE INDEX IF NOT EXISTS idx_pending_longshot_wallets_first_seen ON pending_longshot_wallets(first_seen_at)`;
+    console.log('[migrate] Created pending_longshot_wallets indexes');
+
     // Post-migration: run ANALYZE on touched tables for query planner
     try {
       await sql`ANALYZE outcome_price_cache`;
@@ -845,6 +873,7 @@ export async function POST(request: Request) {
       await sql`ANALYZE wallet_sync_state`;
       await sql`ANALYZE radar_watchlist`;
       await sql`ANALYZE trade_ingest_watermark`;
+      await sql`ANALYZE pending_longshot_wallets`;
       console.log('[migrate] ANALYZE completed on all tables');
     } catch (err) {
       console.warn('[migrate] ANALYZE failed (non-critical):', String(err).slice(0, 100));
@@ -855,8 +884,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      message: 'Phases 1-12 migration complete (includes watermark)',
-      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status', 'trade_history_longshot_positions', 'market_final_pnl', 'wallet_position_snapshot', 'position_sync_overlay', 'wallet_sync_state', 'radar_watchlist', 'trade_ingest_watermark'],
+      message: 'Phases 1-13 migration complete (includes pending_longshot_wallets)',
+      tables: ['alert_events', 'outcome_price_cache', 'job_runs', 'wallet_trade_size_baselines', 'conviction_anomalies', 'market_status', 'trade_history_longshot_positions', 'market_final_pnl', 'wallet_position_snapshot', 'position_sync_overlay', 'wallet_sync_state', 'radar_watchlist', 'trade_ingest_watermark', 'pending_longshot_wallets'],
       indexes: [
         'idx_alert_events_fill_timestamp',
         'idx_alert_events_wallet_timestamp',
@@ -892,6 +921,8 @@ export async function POST(request: Request) {
         'idx_position_sync_overlay_not_found',
         'idx_position_sync_overlay_concurrency',
         'idx_wallet_sync_state_last_synced',
+        'idx_pending_longshot_wallets_status',
+        'idx_pending_longshot_wallets_first_seen',
       ],
       constraints: [
         'outcome_price_cache PRIMARY KEY (condition_id, outcome)',
@@ -906,6 +937,8 @@ export async function POST(request: Request) {
         'position_sync_overlay CHECK chk_sync_status (synced, not_found, error)',
         'position_sync_overlay CHECK chk_last_nonzero_at_integrity',
         'wallet_sync_state PRIMARY KEY (wallet)',
+        'pending_longshot_wallets PRIMARY KEY (wallet)',
+        'pending_longshot_wallets CHECK status IN (pending, captured, expired)',
       ],
       columnsAdded: [
         'conviction_anomalies.severity',
