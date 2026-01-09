@@ -140,6 +140,9 @@ async function insertPosition(
   const tradeDedupeId = `scan-${walletLower}-${conditionId}-${outcome}-${Date.now()}`;
   const now = new Date().toISOString();
 
+  // Calculate fill value (cost basis = size × avgPrice)
+  const fillValueUsd = (positionSize * avgPrice).toFixed(2);
+
   await sql`
     INSERT INTO alert_events (
       id,
@@ -153,6 +156,7 @@ async function insertPosition(
       event_slug,
       fill_price,
       fill_size,
+      fill_value_usd,
       fill_timestamp,
       position_size,
       position_avg_price,
@@ -179,6 +183,7 @@ async function insertPosition(
       ${position.eventSlug || null},
       ${avgPrice},
       ${positionSize},
+      ${fillValueUsd},
       ${now}::timestamptz,
       ${positionSize},
       ${avgPrice},
