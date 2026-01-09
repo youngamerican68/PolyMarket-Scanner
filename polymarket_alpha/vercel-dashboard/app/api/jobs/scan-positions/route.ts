@@ -20,8 +20,9 @@ const NO_CACHE_HEADERS = {
 // Configuration
 const MIN_POSITION_VALUE = 2500;
 const LONGSHOT_THRESHOLD = 0.25; // 25% odds or less = longshot
-const WALLET_CONCURRENCY = 5;
-const MAX_WALLETS_PER_RUN = 200;
+const WALLET_CONCURRENCY = 10;
+const MAX_WALLETS_PER_RUN = 1000;
+const TRADES_TO_FETCH = 2000; // Fetch more trades to discover more wallets
 const POSITION_LIMIT_PER_WALLET = 100;
 const JOB_NAME = 'scan-positions';
 
@@ -43,7 +44,7 @@ interface JobMetrics {
 async function getWalletsToScan(): Promise<string[]> {
   // Get wallets from recent trades that might have positions we missed
   // Use the trades API to discover active wallets
-  const tradesUrl = `https://data-api.polymarket.com/trades?limit=500&filterType=CASH&filterAmount=100&takerOnly=true`;
+  const tradesUrl = `https://data-api.polymarket.com/trades?limit=${TRADES_TO_FETCH}&filterType=CASH&filterAmount=100&takerOnly=true`;
 
   try {
     const res = await fetch(tradesUrl, {
