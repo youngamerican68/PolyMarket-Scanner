@@ -447,6 +447,11 @@ export async function GET(request: NextRequest) {
       const rawPositionSize = row.position_size ? parseFloat(row.position_size) : null;
       const rawPositionValue = row.position_current_value ? parseFloat(row.position_current_value) : null;
 
+      // DEBUG: Log values for specific wallet
+      if (row.wallet.startsWith('0x4128')) {
+        console.log(`[radar DEBUG] wallet=${row.wallet.slice(0,10)}... row.synced_position_size="${row.synced_position_size}" syncedPositionSize=${syncedPositionSize} row.synced_current_value="${row.synced_current_value}" syncedCurrentValue=${syncedCurrentValue} rawPositionSize=${rawPositionSize} rawPositionValue=${rawPositionValue}`);
+      }
+
       // Effective values (synced → lastKnown → raw)
       const positionSize = syncedPositionSize ?? lastKnownPositionSize ?? rawPositionSize;
       const positionAvgPrice = syncedAvgPrice ?? lastKnownAvgPrice ?? fillPrice;
