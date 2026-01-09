@@ -223,13 +223,16 @@ async function scanWalletPositions(
 
     for (const position of positions) {
       const positionSize = position.size ?? 0;
+      const avgPrice = position.avgPrice ?? 0;
       const curPrice = position.curPrice ?? 0;
       const currentValue = positionSize * curPrice;
 
-      // Only process longshot positions (odds <= 25%) with value >= $2,500
+      // Only process positions with value >= $2,500
       if (currentValue >= MIN_POSITION_VALUE) {
-        // Check if it's a longshot (current price <= 25%)
-        if (curPrice > LONGSHOT_THRESHOLD) {
+        // Check if it was BOUGHT at longshot odds (avgPrice <= 25%)
+        // We care about purchase price, not current price - we want to find
+        // wallets that made longshot bets, even if the price has moved up
+        if (avgPrice > LONGSHOT_THRESHOLD) {
           metrics.positionsSkippedNotLongshot++;
           continue;
         }
