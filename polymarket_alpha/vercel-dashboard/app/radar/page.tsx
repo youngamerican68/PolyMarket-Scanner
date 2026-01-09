@@ -116,7 +116,7 @@ export default function RadarPage() {
 
   // Sync state
   const [syncLoading, setSyncLoading] = useState(false)
-  const [syncResult, setSyncResult] = useState<{ walletsSynced: number } | null>(null)
+  const [syncResult, setSyncResult] = useState<{ walletsSynced: number; rowsUpdated: number; walletsSkippedTtl: number; errors: string[] } | null>(null)
 
   // Watchlist state
   const [savedItems, setSavedItems] = useState<Set<string>>(new Set())
@@ -251,12 +251,18 @@ export default function RadarPage() {
           includeResolved,
           maxOdds,
           minPosition,
+          forceTtlSkip: true, // Always force sync when user clicks button
         }),
       })
       if (res.ok) {
         const data = await res.json()
         if (data.success && data.result) {
-          setSyncResult({ walletsSynced: data.result.walletsSynced || 0 })
+          setSyncResult({
+            walletsSynced: data.result.walletsSynced || 0,
+            rowsUpdated: data.result.rowsUpdated || 0,
+            walletsSkippedTtl: data.result.walletsSkippedTtl || 0,
+            errors: data.result.errors || [],
+          })
           // Refetch radar to get updated data
           await fetchSignals()
         }
@@ -441,6 +447,35 @@ export default function RadarPage() {
           </div>
         </div>
       </div>
+
+      {/* Sync result indicator */}
+      {syncResult && (
+        <div className="border-b border-gray-800 bg-emerald-900/20">
+          <div className="max-w-7xl mx-auto px-4 py-2">
+            <div className="flex items-center gap-6 text-sm">
+              <span className="text-emerald-400">
+                Synced {syncResult.walletsSynced} wallets, {syncResult.rowsUpdated} rows updated
+              </span>
+              {syncResult.walletsSkippedTtl > 0 && (
+                <span className="text-gray-400">
+                  ({syncResult.walletsSkippedTtl} skipped - cooldown)
+                </span>
+              )}
+              {syncResult.errors.length > 0 && (
+                <span className="text-red-400" title={syncResult.errors.join(', ')}>
+                  {syncResult.errors.length} errors
+                </span>
+              )}
+              <button
+                onClick={() => setSyncResult(null)}
+                className="text-gray-500 hover:text-gray-300 ml-auto"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Stats bar */}
       {metadata && (

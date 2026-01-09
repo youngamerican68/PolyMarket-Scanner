@@ -36,6 +36,8 @@ interface RefreshRequest {
   excludeCategory?: string;
   maxOdds?: number;
   minPosition?: number;
+  // Debug option to skip TTL check
+  forceTtlSkip?: boolean;
 }
 
 interface SyncResult {
@@ -146,8 +148,12 @@ async function syncWalletPositions(
     // Fetch positions from Polymarket API
     const { positions, atLimit } = await fetchPositionsWithRetry(walletLower, POSITION_LIMIT_PER_WALLET);
 
+    console.log(`[syncWalletPositions] ${walletLower}: Fetched ${positions.length} positions from Polymarket API${atLimit ? ' (at limit!)' : ''}`);
+
     // Get dashboard rows for this wallet
     const dashboardRows = await getDashboardRowsForWallet(walletLower, alertWindowHours);
+
+    console.log(`[syncWalletPositions] ${walletLower}: Found ${dashboardRows.length} dashboard rows to sync`);
 
     let rowsUpdated = 0;
 
@@ -170,12 +176,20 @@ async function syncWalletPositions(
         return true;
       });
 
+      // Log matching details for debugging
+      if (!matchingPosition) {
+        const candidateConditions = positions.filter(p => p.conditionId === row.condition_id);
+        console.log(`[syncWalletPositions] ${walletLower}: No match for condition ${row.condition_id.slice(0, 10)}... outcome_index=${row.outcome_index}. Candidates: ${candidateConditions.length} positions with matching conditionId, outcomeIndexes: ${candidateConditions.map(c => c.outcomeIndex).join(', ')}`);
+      }
+
       if (matchingPosition) {
         // Calculate payout if wins = position size (each share pays $1)
         const positionSize = matchingPosition.size ?? 0;
         const avgPrice = matchingPosition.avgPrice ?? 0;
         const currentValue = matchingPosition.currentValue ?? 0;
         const payoutIfWins = positionSize; // Each share pays $1 if outcome wins
+
+        console.log(`[syncWalletPositions] ${walletLower}: MATCHED condition ${row.condition_id.slice(0, 10)}... size=${positionSize.toFixed(0)}, avgPrice=${avgPrice.toFixed(3)}, currentValue=${currentValue.toFixed(2)}, payout=${payoutIfWins.toFixed(0)}`);
 
         // Upsert overlay - update both synced_* AND last_known_* fields
         // Set position_state = 'open' since we found an active position
@@ -323,6 +337,8 @@ export async function POST(request: Request) {
     const body: RefreshRequest = await request.json();
     const { scope, wallets: providedWallets } = body;
 
+    console.log(`[positions/refresh] Request: scope=${scope}, alertWindowHours=${body.alertWindowHours}, maxOdds=${body.maxOdds}, minPosition=${body.minPosition}, includeResolved=${body.includeResolved}`);
+
     // Determine wallets to sync
     let wallets: string[];
 
@@ -332,6 +348,10 @@ export async function POST(request: Request) {
     } else if (scope === 'filter') {
       // Get wallets from filter params
       wallets = await getWalletsFromFilter(body);
+      console.log(`[positions/refresh] getWalletsFromFilter returned ${wallets.length} wallets`);
+      if (wallets.length > 0 && wallets.length <= 10) {
+        console.log(`[positions/refresh] Wallets: ${wallets.map(w => w.slice(0, 10) + '...').join(', ')}`);
+      }
     } else {
       return NextResponse.json(
         { error: 'Invalid request: must specify scope=wallets with wallets[] or scope=filter with filter params' },
@@ -362,14 +382,20 @@ export async function POST(request: Request) {
     const walletsToSync: string[] = [];
     let walletsSkippedTtl = 0;
 
+    const forceTtlSkip = body.forceTtlSkip === true;
+    console.log(`[positions/refresh] Checking TTL for ${cappedWallets.length} wallets (TTL=${SYNC_TTL_MS}ms, forceTtlSkip=${forceTtlSkip})`);
+
     for (const wallet of cappedWallets) {
-      const skip = await shouldSkipWallet(wallet);
+      const skip = forceTtlSkip ? false : await shouldSkipWallet(wallet);
       if (skip) {
         walletsSkippedTtl++;
+        console.log(`[positions/refresh] Skipping ${wallet.slice(0, 10)}... due to TTL`);
       } else {
         walletsToSync.push(wallet);
       }
     }
+
+    console.log(`[positions/refresh] Will sync ${walletsToSync.length} wallets (${walletsSkippedTtl} skipped due to TTL)`);
 
     // Sync wallets with concurrency limit
     const results = await Promise.all(
