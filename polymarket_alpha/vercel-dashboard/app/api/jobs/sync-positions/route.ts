@@ -347,8 +347,9 @@ async function getDashboardRowsForWallet(
     ),
 
     -- Source 2: From snapshot (may have older positions not in recent alerts)
+    -- Note: snapshot table doesn't have outcome_index, use NULL
     snapshot_positions AS (
-      SELECT DISTINCT wps.condition_id, wps.outcome, wps.outcome_index
+      SELECT DISTINCT wps.condition_id, wps.outcome, NULL::int as outcome_index
       FROM wallet_position_snapshot wps
       WHERE wps.wallet = ${walletLower}
         AND wps.condition_id IN (SELECT condition_id FROM unresolved_conditions)
