@@ -52,6 +52,7 @@ interface IngestionSummary {
   skipped_validation_failed: number;
   skipped_below_threshold: number;
   skipped_before_watermark: number;
+  pending_wallets_tracked: number;
   // Phase 5: Conviction anomalies (hardened)
   anomalies_inserted: number;
   anomalies_updated: number;
@@ -126,6 +127,7 @@ export async function POST(request: Request) {
     skipped_validation_failed: 0,
     skipped_below_threshold: 0,
     skipped_before_watermark: 0,
+    pending_wallets_tracked: 0,
     anomalies_inserted: 0,
     anomalies_updated: 0,
     anomalies_no_baseline: 0,
@@ -411,6 +413,47 @@ export async function POST(request: Request) {
 
         if (!qualifiesMinPosition) {
           summary.skipped_below_threshold++;
+
+          // Track wallet for later re-scan - they made a longshot trade but position is too small
+          try {
+            const fillTimestampForPending = new Date(timestampSeconds * 1000).toISOString();
+            await sql`
+              INSERT INTO pending_longshot_wallets (
+                wallet,
+                first_seen_at,
+                last_trade_at,
+                last_condition_id,
+                last_trade_price,
+                last_trade_size,
+                last_position_value,
+                times_skipped,
+                status
+              ) VALUES (
+                ${walletLower},
+                NOW(),
+                ${fillTimestampForPending}::timestamptz,
+                ${trade.conditionId},
+                ${trade.price},
+                ${trade.size},
+                ${thresholdValue},
+                1,
+                'pending'
+              )
+              ON CONFLICT (wallet) DO UPDATE SET
+                last_trade_at = EXCLUDED.last_trade_at,
+                last_condition_id = EXCLUDED.last_condition_id,
+                last_trade_price = EXCLUDED.last_trade_price,
+                last_trade_size = EXCLUDED.last_trade_size,
+                last_position_value = EXCLUDED.last_position_value,
+                times_skipped = pending_longshot_wallets.times_skipped + 1,
+                status = 'pending'
+            `;
+            summary.pending_wallets_tracked++;
+          } catch (pendingErr) {
+            // Non-fatal - log but don't fail the trade processing
+            console.warn('[collect-trades] Failed to track pending wallet:', String(pendingErr).slice(0, 100));
+          }
+
           continue;
         }
 
