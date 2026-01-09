@@ -120,11 +120,11 @@ async function getWalletsFromFilter(params: RefreshRequest): Promise<string[]> {
 async function getDashboardRowsForWallet(
   wallet: string,
   alertWindowHours: number = 72
-): Promise<Array<{ condition_id: string; outcome: string }>> {
+): Promise<Array<{ condition_id: string; outcome: string; outcome_index: number | null }>> {
   const cutoff = new Date(Date.now() - alertWindowHours * 60 * 60 * 1000).toISOString();
 
-  const result = await sql<{ condition_id: string; outcome: string }>`
-    SELECT DISTINCT condition_id, outcome
+  const result = await sql<{ condition_id: string; outcome: string; outcome_index: number | null }>`
+    SELECT DISTINCT condition_id, outcome, outcome_index
     FROM alert_events
     WHERE wallet = ${wallet.toLowerCase()}
       AND fill_timestamp >= ${cutoff}::timestamptz
@@ -158,10 +158,17 @@ async function syncWalletPositions(
 
     // For each dashboard row, find matching position and upsert overlay
     for (const row of dashboardRows) {
-      // Find matching position by condition_id and outcome
-      const matchingPosition = positions.find(
-        p => p.conditionId === row.condition_id && p.outcome === row.outcome
-      );
+      // Find matching position by condition_id (outcome matching is unreliable - API may return null)
+      // Use same logic as matchTradeToPosition: match by conditionId, then verify by outcomeIndex if available
+      const matchingPosition = positions.find(p => {
+        if (p.conditionId !== row.condition_id) return false;
+        // If we have outcomeIndex in row, use it for precise matching
+        if (row.outcome_index !== null && row.outcome_index !== undefined) {
+          return p.outcomeIndex === null || p.outcomeIndex === undefined || p.outcomeIndex === row.outcome_index;
+        }
+        // Fallback: accept any position with matching conditionId
+        return true;
+      });
 
       if (matchingPosition) {
         // Calculate payout if wins = position size (each share pays $1)

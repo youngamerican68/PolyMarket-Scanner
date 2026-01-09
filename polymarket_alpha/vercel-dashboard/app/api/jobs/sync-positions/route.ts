@@ -294,20 +294,20 @@ async function countUnresolvedSnapshotWalletsNotInOverlay(): Promise<number> {
   return result.rows[0]?.count ?? 0;
 }
 
-// Get condition_id + outcome pairs for a wallet
+// Get condition_id + outcome + outcome_index for a wallet
 // Sources from both alert_events AND snapshot for complete coverage
 // Uses consistent unresolved-market predicate
 // PERF: Constrains alert_events to 72h window to avoid full scan
 async function getDashboardRowsForWallet(
   wallet: string
-): Promise<Array<{ condition_id: string; outcome: string }>> {
+): Promise<Array<{ condition_id: string; outcome: string; outcome_index: number | null }>> {
   const cutoff = new Date(Date.now() - ALERT_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
   const walletLower = wallet.toLowerCase();
 
   // Unified query: combines alert_events and snapshot positions
   // for unresolved markets only
   // Note: UNION on (condition_id, outcome) correctly dedupes by business key
-  const result = await sql<{ condition_id: string; outcome: string }>`
+  const result = await sql<{ condition_id: string; outcome: string; outcome_index: number | null }>`
     WITH
     -- Unified unresolved market predicate
     -- PERF: Constrain alert_events to 72h window for this wallet
@@ -338,7 +338,7 @@ async function getDashboardRowsForWallet(
 
     -- Source 1: From alert_events (recent fills, 72h window)
     alert_positions AS (
-      SELECT DISTINCT ae.condition_id, ae.outcome
+      SELECT DISTINCT ae.condition_id, ae.outcome, ae.outcome_index
       FROM alert_events ae
       WHERE ae.wallet = ${walletLower}
         AND ae.fill_timestamp >= ${cutoff}::timestamptz
@@ -348,17 +348,17 @@ async function getDashboardRowsForWallet(
 
     -- Source 2: From snapshot (may have older positions not in recent alerts)
     snapshot_positions AS (
-      SELECT DISTINCT wps.condition_id, wps.outcome
+      SELECT DISTINCT wps.condition_id, wps.outcome, wps.outcome_index
       FROM wallet_position_snapshot wps
       WHERE wps.wallet = ${walletLower}
         AND wps.condition_id IN (SELECT condition_id FROM unresolved_conditions)
         AND wps.outcome IS NOT NULL
     )
 
-    -- Combine both sources: UNION dedupes by (condition_id, outcome) which is the business key
-    SELECT condition_id, outcome FROM alert_positions
+    -- Combine both sources: UNION dedupes by (condition_id, outcome, outcome_index)
+    SELECT condition_id, outcome, outcome_index FROM alert_positions
     UNION
-    SELECT condition_id, outcome FROM snapshot_positions
+    SELECT condition_id, outcome, outcome_index FROM snapshot_positions
   `;
 
   return result.rows;
@@ -383,9 +383,17 @@ async function syncWalletPositions(
 
     // For each dashboard row, find matching position and upsert overlay
     for (const row of dashboardRows) {
-      const matchingPosition = positions.find(
-        p => p.conditionId === row.condition_id && p.outcome === row.outcome
-      );
+      // Find matching position by condition_id (outcome matching is unreliable - API may return null)
+      // Use same logic as matchTradeToPosition: match by conditionId, then verify by outcomeIndex if available
+      const matchingPosition = positions.find(p => {
+        if (p.conditionId !== row.condition_id) return false;
+        // If we have outcomeIndex in row, use it for precise matching
+        if (row.outcome_index !== null && row.outcome_index !== undefined) {
+          return p.outcomeIndex === null || p.outcomeIndex === undefined || p.outcomeIndex === row.outcome_index;
+        }
+        // Fallback: accept any position with matching conditionId
+        return true;
+      });
 
       if (matchingPosition) {
         // Position found - update synced_* AND last_known_* fields
