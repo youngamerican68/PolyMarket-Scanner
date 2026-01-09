@@ -143,13 +143,18 @@ async function insertPosition(
   // Calculate fill value (cost basis = size × avgPrice)
   const fillValueUsd = (positionSize * avgPrice).toFixed(2);
 
+  // Derive outcome_index if not provided (Yes = 0, No = 1)
+  const outcomeIndex = position.outcomeIndex ?? (outcome === 'Yes' ? 0 : 1);
+
   await sql`
     INSERT INTO alert_events (
       id,
       trade_dedupe_id,
       wallet,
+      asset,
       condition_id,
       outcome,
+      outcome_index,
       side,
       title,
       slug,
@@ -175,8 +180,10 @@ async function insertPosition(
       ${id},
       ${tradeDedupeId},
       ${walletLower},
+      ${position.asset},
       ${conditionId},
       ${outcome},
+      ${outcomeIndex},
       ${'BUY'},
       ${position.title || null},
       ${position.slug || null},
