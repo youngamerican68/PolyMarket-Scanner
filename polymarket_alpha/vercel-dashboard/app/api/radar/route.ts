@@ -258,9 +258,6 @@ interface DbRow {
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
 
-  // Debug mode - if wallet parameter is provided, return raw query data for that wallet
-  const debugWallet = searchParams.get('debugWallet');
-
   // Parse parameters (defaults match main report)
   const maxOdds = parseFloatParam(searchParams.get('maxOdds'), 0.25, 0.01, 0.50);
   const minPosition = parseFloatParam(searchParams.get('minPosition'), 2500, 0, 100000);
@@ -272,48 +269,6 @@ export async function GET(request: NextRequest) {
   const validSorts = ['score', 'return', 'time', 'walletAge', 'trades'] as const;
   const sortBy = validSorts.includes(sortByParam as any) ? sortByParam as typeof validSorts[number] : 'time';
   const hideSports = searchParams.get('hideSports') === 'true';
-
-  // Debug mode: return raw query results for a specific wallet
-  if (debugWallet) {
-    try {
-      const debugResult = await sql`
-        WITH wallet_stats AS (
-          SELECT wallet, MIN(fill_timestamp) as first_seen, COUNT(*)::int as trade_count
-          FROM alert_events GROUP BY wallet
-        )
-        SELECT
-          ae.id,
-          ae.wallet,
-          ae.condition_id,
-          ae.outcome,
-          ae.fill_timestamp::text,
-          ae.position_size::text as ae_position_size,
-          ae.position_current_value::text as ae_position_current_value,
-          pso.synced_position_size::text,
-          pso.synced_avg_price::text,
-          pso.synced_current_value::text,
-          pso.synced_at::text,
-          pso.sync_status
-        FROM alert_events ae
-        INNER JOIN wallet_stats ws ON ae.wallet = ws.wallet
-        LEFT JOIN position_sync_overlay pso
-          ON ae.wallet = pso.wallet
-          AND ae.condition_id = pso.condition_id
-          AND ae.outcome = pso.outcome
-        WHERE ae.wallet = ${debugWallet.toLowerCase()}
-        ORDER BY ae.fill_timestamp DESC
-        LIMIT 10
-      `;
-      return NextResponse.json({
-        debug: true,
-        wallet: debugWallet.toLowerCase(),
-        rows: debugResult.rows,
-        timestamp: new Date().toISOString(),
-      }, { headers: NO_CACHE_HEADERS });
-    } catch (err) {
-      return NextResponse.json({ error: 'Debug query failed', details: String(err) }, { status: 500, headers: NO_CACHE_HEADERS });
-    }
-  }
 
   try {
     // Main query: find long-shot BUY trades with wallet stats
@@ -491,11 +446,6 @@ export async function GET(request: NextRequest) {
 
       const rawPositionSize = row.position_size ? parseFloat(row.position_size) : null;
       const rawPositionValue = row.position_current_value ? parseFloat(row.position_current_value) : null;
-
-      // DEBUG: Log values for specific wallet
-      if (row.wallet.startsWith('0x4128')) {
-        console.log(`[radar DEBUG] wallet=${row.wallet.slice(0,10)}... row.synced_position_size="${row.synced_position_size}" syncedPositionSize=${syncedPositionSize} row.synced_current_value="${row.synced_current_value}" syncedCurrentValue=${syncedCurrentValue} rawPositionSize=${rawPositionSize} rawPositionValue=${rawPositionValue}`);
-      }
 
       // Effective values (synced → lastKnown → raw)
       const positionSize = syncedPositionSize ?? lastKnownPositionSize ?? rawPositionSize;
