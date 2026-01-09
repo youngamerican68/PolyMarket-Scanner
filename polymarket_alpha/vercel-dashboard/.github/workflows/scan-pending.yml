@@ -4,7 +4,7 @@
 #
 # Required GitHub Secrets:
 # - CRON_SECRET: Bearer token for job endpoint authentication
-# - DOMAIN: Production domain (e.g., poly-market-scanner.vercel.app)
+# - SCAN_PENDING_URL: Full URL to the scan-pending endpoint
 
 name: Scan Pending Wallets
 
@@ -23,11 +23,11 @@ jobs:
     steps:
       - name: Scan pending longshot wallets
         env:
-          DOMAIN: ${{ secrets.DOMAIN }}
+          SCAN_PENDING_URL: ${{ secrets.SCAN_PENDING_URL }}
           CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
-          if [ -z "$DOMAIN" ]; then
-            echo "::error::DOMAIN secret is not set"
+          if [ -z "$SCAN_PENDING_URL" ]; then
+            echo "::error::SCAN_PENDING_URL secret is not set"
             exit 1
           fi
           if [ -z "$CRON_SECRET" ]; then
@@ -35,11 +35,11 @@ jobs:
             exit 1
           fi
 
-          echo "Running scan-pending job at https://$DOMAIN/api/jobs/scan-pending"
+          echo "Running scan-pending job"
 
           RESPONSE=$(curl -s -w "\n%{http_code}" \
             -H "Authorization: Bearer $CRON_SECRET" \
-            "https://$DOMAIN/api/jobs/scan-pending")
+            "$SCAN_PENDING_URL")
 
           HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
           BODY=$(echo "$RESPONSE" | sed '$d')
