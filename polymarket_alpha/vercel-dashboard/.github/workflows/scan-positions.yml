@@ -1,0 +1,64 @@
+# .github/workflows/scan-positions.yml
+# Position scanner - finds wallets with $2,500+ positions we may have missed
+# Runs every 30 minutes to catch positions built through many small trades
+
+name: Scan Positions
+
+on:
+  schedule:
+    # Run every 30 minutes
+    - cron: '*/30 * * * *'
+  workflow_dispatch:
+    # Allow manual triggering for testing
+
+jobs:
+  scan-positions:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Trigger scan-positions job
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          SCAN_POSITIONS_URL: ${{ secrets.SCAN_POSITIONS_URL }}
+        run: |
+          # Validate required secrets
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::CRON_SECRET secret is not set"
+            exit 1
+          fi
+
+          # Default URL if not set
+          URL="${SCAN_POSITIONS_URL:-https://poly-market-scanner.vercel.app/api/jobs/scan-positions}"
+
+          echo "Triggering scan-positions at $URL"
+
+          RESPONSE=$(curl -s -w "\n%{http_code}" \
+            -X GET \
+            -H "Authorization: Bearer $CRON_SECRET" \
+            "$URL")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::scan-positions returned HTTP $HTTP_CODE"
+            exit 1
+          fi
+
+          # Parse and display metrics
+          if echo "$BODY" | jq empty 2>/dev/null; then
+            echo ""
+            echo "Scan Results:"
+            echo "  Wallets scanned: $(echo "$BODY" | jq -r '.walletsScanned // "N/A"')"
+            echo "  Positions found: $(echo "$BODY" | jq -r '.positionsFound // "N/A"')"
+            echo "  Positions inserted: $(echo "$BODY" | jq -r '.positionsInserted // "N/A"')"
+            echo "  Already existed: $(echo "$BODY" | jq -r '.positionsSkippedExists // "N/A"')"
+            echo "  Duration: $(echo "$BODY" | jq -r '.durationMs // "N/A"')ms"
+          fi
+
+          echo ""
+          echo "Scan completed successfully!"

@@ -21,6 +21,7 @@ export const MONITORED_JOBS: JobConfig[] = [
   { jobName: 'collect-trades', scheduleMinutes: 5 },       // every 5 min (stale after 10 min)
   { jobName: 'refresh-prices', scheduleMinutes: 10 },      // every 10 min (stale after 20 min)
   { jobName: 'sync-positions', scheduleMinutes: 15 },      // every 15 min (stale after 30 min)
+  { jobName: 'scan-positions', scheduleMinutes: 30 },      // every 30 min (stale after 60 min)
   { jobName: 'refresh-baselines', scheduleMinutes: 1440 }, // daily (stale after 48h)
 ];
 
