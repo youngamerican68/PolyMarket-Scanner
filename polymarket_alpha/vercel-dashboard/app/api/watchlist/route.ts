@@ -34,12 +34,30 @@ interface WatchlistItem {
   currentPositionSize: number | null;
   syncedAt: string | null;
   isSold: boolean;
+  // Wallet stats
+  walletFirstSeen: string | null;
+  walletPositionCount: number | null;
 }
 
 // GET - List all watchlist items
 export async function GET() {
   try {
     const result = await sql`
+      WITH wallet_stats AS (
+        SELECT
+          wallet,
+          MIN(fill_timestamp) as first_seen
+        FROM alert_events
+        GROUP BY wallet
+      ),
+      wallet_positions AS (
+        SELECT
+          wallet,
+          COUNT(*) as position_count
+        FROM position_sync_overlay
+        WHERE synced_position_size > 0
+        GROUP BY wallet
+      )
       SELECT
         w.id,
         w.wallet,
@@ -59,13 +77,18 @@ export async function GET() {
         -- Live position data from position_sync_overlay
         pso.synced_current_value,
         pso.synced_position_size,
-        pso.synced_at
+        pso.synced_at,
+        -- Wallet stats
+        ws.first_seen as wallet_first_seen,
+        COALESCE(wp.position_count, 0)::int as wallet_position_count
       FROM radar_watchlist w
       LEFT JOIN market_status ms ON w.condition_id = ms.condition_id
       LEFT JOIN position_sync_overlay pso
         ON w.wallet = pso.wallet
         AND w.condition_id = pso.condition_id
         AND w.outcome = pso.outcome
+      LEFT JOIN wallet_stats ws ON w.wallet = ws.wallet
+      LEFT JOIN wallet_positions wp ON w.wallet = wp.wallet
       ORDER BY w.saved_at DESC
     `;
 
@@ -92,6 +115,9 @@ export async function GET() {
         currentPositionSize,
         syncedAt: row.synced_at || null,
         isSold: currentPositionSize !== null && currentPositionSize === 0,
+        // Wallet stats
+        walletFirstSeen: row.wallet_first_seen || null,
+        walletPositionCount: row.wallet_position_count ?? null,
       };
     });
 

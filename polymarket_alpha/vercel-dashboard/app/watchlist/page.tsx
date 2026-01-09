@@ -24,6 +24,9 @@ interface WatchlistItem {
   currentPositionSize: number | null
   syncedAt: string | null
   isSold: boolean
+  // Wallet stats
+  walletFirstSeen: string | null
+  walletPositionCount: number | null
 }
 
 function getScoreColor(score: number): string {
@@ -54,6 +57,14 @@ function getCardBgColor(pnlPercent: number | null): string {
   if (pnlPercent >= 0) return 'bg-green-900/10'
   if (pnlPercent >= -10) return 'bg-red-900/10'
   return 'bg-red-900/20'
+}
+
+function formatWalletAge(firstSeen: string | null): string {
+  if (!firstSeen) return '-'
+  const days = Math.floor((Date.now() - new Date(firstSeen).getTime()) / (1000 * 60 * 60 * 24))
+  if (days === 0) return 'Today'
+  if (days === 1) return '1 day'
+  return `${days} days`
 }
 
 export default function WatchlistPage() {
@@ -237,27 +248,35 @@ export default function WatchlistPage() {
                               </span>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            {item.isSold && (
-                              <span className="px-2 py-0.5 bg-gray-500/20 text-gray-400 rounded text-xs">
-                                SOLD
-                              </span>
-                            )}
-                            <a
-                              href={`https://polymarket.com/profile/${item.wallet}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-blue-400 hover:text-blue-300"
-                            >
-                              Profile
-                            </a>
-                            <button
-                              onClick={() => removeItem(item)}
-                              disabled={deleting.has(item.id)}
-                              className="text-xs text-gray-500 hover:text-red-400"
-                            >
-                              {deleting.has(item.id) ? '...' : 'Remove'}
-                            </button>
+                          <div className="flex flex-col items-end gap-1">
+                            <div className="flex items-center gap-2">
+                              {item.isSold && (
+                                <span className="px-2 py-0.5 bg-gray-500/20 text-gray-400 rounded text-xs">
+                                  SOLD
+                                </span>
+                              )}
+                              <a
+                                href={`https://polymarket.com/profile/${item.wallet}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-400 hover:text-blue-300"
+                              >
+                                Profile
+                              </a>
+                              <button
+                                onClick={() => removeItem(item)}
+                                disabled={deleting.has(item.id)}
+                                className="text-xs text-gray-500 hover:text-red-400"
+                              >
+                                {deleting.has(item.id) ? '...' : 'Remove'}
+                              </button>
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {formatWalletAge(item.walletFirstSeen)} old
+                              {item.walletPositionCount !== null && (
+                                <span> · {item.walletPositionCount} positions</span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -320,22 +339,30 @@ export default function WatchlistPage() {
                               </span>
                             </div>
                           </div>
-                          <div className="flex items-center gap-2">
-                            <a
-                              href={`https://polymarket.com/profile/${item.wallet}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-blue-400 hover:text-blue-300"
-                            >
-                              Profile
-                            </a>
-                            <button
-                              onClick={() => removeItem(item)}
-                              disabled={deleting.has(item.id)}
-                              className="text-xs text-gray-500 hover:text-red-400"
-                            >
-                              {deleting.has(item.id) ? '...' : 'Remove'}
-                            </button>
+                          <div className="flex flex-col items-end gap-1">
+                            <div className="flex items-center gap-2">
+                              <a
+                                href={`https://polymarket.com/profile/${item.wallet}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-xs text-blue-400 hover:text-blue-300"
+                              >
+                                Profile
+                              </a>
+                              <button
+                                onClick={() => removeItem(item)}
+                                disabled={deleting.has(item.id)}
+                                className="text-xs text-gray-500 hover:text-red-400"
+                              >
+                                {deleting.has(item.id) ? '...' : 'Remove'}
+                              </button>
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {formatWalletAge(item.walletFirstSeen)} old
+                              {item.walletPositionCount !== null && (
+                                <span> · {item.walletPositionCount} positions</span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>

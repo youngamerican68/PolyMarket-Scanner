@@ -391,7 +391,10 @@ async function syncWalletPositions(
         // Position found - update synced_* AND last_known_* fields
         const positionSize = matchingPosition.size ?? 0;
         const avgPrice = matchingPosition.avgPrice ?? 0;
-        const currentValue = matchingPosition.currentValue ?? 0;
+        // Calculate current value from size × curPrice for accuracy
+        // The API's pre-calculated currentValue can be stale
+        const curPrice = matchingPosition.curPrice ?? 0;
+        const currentValue = positionSize * curPrice;
         const payoutIfWins = positionSize;
 
         await sql`
