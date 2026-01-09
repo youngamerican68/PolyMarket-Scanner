@@ -73,7 +73,31 @@ export async function GET(request: NextRequest) {
       WHERE wallet = ${walletLower}
     `;
 
-    // 4. Fetch live positions from Polymarket API
+    // 4. Test the actual JOIN that radar uses
+    const joinTest = await sql`
+      SELECT
+        ae.wallet as ae_wallet,
+        ae.condition_id as ae_condition_id,
+        ae.outcome as ae_outcome,
+        ae.position_size::text as ae_position_size,
+        ae.position_current_value::text as ae_position_current_value,
+        pso.wallet as pso_wallet,
+        pso.condition_id as pso_condition_id,
+        pso.outcome as pso_outcome,
+        pso.synced_position_size::text as pso_synced_position_size,
+        pso.synced_current_value::text as pso_synced_current_value,
+        CASE WHEN pso.wallet IS NULL THEN 'JOIN FAILED' ELSE 'JOIN OK' END as join_status
+      FROM alert_events ae
+      LEFT JOIN position_sync_overlay pso
+        ON ae.wallet = pso.wallet
+        AND ae.condition_id = pso.condition_id
+        AND ae.outcome = pso.outcome
+      WHERE ae.wallet = ${walletLower}
+      ORDER BY ae.fill_timestamp DESC
+      LIMIT 5
+    `;
+
+    // 5. Fetch live positions from Polymarket API
     let livePositions: any[] = [];
     let liveError: string | null = null;
     try {
@@ -97,6 +121,7 @@ export async function GET(request: NextRequest) {
       alertEvents: alertEvents.rows,
       overlayRows: overlayRows.rows,
       syncState: syncState.rows[0] || null,
+      joinTest: joinTest.rows,
       livePositions,
       liveError,
       timestamp: new Date().toISOString(),
