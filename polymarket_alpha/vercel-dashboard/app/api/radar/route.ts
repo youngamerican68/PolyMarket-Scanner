@@ -272,7 +272,8 @@ export async function GET(request: NextRequest) {
 
   try {
     // Main query: find long-shot BUY trades with wallet stats
-    // Note: We always fetch all data and filter resolved in JS for simplicity
+    // Uses ROW_NUMBER() to reliably get latest trade per (wallet, condition_id, outcome)
+    // then JOINs overlay data - this ensures synced values are always fresh
     const result = await sql<DbRow>`
       WITH wallet_stats AS (
         -- Get first seen date and trade count for each wallet
@@ -283,9 +284,9 @@ export async function GET(request: NextRequest) {
         FROM alert_events
         GROUP BY wallet
       ),
-      radar_candidates AS (
-        -- Deduplicate by wallet + condition_id + outcome, keeping the most recent trade
-        SELECT DISTINCT ON (ae.wallet, ae.condition_id, ae.outcome)
+      ranked_trades AS (
+        -- Rank trades by timestamp, most recent first per (wallet, condition_id, outcome)
+        SELECT
           ae.id,
           ae.fill_timestamp,
           ae.wallet,
@@ -299,14 +300,45 @@ export async function GET(request: NextRequest) {
           ae.fill_value_usd,
           ae.position_size,
           ae.position_current_value,
+          ae.is_whale,
+          ae.whale_label,
           ws.first_seen as wallet_first_seen,
           EXTRACT(DAY FROM (NOW() - ws.first_seen))::int as wallet_days_old,
           ws.trade_count as wallet_trade_count,
+          ROW_NUMBER() OVER (
+            PARTITION BY ae.wallet, ae.condition_id, ae.outcome
+            ORDER BY ae.fill_timestamp DESC
+          ) as rn
+        FROM alert_events ae
+        INNER JOIN wallet_stats ws ON ae.wallet = ws.wallet
+        WHERE ae.side = 'BUY'
+          AND ae.fill_price <= ${maxOdds}
+          AND ae.fill_timestamp >= NOW() - INTERVAL '1 day' * ${sinceDays}
+      ),
+      radar_candidates AS (
+        -- Join ONLY the latest trade per (wallet, condition_id, outcome) with overlay/market data
+        SELECT
+          rt.id,
+          rt.fill_timestamp,
+          rt.wallet,
+          rt.trader_name,
+          rt.condition_id,
+          rt.title,
+          rt.outcome,
+          rt.event_slug,
+          rt.slug,
+          rt.fill_price,
+          rt.fill_value_usd,
+          rt.position_size,
+          rt.position_current_value,
+          rt.wallet_first_seen,
+          rt.wallet_days_old,
+          rt.wallet_trade_count,
+          rt.is_whale,
+          rt.whale_label,
           ms.market_resolved,
           ms.winning_outcome,
-          ae.is_whale,
-          ae.whale_label,
-          -- Synced position data (from position_sync_overlay, matches main report)
+          -- Synced position data (from position_sync_overlay)
           pso.synced_position_size,
           pso.synced_avg_price,
           pso.synced_current_value,
@@ -318,23 +350,19 @@ export async function GET(request: NextRequest) {
           -- Check if wallet has position on opposite outcome (hedge detection)
           EXISTS (
             SELECT 1 FROM position_sync_overlay opp
-            WHERE opp.wallet = ae.wallet
-              AND opp.condition_id = ae.condition_id
-              AND opp.outcome != ae.outcome
+            WHERE opp.wallet = rt.wallet
+              AND opp.condition_id = rt.condition_id
+              AND opp.outcome != rt.outcome
               AND COALESCE(opp.synced_position_size, 0) > 0
           ) as has_opposite_position
-        FROM alert_events ae
-        INNER JOIN wallet_stats ws ON ae.wallet = ws.wallet
-        LEFT JOIN market_status ms ON ae.condition_id = ms.condition_id
+        FROM ranked_trades rt
+        LEFT JOIN market_status ms ON rt.condition_id = ms.condition_id
         LEFT JOIN position_sync_overlay pso
-          ON ae.wallet = pso.wallet
-          AND ae.condition_id = pso.condition_id
-          AND ae.outcome = pso.outcome
-        WHERE ae.side = 'BUY'
-          AND ae.fill_price <= ${maxOdds}
-          AND COALESCE(pso.synced_current_value, ae.position_current_value) >= ${minPosition}
-          AND ae.fill_timestamp >= NOW() - INTERVAL '1 day' * ${sinceDays}
-        ORDER BY ae.wallet, ae.condition_id, ae.outcome, ae.fill_timestamp DESC
+          ON rt.wallet = pso.wallet
+          AND rt.condition_id = pso.condition_id
+          AND rt.outcome = pso.outcome
+        WHERE rt.rn = 1
+          AND COALESCE(pso.synced_current_value, rt.position_current_value) >= ${minPosition}
       )
       SELECT
         id,
