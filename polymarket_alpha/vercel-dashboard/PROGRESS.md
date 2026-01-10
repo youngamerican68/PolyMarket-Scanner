@@ -1,5 +1,113 @@
 # Polymarket Tracker - Development Progress
 
+## Session: January 10, 2026 (Pending Wallet Tracking & Radar Fixes)
+
+### Pending Longshot Wallets System (Completed)
+
+**Problem:** Wallets making longshot trades (<25% odds) were being skipped if their position value was below $2,500 at detection time. These wallets could grow their positions later and never be captured.
+
+**Solution:** Track skipped wallets in `pending_longshot_wallets` table, then re-scan them hourly.
+
+**New Table:**
+```sql
+CREATE TABLE pending_longshot_wallets (
+  wallet TEXT PRIMARY KEY,
+  first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_trade_at TIMESTAMPTZ NOT NULL,
+  last_condition_id TEXT NOT NULL,
+  last_trade_price NUMERIC NOT NULL,
+  last_trade_size NUMERIC NOT NULL,
+  last_position_value NUMERIC NULL,
+  times_skipped INT NOT NULL DEFAULT 1,
+  last_scanned_at TIMESTAMPTZ NULL,
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'captured', 'expired'))
+);
+```
+
+**New Job:** `/api/jobs/scan-pending`
+- Re-scans pending wallets hourly
+- Captures positions once they meet $2,500 threshold
+- Expires wallets after 30 days of pending status
+- GitHub Actions workflow runs at :30 past every hour
+
+**Files Created:**
+- `app/api/jobs/scan-pending/route.ts`
+- `lib/migrations/008_pending_longshot_wallets.sql`
+- `.github/workflows/scan-pending.yml` (at repo root)
+
+**Commits:**
+- Migration and scan-pending job implementation
+- GitHub Actions workflow for hourly re-scanning
+
+---
+
+### Radar Query Fix - ROW_NUMBER() (Completed)
+
+**Problem:** Synced position data wasn't displaying correctly. After clicking "Sync", the radar showed stale values instead of fresh synced data.
+
+**Root Cause:** The `DISTINCT ON` with `LEFT JOIN` to `position_sync_overlay` was unpredictably picking older trade rows, causing stale overlay data to appear.
+
+**Solution:** Restructured query using `ROW_NUMBER()` window function:
+1. `ranked_trades` CTE: Rank all qualifying trades by `fill_timestamp DESC`
+2. Filter to `rn = 1` (latest trade) BEFORE joining overlay
+3. `radar_candidates` CTE: Join overlay data to exactly one trade per position
+
+This guarantees fresh `synced_current_value` and `synced_at` values.
+
+**Commit:** `78eb333` - fix(radar): use ROW_NUMBER() for reliable synced position data
+
+---
+
+### Political Markets Excluded from Sports Filter (Completed)
+
+**Problem:** Markets like "Will Tucker Carlson win the 2028 US Presidential Election?" were flagged as sports due to the keyword "win" matching sports detection.
+
+**Solution:** Added `POLITICAL_KEYWORDS` list. If a market contains political terms (president, election, senate, etc.), it's NOT flagged as sports even if sports keywords match.
+
+**Keywords Added:**
+```typescript
+const POLITICAL_KEYWORDS = [
+  'president', 'presidential', 'election', 'electoral',
+  'republican', 'democrat', 'gop', 'dnc', 'rnc',
+  'senate', 'senator', 'congress', 'congressional',
+  'governor', 'mayor', 'nomination', 'primary', 'caucus',
+  'vote', 'voter', 'ballot', 'poll', 'white house', ...
+];
+```
+
+**Commit:** `5af50a8` - fix(radar): exclude political markets from sports detection
+
+---
+
+### Wallet Stats Unavailable Badge (Completed)
+
+**Problem:** When Polymarket API fails to return wallet stats (rate limiting or multi-proxy wallets), the radar showed misleading defaults: "999 days old | 0 total trades".
+
+**Solution:** Added `walletStatsUnavailable` flag to detect when stats are unreliable. UI now shows "Stats unavailable" badge instead of false data.
+
+**Detection:** `walletStats.daysOld === 999 || walletStats.firstTradeTimestamp === null`
+
+**UI Change:** Instead of showing misleading numbers, displays gray badge with tooltip explaining why stats are unavailable.
+
+**Commit:** `004a192` - feat(radar): add badge when wallet stats are unavailable
+
+---
+
+### Files Modified
+- `app/api/radar/route.ts` - ROW_NUMBER() query, political keywords, stats badge
+- `app/radar/page.tsx` - Stats unavailable badge UI
+- `app/api/jobs/scan-pending/route.ts` - New scan-pending job
+- `app/api/collect-trades/route.ts` - Track pending wallets
+
+### Commits Summary
+| Commit | Description |
+|--------|-------------|
+| `78eb333` | fix(radar): use ROW_NUMBER() for reliable synced position data |
+| `5af50a8` | fix(radar): exclude political markets from sports detection |
+| `004a192` | feat(radar): add badge when wallet stats are unavailable |
+
+---
+
 ## Session: January 6, 2026 (Radar Sold Badge & P&L Removal)
 
 ### Sold Badge for Closed Positions (Completed)
