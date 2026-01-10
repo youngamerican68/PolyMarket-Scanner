@@ -151,8 +151,27 @@ const SPORTS_KEYWORDS = [
   'bowl game', 'march madness', 'world cup', 'olympics', 'grand slam',
 ];
 
+// Political keywords - if present, don't flag as sports even if sports keywords match
+const POLITICAL_KEYWORDS = [
+  'president', 'presidential', 'election', 'electoral',
+  'republican', 'democrat', 'gop', 'dnc', 'rnc',
+  'senate', 'senator', 'congress', 'congressional', 'representative',
+  'governor', 'mayor', 'cabinet', 'secretary',
+  'nomination', 'nominee', 'primary', 'caucus',
+  'vote', 'voter', 'ballot', 'poll',
+  'impeach', 'legislation', 'bill ', 'law ',
+  'white house', 'capitol', 'supreme court',
+];
+
 function isSportsMarket(title: string | null, slug: string | null, eventSlug: string | null): boolean {
   const text = `${title || ''} ${slug || ''} ${eventSlug || ''}`.toLowerCase();
+
+  // Check for political content first - these are NOT sports
+  const isPolitical = POLITICAL_KEYWORDS.some(keyword => text.includes(keyword));
+  if (isPolitical) {
+    return false;
+  }
+
   return SPORTS_KEYWORDS.some(keyword => text.includes(keyword));
 }
 
