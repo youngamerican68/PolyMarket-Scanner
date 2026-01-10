@@ -238,6 +238,9 @@ interface RadarSignal {
 
   // Sold detection (position no longer exists)
   isSold: boolean;  // true if position was synced but no longer found (trader exited)
+
+  // Wallet stats reliability
+  walletStatsUnavailable: boolean;  // true if wallet stats API failed (showing defaults)
 }
 
 interface DbRow {
@@ -519,6 +522,9 @@ export async function GET(request: NextRequest) {
       const walletTradeCount = walletStats.tradeCount;
       const walletTradeCountAtLimit = walletStats.tradeCountAtLimit;
 
+      // Detect if wallet stats are unreliable (API failed or returned defaults)
+      const walletStatsUnavailable = walletStats.daysOld === 999 || walletStats.firstTradeTimestamp === null;
+
       // Compute scores using REAL data
       const freshnessScore = scoreWalletFreshness(walletDaysOld);
       const activityScore = scoreWalletActivity(walletTradeCount);
@@ -591,6 +597,7 @@ export async function GET(request: NextRequest) {
         isHedger,
         isSports,
         isSold,
+        walletStatsUnavailable,
       });
     }
 

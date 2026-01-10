@@ -44,6 +44,7 @@ interface RadarSignal {
   isHedger: boolean
   isSports: boolean
   isSold: boolean
+  walletStatsUnavailable: boolean
 }
 
 interface RadarMetadata {
@@ -628,13 +629,21 @@ export default function RadarPage() {
                         )}
                       </div>
                       <span className="text-gray-600">|</span>
-                      <span className="text-gray-400">
-                        <span className="text-yellow-400">{signal.walletDaysOld}</span> days old
-                      </span>
-                      <span className="text-gray-600">|</span>
-                      <span className="text-gray-400">
-                        <span className="text-yellow-400">{signal.walletTradeCount}{signal.walletTradeCountAtLimit ? '+' : ''}</span> total trades
-                      </span>
+                      {signal.walletStatsUnavailable ? (
+                        <span className="px-1.5 py-0.5 bg-gray-600/30 text-gray-400 rounded text-xs" title="Wallet stats unavailable - API rate limited or multi-proxy wallet">
+                          Stats unavailable
+                        </span>
+                      ) : (
+                        <>
+                          <span className="text-gray-400">
+                            <span className="text-yellow-400">{signal.walletDaysOld}</span> days old
+                          </span>
+                          <span className="text-gray-600">|</span>
+                          <span className="text-gray-400">
+                            <span className="text-yellow-400">{signal.walletTradeCount}{signal.walletTradeCountAtLimit ? '+' : ''}</span> total trades
+                          </span>
+                        </>
+                      )}
                     </div>
 
                     {/* Score breakdown */}
