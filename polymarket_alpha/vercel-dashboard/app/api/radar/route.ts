@@ -275,6 +275,8 @@ interface DbRow {
   sync_status: string | null;
   // Hedge detection
   has_opposite_position: boolean;
+  // Fresh price from CLOB (via outcome_price_cache)
+  cached_price: string | null;
 }
 
 export async function GET(request: NextRequest) {
@@ -376,13 +378,18 @@ export async function GET(request: NextRequest) {
               AND opp.condition_id = rt.condition_id
               AND opp.outcome != rt.outcome
               AND COALESCE(opp.synced_position_size, 0) > 0
-          ) as has_opposite_position
+          ) as has_opposite_position,
+          -- Fresh CLOB price from cache (updated every 10 min by refresh-prices job)
+          opc.price as cached_price
         FROM ranked_trades rt
         LEFT JOIN market_status ms ON rt.condition_id = ms.condition_id
         LEFT JOIN position_sync_overlay pso
           ON rt.wallet = pso.wallet
           AND rt.condition_id = pso.condition_id
           AND rt.outcome = pso.outcome
+        LEFT JOIN outcome_price_cache opc
+          ON rt.condition_id = opc.condition_id
+          AND rt.outcome = opc.outcome
         WHERE rt.rn = 1
           AND COALESCE(pso.synced_current_value, rt.position_current_value) >= ${minPosition}
       )
@@ -415,7 +422,8 @@ export async function GET(request: NextRequest) {
         last_known_avg_price::text,
         synced_at::text,
         sync_status,
-        has_opposite_position
+        has_opposite_position,
+        cached_price
       FROM radar_candidates
       ORDER BY fill_timestamp DESC
       LIMIT 500
@@ -497,10 +505,18 @@ export async function GET(request: NextRequest) {
       const rawPositionSize = row.position_size ? parseFloat(row.position_size) : null;
       const rawPositionValue = row.position_current_value ? parseFloat(row.position_current_value) : null;
 
+      // Fresh CLOB price from cache (updated every 10 min)
+      const cachedPrice = row.cached_price ? parseFloat(row.cached_price) : null;
+
       // Effective values (synced → lastKnown → raw)
       const positionSize = syncedPositionSize ?? lastKnownPositionSize ?? rawPositionSize;
       const positionAvgPrice = syncedAvgPrice ?? lastKnownAvgPrice ?? fillPrice;
-      const positionValue = syncedCurrentValue ?? rawPositionValue;
+
+      // Current value: prefer (shares × fresh CLOB price), fallback to synced/raw
+      // This matches main report's approach for accuracy
+      const positionValue = (positionSize !== null && cachedPrice !== null)
+        ? positionSize * cachedPrice
+        : (syncedCurrentValue ?? rawPositionValue);
       const potentialPayout = syncedPayoutIfWins ?? positionSize;
 
       // Position cost = shares × avg price (matches main report)
