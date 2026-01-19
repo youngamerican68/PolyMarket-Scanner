@@ -426,7 +426,7 @@ export async function GET(request: NextRequest) {
         cached_price
       FROM radar_candidates
       ORDER BY fill_timestamp DESC
-      LIMIT 500
+      LIMIT 1500
     `;
 
     // Filter rows first (before API calls)
