@@ -293,6 +293,8 @@ export async function GET(request: NextRequest) {
   const validSorts = ['score', 'return', 'time', 'walletAge', 'trades'] as const;
   const sortBy = validSorts.includes(sortByParam as any) ? sortByParam as typeof validSorts[number] : 'time';
   const hideSports = searchParams.get('hideSports') === 'true';
+  // Optional wallet filter - when provided, returns all positions for that wallet
+  const walletFilter = searchParams.get('wallet')?.toLowerCase() || null;
 
   try {
     // Main query: find long-shot BUY trades with wallet stats
@@ -338,6 +340,7 @@ export async function GET(request: NextRequest) {
         WHERE ae.side = 'BUY'
           AND ae.fill_price <= ${maxOdds}
           AND ae.fill_timestamp >= NOW() - INTERVAL '1 day' * ${sinceDays}
+          AND (${walletFilter}::text IS NULL OR ae.wallet = ${walletFilter})
       ),
       radar_candidates AS (
         -- Join ONLY the latest trade per (wallet, condition_id, outcome) with overlay/market data
@@ -653,6 +656,7 @@ export async function GET(request: NextRequest) {
         includeResolved,
         sortBy,
         hideSports,
+        walletFilter,
         totalCandidates: result.rows.length,
         filteredCount: signals.length,
         returnedCount: limitedSignals.length,
