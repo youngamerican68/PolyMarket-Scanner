@@ -6,8 +6,8 @@ name: Scan Positions
 
 on:
   schedule:
-    # Reduced from */30 to hourly to lower Vercel CPU usage (Jan 2026)
-    - cron: '0 * * * *'
+    # Reduced to every 6 hours to lower Neon database compute (Jan 2026)
+    - cron: '0 */6 * * *'
   workflow_dispatch:
     # Allow manual triggering for testing
 
