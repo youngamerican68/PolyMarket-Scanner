@@ -2,7 +2,8 @@ name: Refresh Prices
 
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    # Reduced to hourly to prevent GitHub Actions queue pileup
+    - cron: "15 * * * *"
   workflow_dispatch:
 
 permissions:

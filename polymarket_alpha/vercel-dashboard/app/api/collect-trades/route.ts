@@ -33,7 +33,7 @@ const MIN_POSITION_THRESHOLD = 2500;
 
 // Pagination configuration
 const PAGE_SIZE = 500;
-const MAX_PAGES = 20; // Safety limit: 10k trades max per run
+const MAX_PAGES = 120; // Safety limit: 60k trades max per run (sized for hourly cron)
 const LOOKBACK_SECONDS = 120; // 2 minute lookback for eventual consistency
 
 // Auth check delegated to shared helper (lib/cronAuth.ts)
