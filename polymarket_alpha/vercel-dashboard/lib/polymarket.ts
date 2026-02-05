@@ -71,7 +71,7 @@ export async function fetchRawTrades(params: {
   minValue?: number;
   limit?: number;
   offset?: number;
-}): Promise<{ trades: Trade[]; skipped: number; errors: string[] }> {
+}): Promise<{ trades: Trade[]; skipped: number; errors: string[]; hitOffsetLimit?: boolean }> {
   const { minValue = 100, limit = 500, offset = 0 } = params;
 
   const url = `${DATA_API}/trades?limit=${limit}&offset=${offset}&filterType=CASH&filterAmount=${minValue}&takerOnly=true`;
@@ -83,6 +83,14 @@ export async function fetchRawTrades(params: {
   });
 
   if (!res.ok) {
+    // Handle Polymarket's offset limit gracefully (max offset is 3000)
+    if (res.status === 400) {
+      const errorBody = await res.json().catch(() => ({}));
+      if (errorBody?.error?.includes('offset') || errorBody?.error?.includes('exceeded')) {
+        console.warn(`[fetchRawTrades] Hit API offset limit at offset=${offset}: ${errorBody.error}`);
+        return { trades: [], skipped: 0, errors: [], hitOffsetLimit: true };
+      }
+    }
     throw new Error(`HTTP ${res.status}: ${res.statusText}`);
   }
 

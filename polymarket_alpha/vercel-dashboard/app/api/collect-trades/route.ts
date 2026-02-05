@@ -33,7 +33,7 @@ const MIN_POSITION_THRESHOLD = 2500;
 
 // Pagination configuration
 const PAGE_SIZE = 500;
-const MAX_PAGES = 120; // Safety limit: 60k trades max per run (sized for hourly cron)
+const MAX_PAGES = 6; // Polymarket API has max offset of 3000, so 6 pages max (offset 2500)
 const LOOKBACK_SECONDS = 120; // 2 minute lookback for eventual consistency
 
 // Auth check delegated to shared helper (lib/cronAuth.ts)
@@ -178,11 +178,18 @@ export async function POST(request: Request) {
     let crossedBoundary = false;
 
     for (let page = 0; page < MAX_PAGES && shouldContinue; page++) {
-      const { trades, skipped: validationSkipped, errors: validationErrors } = await fetchRawTrades({
+      const { trades, skipped: validationSkipped, errors: validationErrors, hitOffsetLimit } = await fetchRawTrades({
         minValue: 100,
         limit: PAGE_SIZE,
         offset,
       });
+
+      // Handle Polymarket API offset limit (max 3000)
+      if (hitOffsetLimit) {
+        console.log(`[collect-trades] Hit API offset limit at page ${page + 1}, stopping pagination gracefully`);
+        crossedBoundary = true; // Treat as boundary - we've fetched all we can
+        break;
+      }
 
       summary.pages_fetched++;
       summary.trades_fetched += trades.length + validationSkipped;
