@@ -311,7 +311,7 @@ async function fetchFreshPrice(tokenId: string): Promise<number | null> {
 // Batch fetch fresh prices with concurrency control
 async function fetchFreshPrices(assets: string[]): Promise<Map<string, number>> {
   const results = new Map<string, number>();
-  const uniqueAssets = [...new Set(assets.filter(a => a))];
+  const uniqueAssets = Array.from(new Set(assets.filter(a => a)));
 
   // Process in batches of 20 to avoid rate limiting
   const BATCH_SIZE = 20;
