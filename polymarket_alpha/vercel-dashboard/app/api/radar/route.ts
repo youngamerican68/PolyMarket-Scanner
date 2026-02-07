@@ -275,8 +275,69 @@ interface DbRow {
   sync_status: string | null;
   // Hedge detection
   has_opposite_position: boolean;
-  // Fresh price from CLOB (via outcome_price_cache)
+  // Fresh price from CLOB (via outcome_price_cache) - fallback only
   cached_price: string | null;
+  // Asset token ID for fetching fresh CLOB prices
+  asset: string | null;
+}
+
+// CLOB API for fresh prices
+const CLOB_API = 'https://clob.polymarket.com';
+
+// Fetch fresh price from CLOB API midpoint endpoint
+async function fetchFreshPrice(tokenId: string): Promise<number | null> {
+  try {
+    const res = await fetch(`${CLOB_API}/midpoint?token_id=${tokenId}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+    });
+
+    if (!res.ok) return null;
+
+    const data = await res.json();
+    if (data && data.mid !== undefined && data.mid !== null) {
+      const price = parseFloat(data.mid);
+      if (Number.isFinite(price) && price >= 0 && price <= 1) {
+        return price;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Batch fetch fresh prices with concurrency control
+async function fetchFreshPrices(assets: string[]): Promise<Map<string, number>> {
+  const results = new Map<string, number>();
+  const uniqueAssets = [...new Set(assets.filter(a => a))];
+
+  // Process in batches of 20 to avoid rate limiting
+  const BATCH_SIZE = 20;
+  for (let i = 0; i < uniqueAssets.length; i += BATCH_SIZE) {
+    const batch = uniqueAssets.slice(i, i + BATCH_SIZE);
+
+    const batchResults = await Promise.all(
+      batch.map(async (asset) => {
+        const price = await fetchFreshPrice(asset);
+        return { asset, price };
+      })
+    );
+
+    for (const { asset, price } of batchResults) {
+      if (price !== null) {
+        results.set(asset, price);
+      }
+    }
+
+    // Small delay between batches
+    if (i + BATCH_SIZE < uniqueAssets.length) {
+      await new Promise(r => setTimeout(r, 50));
+    }
+  }
+
+  return results;
 }
 
 export async function GET(request: NextRequest) {
@@ -328,6 +389,7 @@ export async function GET(request: NextRequest) {
           ae.position_current_value,
           ae.is_whale,
           ae.whale_label,
+          ae.asset,
           ws.first_seen as wallet_first_seen,
           EXTRACT(DAY FROM (NOW() - ws.first_seen))::int as wallet_days_old,
           ws.trade_count as wallet_trade_count,
@@ -363,6 +425,7 @@ export async function GET(request: NextRequest) {
           rt.wallet_trade_count,
           rt.is_whale,
           rt.whale_label,
+          rt.asset,
           ms.market_resolved,
           ms.winning_outcome,
           -- Synced position data (from position_sync_overlay)
@@ -382,7 +445,7 @@ export async function GET(request: NextRequest) {
               AND opp.outcome != rt.outcome
               AND COALESCE(opp.synced_position_size, 0) > 0
           ) as has_opposite_position,
-          -- Fresh CLOB price from cache (updated every 10 min by refresh-prices job)
+          -- Cached CLOB price (fallback only - we fetch fresh prices at runtime)
           opc.price as cached_price
         FROM ranked_trades rt
         LEFT JOIN market_status ms ON rt.condition_id = ms.condition_id
@@ -426,7 +489,8 @@ export async function GET(request: NextRequest) {
         synced_at::text,
         sync_status,
         has_opposite_position,
-        cached_price
+        cached_price,
+        asset
       FROM radar_candidates
       ORDER BY fill_timestamp DESC
       LIMIT 1500
@@ -487,6 +551,17 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // ========================================================================
+    // FRESH PRICES: Fetch live CLOB prices for all positions
+    // This ensures current value is always accurate, not stale from cache
+    // ========================================================================
+    const uniqueAssets = filteredRows
+      .map(r => r.asset)
+      .filter((a): a is string => a !== null && a !== undefined && a !== '');
+    console.log(`[radar] Fetching fresh CLOB prices for ${new Set(uniqueAssets).size} unique assets`);
+    const freshPricesMap = await fetchFreshPrices(uniqueAssets);
+    console.log(`[radar] Got ${freshPricesMap.size} fresh prices from CLOB API`);
+
     // Process rows and compute scores using real wallet stats
     const signals: RadarSignal[] = [];
 
@@ -508,17 +583,19 @@ export async function GET(request: NextRequest) {
       const rawPositionSize = row.position_size ? parseFloat(row.position_size) : null;
       const rawPositionValue = row.position_current_value ? parseFloat(row.position_current_value) : null;
 
-      // Fresh CLOB price from cache (updated every 10 min)
+      // Fresh CLOB price (fetched live) → cached price (fallback)
+      const freshPrice = row.asset ? freshPricesMap.get(row.asset) : undefined;
       const cachedPrice = row.cached_price ? parseFloat(row.cached_price) : null;
+      const currentPrice = freshPrice ?? cachedPrice;
 
       // Effective values (synced → lastKnown → raw)
       const positionSize = syncedPositionSize ?? lastKnownPositionSize ?? rawPositionSize;
       const positionAvgPrice = syncedAvgPrice ?? lastKnownAvgPrice ?? fillPrice;
 
       // Current value: prefer (shares × fresh CLOB price), fallback to synced/raw
-      // This matches main report's approach for accuracy
-      const positionValue = (positionSize !== null && cachedPrice !== null)
-        ? positionSize * cachedPrice
+      // Fresh price is fetched live from CLOB API for accuracy
+      const positionValue = (positionSize !== null && currentPrice !== null && currentPrice !== undefined)
+        ? positionSize * currentPrice
         : (syncedCurrentValue ?? rawPositionValue);
       const potentialPayout = syncedPayoutIfWins ?? positionSize;
 
