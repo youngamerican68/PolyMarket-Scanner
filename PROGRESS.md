@@ -238,6 +238,60 @@ Markets that have settled/resolved are now hidden by default to reduce noise.
 
 ---
 
+## February 7, 2026 - Critical Fixes (Collect Trades & Stale Prices)
+
+### Problem 1: Collect Trades Failing with HTTP 400
+All `collect-trades` workflow runs were failing with:
+```
+Fatal: HTTP 400: Bad Request
+{"error":"max historical activity offset of 3000 exceeded"}
+```
+
+**Root Cause:** Polymarket's Data API has an undocumented **max offset of 3000**. Our code had `MAX_PAGES=120` with `PAGE_SIZE=500`, which would try offsets up to 59,500.
+
+**Fix Applied:**
+1. Reduced `MAX_PAGES` from 120 to 6 (max offset 2500, safely under limit)
+2. Added graceful handling for offset limit error - returns `hitOffsetLimit: true` instead of throwing
+3. Updated `fetchRawTrades()` to detect and handle the specific 400 error
+
+**Commits:** `7ec051d`, `d570fcd`
+
+### Problem 2: Radar Showing Stale Current Values
+Position "Current Value" was wildly off from Polymarket (e.g., $87K vs $111K for same position).
+
+**Root Cause:** Radar relied on `outcome_price_cache` table which is only refreshed hourly by `refresh-prices` job. When prices moved significantly, Current Value became stale.
+
+**Fix Applied:**
+1. Radar now fetches **live CLOB prices** directly from midpoint API
+2. Added `fetchFreshPrice()` and `fetchFreshPrices()` functions
+3. Fetches in batches of 20 to avoid rate limiting
+4. Falls back to cached price only if CLOB fetch fails
+5. Added `asset` field to SQL query for token ID lookup
+
+**Commits:** `715aaa8`, `d570fcd`
+
+### Problem 3: Cron Schedule Not Taking Effect
+Workflow runs were still happening every 10 minutes despite changing to hourly.
+
+**Root Cause:** Commit changing cron schedule was never **pushed** to remote. GitHub Actions uses the schedule from the remote branch, not local.
+
+**Fix Applied:** Pushed the commit. Schedule changes require push to take effect.
+
+### Updated Cron Schedules
+| Workflow | Schedule | Purpose |
+|----------|----------|---------|
+| collect-trades | Hourly at :05 | Ingest new trades |
+| refresh-prices | Hourly at :15 | Update CLOB prices & check resolutions |
+| sync-positions | Hourly at :30 | Sync position overlays |
+
+### API Limits Discovered
+| API | Limit | Notes |
+|-----|-------|-------|
+| Polymarket Data API | max offset 3000 | Returns HTTP 400 if exceeded |
+| CLOB midpoint | No documented limit | Batch requests to avoid rate limiting |
+
+---
+
 ## Future Considerations
 
 - Increase cron to 15-minute intervals if trade volume grows
