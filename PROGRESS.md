@@ -1,6 +1,6 @@
 # Polymarket Longshot Tracker - Progress
 
-## Current Status: Live & Automated
+## Current Status: Live & Automated (last activity: 2026-04-01)
 
 Dashboard URL: `https://poly-market-scanner.vercel.app`
 
