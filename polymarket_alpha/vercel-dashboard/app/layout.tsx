@@ -25,6 +25,12 @@ export default function RootLayout({
                 <span className="font-bold text-xl">Polymarket Insider Tracker</span>
               </a>
               <div className="flex items-center space-x-6">
+                <a href="/insiders" className="text-poly-muted hover:text-white transition">
+                  Insiders
+                </a>
+                <a href="/radar" className="text-poly-muted hover:text-white transition">
+                  Radar
+                </a>
                 <a href="https://polymarket.com" target="_blank" className="text-poly-muted hover:text-white transition">
                   Polymarket
                 </a>
