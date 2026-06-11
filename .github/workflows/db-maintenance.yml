@@ -1,0 +1,106 @@
+name: DB Maintenance
+
+# Weekly Neon storage maintenance. The position-sync and price-cache jobs
+# update the same rows constantly, which bloats b-tree indexes faster than
+# autovacuum can compact them (observed 2026-06-11: 386 MB DB with ~250 MB
+# of index bloat against a 0.54 GB Neon allowance). This workflow:
+#   1. prunes job_runs to 30 days (keeping each job's latest row per status
+#      so /api/ops/health/heartbeat never loses its reference point)
+#   2. rebuilds indexes on the churn-prone tables with REINDEX CONCURRENTLY
+#      (non-blocking) over the direct (non-pooler) endpoint
+
+on:
+  schedule:
+    # Sunday 03:30 UTC, offset from the daily 02:00 refresh-baselines run
+    - cron: "30 3 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: db-maintenance
+  cancel-in-progress: false
+
+jobs:
+  maintain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Prune job_runs and reindex bloated tables
+        env:
+          POSTGRES_URL: ${{ secrets.POSTGRES_URL }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$POSTGRES_URL" ]; then
+            echo "ERROR: POSTGRES_URL is empty"
+            exit 1
+          fi
+
+          # REINDEX CONCURRENTLY needs a session connection, not PgBouncer
+          # transaction pooling, so strip the -pooler suffix from the host.
+          DIRECT_URL="${POSTGRES_URL/-pooler/}"
+
+          JOB_ID=$(python3 -c 'import uuid; print(uuid.uuid4())')
+          STARTED=$(date -u +%s%3N)
+
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "
+            INSERT INTO job_runs (id, job_name, status, started_at)
+            VALUES ('$JOB_ID', 'db-maintenance', 'running', NOW());"
+
+          finish() {
+            local status=$1 error=${2:-}
+            local dur=$(( $(date -u +%s%3N) - STARTED ))
+            psql "$DIRECT_URL" -c "
+              UPDATE job_runs
+              SET status = '$status', finished_at = NOW(), duration_ms = $dur,
+                  error = NULLIF(LEFT('$error', 500), '')
+              WHERE id = '$JOB_ID';" || true
+          }
+          trap 'finish error "workflow step failed; see GitHub Actions log"' ERR
+
+          echo "=== Prune job_runs (30-day retention) ==="
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "
+            WITH keep AS (
+              SELECT DISTINCT ON (job_name, status) id
+              FROM job_runs
+              ORDER BY job_name, status, started_at DESC
+            )
+            DELETE FROM job_runs
+            WHERE started_at < NOW() - INTERVAL '30 days'
+              AND id NOT IN (SELECT id FROM keep);"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "VACUUM ANALYZE job_runs;"
+
+          echo "=== Drop invalid indexes left by any prior failed REINDEX ==="
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -t -A -c "
+            SELECT format('DROP INDEX CONCURRENTLY IF EXISTS %I.%I;', n.nspname, c.relname)
+            FROM pg_index i
+            JOIN pg_class c ON c.oid = i.indexrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE NOT i.indisvalid AND c.relname LIKE '%_ccnew%';" | \
+          while read -r stmt; do
+            [ -n "$stmt" ] && psql "$DIRECT_URL" -c "$stmt"
+          done
+
+          echo "=== Reindex churn-prone tables ==="
+          for t in position_sync_overlay wallet_position_snapshot alert_events \
+                   outcome_price_cache wallet_sync_state market_status \
+                   pending_longshot_wallets; do
+            echo "--- $t ---"
+            psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "REINDEX TABLE CONCURRENTLY $t;"
+          done
+
+          echo "=== Sizes after maintenance ==="
+          psql "$DIRECT_URL" -c "
+            SELECT c.relname AS tbl,
+                   pg_size_pretty(pg_total_relation_size(c.oid)) AS total,
+                   pg_size_pretty(pg_indexes_size(c.oid)) AS indexes
+            FROM pg_class c
+            JOIN pg_stat_user_tables s ON s.relid = c.oid
+            ORDER BY pg_total_relation_size(c.oid) DESC
+            LIMIT 10;
+            SELECT pg_size_pretty(pg_database_size(current_database())) AS db_size;"
+
+          trap - ERR
+          finish success

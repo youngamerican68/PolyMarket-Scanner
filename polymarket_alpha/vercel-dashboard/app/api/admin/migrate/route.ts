@@ -101,9 +101,7 @@ export async function POST(request: Request) {
     // Create indexes
     await sql`CREATE INDEX IF NOT EXISTS idx_alert_events_fill_timestamp ON alert_events (fill_timestamp DESC)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_alert_events_wallet_timestamp ON alert_events (wallet, fill_timestamp DESC)`;
-    await sql`CREATE INDEX IF NOT EXISTS idx_alert_events_event_slug ON alert_events (event_slug)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_alert_events_condition_outcome ON alert_events (condition_id, outcome_index)`;
-    await sql`CREATE INDEX IF NOT EXISTS idx_alert_events_asset ON alert_events (asset)`;
     await sql`CREATE INDEX IF NOT EXISTS idx_alert_events_is_whale ON alert_events (is_whale) WHERE is_whale = TRUE`;
     await sql`CREATE INDEX IF NOT EXISTS idx_alert_events_qualifies_longshot ON alert_events (qualifies_longshot) WHERE qualifies_longshot = TRUE`;
 

@@ -222,8 +222,6 @@ describe('Index Verification (migration 006 names)', () => {
     // in docs/tests. Real verification is done by querying pg_indexes after migration.
     // To validate planner uses these indexes, run EXPLAIN (ANALYZE, BUFFERS) on the CTEs.
     const requiredIndexes = [
-      // alert_events: 72h window scan leading with timestamp
-      'idx_alert_events_fill_ts_condition',
       // alert_events: per-wallet lookups with condition_id covering
       'idx_alert_events_wallet_fill_condition',
       // wallet_position_snapshot indexes

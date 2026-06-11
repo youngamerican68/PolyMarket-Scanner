@@ -12,13 +12,10 @@
 -- ALERT_EVENTS INDEXES
 -- ============================================================
 
--- Index for 72h window scan + DISTINCT condition_id
--- Used by: unresolved_conditions CTE (WHERE fill_timestamp >= cutoff, no equality on condition_id)
--- Query pattern: SELECT DISTINCT condition_id WHERE fill_timestamp >= $cutoff
--- Leading with fill_timestamp lets planner do index scan over small time range
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_alert_events_fill_ts_condition
-  ON alert_events (fill_timestamp DESC, condition_id)
-  WHERE condition_id IS NOT NULL;
+-- idx_alert_events_fill_ts_condition was dropped 2026-06-11: pg_stat showed
+-- zero scans and EXPLAIN confirmed the planner satisfies the 72h-window
+-- DISTINCT condition_id query with idx_alert_events_fill_timestamp instead.
+DROP INDEX CONCURRENTLY IF EXISTS idx_alert_events_fill_ts_condition;
 
 -- Index for per-wallet lookups with 72h filter
 -- Used by: alert_wallets CTE, getDashboardRowsForWallet
