@@ -1,0 +1,30 @@
+name: Keepalive
+
+# GitHub disables scheduled workflows after 60 days without repo activity
+# and emails a warning per workflow beforehand. Re-enabling a workflow via
+# the API resets its 60-day clock, so this weekly job keeps every workflow
+# (including itself) alive without dummy commits.
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Re-enable all workflows
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/actions/workflows" --paginate \
+            -q '.workflows[] | select(.state == "active" or .state == "disabled_inactivity") | .id' |
+          while read -r id; do
+            gh api -X PUT "repos/${{ github.repository }}/actions/workflows/$id/enable" \
+              && echo "Reset 60-day timer for workflow $id"
+          done
