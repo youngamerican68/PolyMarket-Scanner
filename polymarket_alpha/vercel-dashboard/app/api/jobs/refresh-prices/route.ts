@@ -196,6 +196,17 @@ async function updateMarketResolutionStatus(
   for (let i = 0; i < conditionIds.length; i += BATCH_SIZE) {
     const batch = conditionIds.slice(i, i + BATCH_SIZE);
 
+    // Mark every scheduled attempt before calling CLOB. This includes 404s,
+    // other fetch failures, and closed markets without a detectable winner,
+    // so permanently unresolvable markets rotate to the back of the queue.
+    await sql`
+      UPDATE market_status
+      SET updated_at = NOW()
+      WHERE condition_id IN (
+        SELECT jsonb_array_elements_text(${JSON.stringify(batch)}::jsonb)
+      )
+    `;
+
     const results = await Promise.all(
       batch.map(async (conditionId) => {
         const marketData = await fetchMarketStatus(conditionId);
@@ -586,23 +597,35 @@ export async function POST(request: Request) {
     }
 
     // Phase 6: Check market resolution status for condition_ids from DB
-    // Scope: all condition_ids in alert_events that are NOT yet resolved (prioritize unknowns)
+    // Scope: all condition_ids in alert_events that are NOT yet resolved.
     // This ensures we don't miss markets just because they fell outside an arbitrary time window
     try {
-      // Query: condition_ids that are either not in market_status OR not resolved with a winner
-      const distinctMarketsResult = await sql<{ condition_id: string }>`
-        SELECT DISTINCT ae.condition_id
+      // Give every alerted market a queue row. Skeleton rows make even CLOB 404s and
+      // other no-data responses schedulable without requiring a schema migration.
+      await sql`
+        INSERT INTO market_status (condition_id, market_closed, market_resolved, updated_at)
+        SELECT DISTINCT ae.condition_id, FALSE, FALSE, NOW()
         FROM alert_events ae
         WHERE ae.condition_id IS NOT NULL
           AND ae.condition_id != ''
-          AND NOT EXISTS (
-            SELECT 1 FROM market_status ms
-            WHERE ms.condition_id = ae.condition_id
-              AND ms.market_resolved = TRUE
-              AND ms.winning_outcome IS NOT NULL
-              AND TRIM(ms.winning_outcome) != ''
+        ON CONFLICT (condition_id) DO NOTHING
+      `;
+
+      // Oldest-check-first scheduling prevents an unresolvable prefix from
+      // monopolizing the capped batch. condition_id is only a stable tie-breaker.
+      const distinctMarketsResult = await sql<{ condition_id: string }>`
+        SELECT ms.condition_id
+        FROM market_status ms
+        WHERE EXISTS (
+            SELECT 1 FROM alert_events ae
+            WHERE ae.condition_id = ms.condition_id
           )
-        ORDER BY ae.condition_id
+          AND NOT (
+            ms.market_resolved = TRUE
+            AND ms.winning_outcome IS NOT NULL
+            AND TRIM(ms.winning_outcome) != ''
+          )
+        ORDER BY ms.updated_at ASC, ms.condition_id ASC
         LIMIT 500
       `;
 
