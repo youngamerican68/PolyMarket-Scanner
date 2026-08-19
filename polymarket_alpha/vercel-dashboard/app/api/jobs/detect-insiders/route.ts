@@ -12,6 +12,7 @@ import { NextResponse } from 'next/server';
 import { sql } from '@vercel/postgres';
 import pLimit from 'p-limit';
 import { isCronAuthed, cronUnauthorized } from '@/lib/cronAuth';
+import { sendTelegramMessage, escapeHtml, isTelegramConfigured } from '@/lib/telegram';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -34,6 +35,9 @@ const MAX_LIFETIME_TRADES = 3;      // including the trade that triggered
 
 // API concurrency
 const API_CONCURRENCY = 5;
+
+// Notification: cap per run so a backlog or bug can never turn into a message flood.
+const MAX_NOTIFY_PER_RUN = 10;
 const POLYMARKET_TRADES_URL = 'https://data-api.polymarket.com/trades';
 
 interface CandidateRow {
@@ -90,6 +94,80 @@ async function fetchWalletHistory(wallet: string): Promise<WalletHistory> {
   }
 }
 
+interface NotifyMetrics { pending: number; sent: number; failed: number; skipped: number }
+
+/**
+ * Send Telegram alerts for confirmed candidates that have not been notified yet.
+ *
+ * Driven off notified_at rather than fired inline at confirm time, so a Telegram
+ * outage retries on the next run instead of dropping the alert. MUST run on every
+ * invocation -- including runs with zero new candidates -- otherwise a confirm
+ * recorded during a busy run would wait for the next busy run to be delivered.
+ *
+ * Never throws: notification failure must not fail the detection job.
+ */
+async function runNotificationSweep(errors: string[]): Promise<NotifyMetrics> {
+  const notify: NotifyMetrics = { pending: 0, sent: 0, failed: 0, skipped: 0 };
+  try {
+    const pending = await sql<{
+      alert_event_id: string; wallet: string; outcome: string; fill_price: string;
+      fill_value_usd: string; title: string | null; event_slug: string | null;
+      slug: string | null; polymarket_lifetime_trades: number | null;
+    }>`
+      SELECT alert_event_id, wallet, outcome, fill_price::text, fill_value_usd::text,
+             title, event_slug, slug, polymarket_lifetime_trades
+      FROM insider_candidates
+      WHERE notified_at IS NULL AND verification_status = 'confirmed'
+      ORDER BY verified_at ASC
+      LIMIT ${MAX_NOTIFY_PER_RUN}
+    `;
+    notify.pending = pending.rows.length;
+    if (pending.rows.length === 0) return notify;
+
+    if (!isTelegramConfigured()) {
+      // Leave notified_at NULL so these send once the env vars are configured.
+      notify.skipped = pending.rows.length;
+      console.warn(`[detect-insiders] ${pending.rows.length} confirmed candidate(s) pending notification, but TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID are not set`);
+      return notify;
+    }
+
+    for (const r of pending.rows) {
+      const price = Number(r.fill_price);
+      const value = Number(r.fill_value_usd);
+      const marketSlug = r.event_slug || r.slug;
+      const text = [
+        '\u{1F6A8} <b>Insider pattern confirmed</b>',
+        '',
+        `<b>${escapeHtml(r.title ?? 'Unknown market')}</b>`,
+        `Bet: <b>${escapeHtml(r.outcome)}</b> @ ${(price * 100).toFixed(1)}%`,
+        `Size: $${value.toFixed(0)}`,
+        `Wallet: <code>${escapeHtml(r.wallet)}</code>`,
+        `Lifetime trades: <b>${r.polymarket_lifetime_trades ?? '?'}</b>`,
+        '',
+        marketSlug
+          ? `<a href="https://polymarket.com/event/${encodeURIComponent(marketSlug)}">Market</a> \u00B7 <a href="https://polymarket.com/profile/${encodeURIComponent(r.wallet)}">Wallet</a>`
+          : `<a href="https://polymarket.com/profile/${encodeURIComponent(r.wallet)}">Wallet</a>`,
+      ].join('\n');
+
+      const result = await sendTelegramMessage(text);
+      if (result.status === 'sent') {
+        await sql`UPDATE insider_candidates SET notified_at = NOW() WHERE alert_event_id = ${r.alert_event_id}`;
+        notify.sent++;
+      } else if (result.status === 'skipped') {
+        notify.skipped++;
+      } else {
+        notify.failed++;
+        errors.push(`telegram: ${result.error}`);
+        console.error(`[detect-insiders] Telegram send failed for ${r.alert_event_id}: ${result.error}`);
+      }
+    }
+  } catch (e) {
+    errors.push(`notify-sweep: ${String(e).slice(0, 80)}`);
+    console.error('[detect-insiders] Notification sweep failed:', e);
+  }
+  return notify;
+}
+
 export async function GET(request: Request) {
   if (!isCronAuthed(request)) return cronUnauthorized();
 
@@ -141,8 +219,10 @@ export async function GET(request: Request) {
     metrics.candidatesScanned = candidates.length;
 
     if (candidates.length === 0) {
+      // Still sweep: a confirm from an earlier run may be waiting on delivery.
+      const notify = await runNotificationSweep(metrics.errors);
       return NextResponse.json(
-        { ok: true, metrics, durationMs: Date.now() - startedAt },
+        { ok: true, metrics, notify, durationMs: Date.now() - startedAt },
         { headers: NO_CACHE_HEADERS }
       );
     }
@@ -211,8 +291,9 @@ export async function GET(request: Request) {
       }
     }
 
+    const notify = await runNotificationSweep(metrics.errors);
     return NextResponse.json(
-      { ok: true, metrics, durationMs: Date.now() - startedAt },
+      { ok: true, metrics, notify, durationMs: Date.now() - startedAt },
       { headers: NO_CACHE_HEADERS }
     );
   } catch (err) {
