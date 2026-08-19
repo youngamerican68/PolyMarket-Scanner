@@ -2,8 +2,12 @@ name: Collect Trades
 
 on:
   schedule:
-    # Reduced to hourly to prevent GitHub Actions queue pileup
-    - cron: "5 * * * *"
+    # Every 15 min. The API caps pagination at offset 3000, which at current volume
+    # reaches back only ~55-65 min of BUY>=$100 flow -- an hourly cron with GitHub's
+    # scheduling drift (measured p90 gap: 135 min) provably dropped trades. Overlap is
+    # safe: the concurrency group serialises runs and the route's advisory lock returns
+    # 409, which this workflow treats as success.
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 
 permissions:

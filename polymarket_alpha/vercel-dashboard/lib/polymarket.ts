@@ -71,10 +71,14 @@ export async function fetchRawTrades(params: {
   minValue?: number;
   limit?: number;
   offset?: number;
+  side?: 'BUY' | 'SELL';
 }): Promise<{ trades: Trade[]; skipped: number; errors: string[]; hitOffsetLimit?: boolean }> {
-  const { minValue = 100, limit = 500, offset = 0 } = params;
+  const { minValue = 100, limit = 500, offset = 0, side } = params;
 
-  const url = `${DATA_API}/trades?limit=${limit}&offset=${offset}&filterType=CASH&filterAmount=${minValue}&takerOnly=true`;
+  // side=BUY is a server-side filter: it keeps the fixed 3000-offset budget from
+  // being spent on SELLs (~15% of the feed), widening the reachable time window.
+  const sideParam = side ? `&side=${side}` : '';
+  const url = `${DATA_API}/trades?limit=${limit}&offset=${offset}&filterType=CASH&filterAmount=${minValue}&takerOnly=true${sideParam}`;
 
   const res = await fetch(url, {
     method: 'GET',

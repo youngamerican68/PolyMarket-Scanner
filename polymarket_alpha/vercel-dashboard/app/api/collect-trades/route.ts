@@ -64,6 +64,7 @@ interface IngestionSummary {
   watermark_after: { timestamp: number; dedupeId: string };
   // Safety metrics
   crossed_watermark_boundary: boolean;
+  ingest_gap_detected: boolean; // true = trades were provably missed this run
   hit_page_limit: boolean;
   errors: string[];
 }
@@ -136,6 +137,7 @@ export async function POST(request: Request) {
     watermark_before: { timestamp: 0, dedupeId: '' },
     watermark_after: { timestamp: 0, dedupeId: '' },
     crossed_watermark_boundary: false,
+    ingest_gap_detected: false,
     hit_page_limit: false,
     errors: [],
   };
@@ -182,6 +184,7 @@ export async function POST(request: Request) {
         minValue: 100,
         limit: PAGE_SIZE,
         offset,
+        side: 'BUY', // every downstream filter is BUY-only; don't spend offset budget on SELLs
       });
 
       // Handle Polymarket API offset limit (max 3000)
@@ -254,19 +257,43 @@ export async function POST(request: Request) {
       }
     }
 
+    // Scan high-water mark: the newest trade we actually READ this run.
+    // The watermark tracks scan progress, not persistence -- most runs legitimately
+    // persist zero alerts (all candidates filtered out), and gating the watermark on
+    // inserts is what let it sit frozen while the scanner ran fine.
+    let scanHighWaterTs = watermarkTs;
+    let scanHighWaterDedupeId = watermarkDedupeId;
+    for (const t of allNewTrades) {
+      if (t.timestampSeconds > scanHighWaterTs ||
+          (t.timestampSeconds === scanHighWaterTs && t.dedupeId > scanHighWaterDedupeId)) {
+        scanHighWaterTs = t.timestampSeconds;
+        scanHighWaterDedupeId = t.dedupeId;
+      }
+    }
+
     // Check if we hit page limit without crossing boundary
     summary.crossed_watermark_boundary = crossedBoundary;
     summary.hit_page_limit = !crossedBoundary && summary.pages_fetched >= MAX_PAGES;
 
     if (summary.hit_page_limit) {
-      console.warn(`[collect-trades] WARNING: Hit page limit (${MAX_PAGES}) without crossing watermark boundary. Watermark will NOT be advanced to prevent missing trades.`);
+      console.error(`[collect-trades] INGEST GAP: hit page limit (${MAX_PAGES}) without reaching the watermark. Trades older than the fetched window were MISSED and are unrecoverable (API offset cap). Watermark advanced anyway to avoid latching. Reduce the cron interval.`);
     }
 
     console.log(`[collect-trades] Pagination complete: ${allNewTrades.length} new trades across ${summary.pages_fetched} pages (crossed_boundary=${crossedBoundary})`);
 
-    // SAFETY: If we hit page limit without crossing boundary, we cannot safely advance watermark
-    // The idempotent upsert (ON CONFLICT DO NOTHING) makes re-processing safe
-    const canAdvanceWatermark = crossedBoundary;
+    // SAFETY vs LIVENESS: If we hit the page limit without crossing the boundary, some older
+    // trades were unreachable this run. The original behaviour was to freeze the watermark.
+    // That is a latch: once the watermark falls further behind than one 3000-trade window
+    // (~1h of filtered volume), the boundary can NEVER be crossed again, so the watermark
+    // stops advancing permanently and every run re-scans the same blind window. Observed in
+    // production: frozen at 2026-01-15 for 7 months.
+    //
+    // Freezing does not recover the missed trades either -- they are outside the offset cap
+    // regardless. So we accept the known gap, advance anyway, and make the loss LOUD via
+    // ingest_gap_detected. De-duplication does not depend on the watermark: Step 4 checks
+    // existing dedupe IDs and the insert is ON CONFLICT DO NOTHING.
+    const canAdvanceWatermark = true;
+    summary.ingest_gap_detected = summary.hit_page_limit;
 
     // Step 3: Filter to longshot candidates (BUY side, price <= 25%)
     const candidates = allNewTrades.filter(
@@ -714,22 +741,20 @@ export async function POST(request: Request) {
 
     // Step 8: Update watermark ONLY after successful persistence AND if we crossed boundary
     if (canAdvanceWatermark &&
-        (maxPersistedTs > watermarkTs ||
-         (maxPersistedTs === watermarkTs && maxPersistedDedupeId > watermarkDedupeId))) {
+        (scanHighWaterTs > watermarkTs ||
+         (scanHighWaterTs === watermarkTs && scanHighWaterDedupeId > watermarkDedupeId))) {
       await sql`
         UPDATE trade_ingest_watermark
-        SET last_timestamp = ${maxPersistedTs},
-            last_trade_dedupe_id = ${maxPersistedDedupeId},
+        SET last_timestamp = ${scanHighWaterTs},
+            last_trade_dedupe_id = ${scanHighWaterDedupeId},
             updated_at = NOW()
         WHERE id = 'default'
       `;
-      summary.watermark_after = { timestamp: maxPersistedTs, dedupeId: maxPersistedDedupeId };
-      console.log(`[collect-trades] Watermark updated: ts=${maxPersistedTs}, id=${maxPersistedDedupeId.slice(0, 30)}...`);
+      summary.watermark_after = { timestamp: scanHighWaterTs, dedupeId: scanHighWaterDedupeId };
+      console.log(`[collect-trades] Watermark updated: ts=${scanHighWaterTs}, id=${scanHighWaterDedupeId.slice(0, 30)}...`);
     } else {
       summary.watermark_after = summary.watermark_before;
-      if (!canAdvanceWatermark) {
-        console.log(`[collect-trades] Watermark NOT updated (hit page limit without crossing boundary)`);
-      }
+      console.log(`[collect-trades] Watermark unchanged (no newer trade persisted this run)`);
     }
 
     console.log('[collect-trades] Ingestion complete:', JSON.stringify(summary, null, 2));
