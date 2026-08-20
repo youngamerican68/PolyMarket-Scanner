@@ -23,6 +23,11 @@ interface InsiderSignal {
   marketResolved: boolean
   winningOutcome: string | null
   won: boolean | null
+  tier: 'confirmed' | 'watch'
+  corroborated: boolean
+  corroboratingTitle: string | null
+  corroboratingAvgPriceFormatted: string | null
+  corroboratingValueFormatted: string | null
 }
 
 interface ApiResponse {
@@ -143,7 +148,7 @@ export default function InsidersPage() {
 
       {!loading && signals.length === 0 && !error && (
         <div className="bg-poly-card border border-poly-border rounded-lg p-8 text-center text-poly-muted">
-          No confirmed insider candidates in the selected window.
+          No insider candidates in the selected window.
         </div>
       )}
 
@@ -158,9 +163,33 @@ export default function InsidersPage() {
                   ? s.won
                     ? 'border-poly-green/50'
                     : 'border-poly-border opacity-75'
-                  : 'border-poly-border'
+                  : s.tier === 'watch'
+                    ? 'border-poly-border/50 opacity-80'
+                    : 'border-poly-border'
               }`}
             >
+              <div className="flex flex-wrap items-center gap-2 mb-2">
+                {s.tier === 'confirmed' ? (
+                  <span className="px-2 py-0.5 rounded text-xs font-semibold bg-poly-green/20 text-poly-green border border-poly-green/40">
+                    CONFIRMED
+                  </span>
+                ) : (
+                  <span className="px-2 py-0.5 rounded text-xs font-semibold bg-yellow-500/10 text-yellow-500/90 border border-yellow-500/30">
+                    WATCH
+                  </span>
+                )}
+                <span className="text-xs text-poly-muted">
+                  {s.polymarketLifetimeTrades ?? '?'} lifetime trades
+                </span>
+                {s.corroborated && (
+                  <span
+                    className="px-2 py-0.5 rounded text-xs font-semibold bg-purple-500/15 text-purple-300 border border-purple-400/40"
+                    title="Same wallet also holds a high-probability position on this event"
+                  >
+                    ✓ CORROBORATED
+                  </span>
+                )}
+              </div>
               <div className="flex flex-wrap items-start justify-between gap-3 mb-2">
                 <div className="flex-1 min-w-0">
                   {url ? (
@@ -182,6 +211,16 @@ export default function InsidersPage() {
                     {s.fillValueFormatted} stake · potential payout{' '}
                     <span className="text-white font-medium">{s.potentialPayoutFormatted}</span>
                   </div>
+                  {s.corroborated && s.corroboratingTitle && (
+                    <div className="mt-2 text-xs text-purple-300/90 border-l-2 border-purple-400/40 pl-2">
+                      Also holds <span className="font-medium">{s.corroboratingTitle}</span>
+                      {s.corroboratingAvgPriceFormatted && (
+                        <> at <span className="font-medium">{s.corroboratingAvgPriceFormatted}</span></>
+                      )}
+                      {s.corroboratingValueFormatted && <> for {s.corroboratingValueFormatted}</>}
+                      {' '}— conviction on the same event, not a lottery ticket.
+                    </div>
+                  )}
                 </div>
                 <div className="text-right text-xs">
                   {s.marketResolved ? (

@@ -29,6 +29,11 @@ interface Row {
   verified_at: string | null;
   market_resolved: boolean | null;
   winning_outcome: string | null;
+  verification_status: string;
+  corroborated: boolean | null;
+  corroborating_title: string | null;
+  corroborating_avg_price: string | null;
+  corroborating_value_usd: string | null;
 }
 
 export async function GET(request: NextRequest) {
@@ -53,15 +58,22 @@ export async function GET(request: NextRequest) {
         ic.polymarket_lifetime_trades,
         ic.polymarket_first_trade_at::text,
         ic.verified_at::text,
+        ic.verification_status,
+        ic.corroborated,
+        ic.corroborating_title,
+        ic.corroborating_avg_price::text,
+        ic.corroborating_value_usd::text,
         ms.market_resolved,
         ms.winning_outcome
       FROM insider_candidates ic
       LEFT JOIN market_status ms ON ms.condition_id = ic.condition_id
-      WHERE ic.verification_status = 'confirmed'
+      WHERE ic.verification_status IN ('confirmed', 'watch')
         AND ic.fill_timestamp >= NOW() - (INTERVAL '1 day' * ${sinceDays})
         AND (${includeResolved}::boolean OR COALESCE(ms.market_resolved, FALSE) = FALSE)
       ORDER BY
-        COALESCE(ms.market_resolved, FALSE) ASC,  -- open markets first
+        COALESCE(ms.market_resolved, FALSE) ASC,           -- open markets first
+        (ic.verification_status = 'confirmed') DESC,        -- confirmed above watch
+        COALESCE(ic.corroborated, FALSE) DESC,             -- corroborated above plain
         ic.fill_timestamp DESC
       LIMIT ${limit}
     `;
@@ -88,6 +100,15 @@ export async function GET(request: NextRequest) {
         fillValueUsd,
         fillValueFormatted: `$${Math.round(fillValueUsd).toLocaleString()}`,
         fillTimestamp: r.fill_timestamp,
+        tier: r.verification_status === 'confirmed' ? 'confirmed' : 'watch',
+        corroborated: Boolean(r.corroborated),
+        corroboratingTitle: r.corroborating_title,
+        corroboratingAvgPriceFormatted: r.corroborating_avg_price
+          ? `${(parseFloat(r.corroborating_avg_price) * 100).toFixed(1)}%`
+          : null,
+        corroboratingValueFormatted: r.corroborating_value_usd
+          ? `$${Math.round(parseFloat(r.corroborating_value_usd)).toLocaleString()}`
+          : null,
         polymarketLifetimeTrades: r.polymarket_lifetime_trades,
         polymarketFirstTradeAt: r.polymarket_first_trade_at,
         verifiedAt: r.verified_at,

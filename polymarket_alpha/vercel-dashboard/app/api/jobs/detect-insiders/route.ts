@@ -13,6 +13,7 @@ import { sql } from '@vercel/postgres';
 import pLimit from 'p-limit';
 import { isCronAuthed, cronUnauthorized } from '@/lib/cronAuth';
 import { sendTelegramMessage, escapeHtml, isTelegramConfigured } from '@/lib/telegram';
+import { fetchPositionsWithRetry } from '@/lib/polymarket';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -31,7 +32,15 @@ const SCAN_WINDOW_HOURS = 48;       // catch-up window per run
 const MAX_CANDIDATES_PER_RUN = 100; // cap API calls per run
 
 // Verification thresholds
-const MAX_LIFETIME_TRADES = 3;      // including the trade that triggered
+const MAX_LIFETIME_TRADES = 3;      // including the trade that triggered -> 'confirmed'
+const WATCH_MAX_LIFETIME_TRADES = 10; // 4..10 -> 'watch': near-miss tier, shown but never alerted
+
+// Corroboration: a second position by the same wallet on the SAME event at a high
+// implied probability. A lottery-ticket buyer takes the longshot only; someone who
+// believes they know the outcome also parks money on the near-certainty. Computed at
+// detection time and stored, because winning positions get redeemed and disappear
+// from the positions API within days.
+const CORROBORATION_MIN_AVG_PRICE = 0.60;
 
 // API concurrency
 const API_CONCURRENCY = 5;
@@ -94,6 +103,58 @@ async function fetchWalletHistory(wallet: string): Promise<WalletHistory> {
   }
 }
 
+interface Corroboration {
+  corroborated: boolean;
+  title: string | null;
+  avgPrice: number | null;
+  valueUsd: number | null;
+}
+
+const NO_CORROBORATION: Corroboration = {
+  corroborated: false, title: null, avgPrice: null, valueUsd: null,
+};
+
+/**
+ * Look for a sibling position: same event, different market, high implied probability.
+ * Best-effort -- a lookup failure means "not corroborated", never an error.
+ */
+async function checkCorroboration(
+  wallet: string,
+  eventSlug: string | null,
+  conditionId: string
+): Promise<Corroboration> {
+  if (!eventSlug) return NO_CORROBORATION;
+  try {
+    const { positions } = await fetchPositionsWithRetry(wallet, 200);
+    const siblings = positions.filter(
+      (pos) =>
+        pos.eventSlug === eventSlug &&
+        pos.conditionId !== conditionId &&
+        pos.avgPrice != null &&
+        pos.avgPrice >= CORROBORATION_MIN_AVG_PRICE &&
+        // Affirmative positions only. A high-priced "No" is the market's default
+        // expectation -- betting against a hopeless outcome is near-riskless and
+        // carries almost no information. The Eurovision case that motivated this
+        // check was "Yes" at 93.5c: paying up for something to HAPPEN.
+        (pos.outcome ?? '').toLowerCase() !== 'no'
+    );
+    if (siblings.length === 0) return NO_CORROBORATION;
+
+    // Report the largest such position.
+    const best = siblings.reduce((a, b) =>
+      (b.initialValue ?? 0) > (a.initialValue ?? 0) ? b : a
+    );
+    return {
+      corroborated: true,
+      title: best.title ?? null,
+      avgPrice: best.avgPrice ?? null,
+      valueUsd: best.initialValue ?? null,
+    };
+  } catch {
+    return NO_CORROBORATION;
+  }
+}
+
 interface NotifyMetrics { pending: number; sent: number; failed: number; skipped: number }
 
 /**
@@ -113,9 +174,13 @@ async function runNotificationSweep(errors: string[]): Promise<NotifyMetrics> {
       alert_event_id: string; wallet: string; outcome: string; fill_price: string;
       fill_value_usd: string; title: string | null; event_slug: string | null;
       slug: string | null; polymarket_lifetime_trades: number | null;
+      corroborated: boolean; corroborating_title: string | null;
+      corroborating_avg_price: string | null; corroborating_value_usd: string | null;
     }>`
       SELECT alert_event_id, wallet, outcome, fill_price::text, fill_value_usd::text,
-             title, event_slug, slug, polymarket_lifetime_trades
+             title, event_slug, slug, polymarket_lifetime_trades,
+             corroborated, corroborating_title,
+             corroborating_avg_price::text, corroborating_value_usd::text
       FROM insider_candidates
       WHERE notified_at IS NULL AND verification_status = 'confirmed'
       ORDER BY verified_at ASC
@@ -143,6 +208,14 @@ async function runNotificationSweep(errors: string[]): Promise<NotifyMetrics> {
         `Size: $${value.toFixed(0)}`,
         `Wallet: <code>${escapeHtml(r.wallet)}</code>`,
         `Lifetime trades: <b>${r.polymarket_lifetime_trades ?? '?'}</b>`,
+        ...(r.corroborated
+          ? [
+              '',
+              '\u{2705} <b>Corroborated</b> \u2014 same wallet, same event:',
+              `<i>${escapeHtml(r.corroborating_title ?? 'another market')}</i>`,
+              `at ${((Number(r.corroborating_avg_price) || 0) * 100).toFixed(1)}% for $${(Number(r.corroborating_value_usd) || 0).toFixed(0)}`,
+            ]
+          : []),
         '',
         marketSlug
           ? `<a href="https://polymarket.com/event/${encodeURIComponent(marketSlug)}">Market</a> \u00B7 <a href="https://polymarket.com/profile/${encodeURIComponent(r.wallet)}">Wallet</a>`
@@ -177,6 +250,8 @@ export async function GET(request: Request) {
     candidatesScanned: 0,
     apiCalls: 0,
     confirmed: 0,
+    watch: 0,
+    corroborated: 0,
     rejectedEstablished: 0,
     rejectedLookupFailed: 0,
     skippedExisting: 0,
@@ -266,14 +341,26 @@ export async function GET(request: Request) {
       }
 
       const isConfirmed = hist.lifetimeTrades > 0 && hist.lifetimeTrades <= MAX_LIFETIME_TRADES;
-      const status = isConfirmed ? 'confirmed' : 'rejected_established';
+      const isWatch =
+        !isConfirmed &&
+        hist.lifetimeTrades > 0 &&
+        hist.lifetimeTrades <= WATCH_MAX_LIFETIME_TRADES;
+      const status = isConfirmed ? 'confirmed' : isWatch ? 'watch' : 'rejected_established';
+
+      // Only worth an API call for tiers we actually surface.
+      const corr =
+        isConfirmed || isWatch
+          ? await checkCorroboration(c.wallet, c.event_slug, c.condition_id)
+          : NO_CORROBORATION;
+      if (corr.corroborated) metrics.corroborated++;
 
       try {
         await sql`
           INSERT INTO insider_candidates
             (alert_event_id, wallet, condition_id, outcome, fill_price, fill_value_usd,
              fill_timestamp, title, event_slug, slug, verification_status,
-             polymarket_lifetime_trades, polymarket_first_trade_at, verified_at)
+             polymarket_lifetime_trades, polymarket_first_trade_at, verified_at,
+             corroborated, corroborating_title, corroborating_avg_price, corroborating_value_usd)
           VALUES
             (${c.id}, ${c.wallet}, ${c.condition_id}, ${c.outcome},
              ${c.fill_price}, ${c.fill_value_usd}, ${c.fill_timestamp},
@@ -281,10 +368,12 @@ export async function GET(request: Request) {
              ${status},
              ${hist.lifetimeTrades},
              ${hist.firstTradeAt ? hist.firstTradeAt.toISOString() : null},
-             NOW())
+             NOW(),
+             ${corr.corroborated}, ${corr.title}, ${corr.avgPrice}, ${corr.valueUsd})
           ON CONFLICT (alert_event_id) DO NOTHING
         `;
         if (isConfirmed) metrics.confirmed++;
+        else if (isWatch) metrics.watch++;
         else metrics.rejectedEstablished++;
       } catch (e) {
         metrics.errors.push(`insert-verified: ${String(e).slice(0, 80)}`);
