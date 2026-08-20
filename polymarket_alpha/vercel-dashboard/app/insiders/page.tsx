@@ -24,6 +24,8 @@ interface InsiderSignal {
   winningOutcome: string | null
   won: boolean | null
   tier: 'confirmed' | 'watch'
+  lifetimeTradesAtFill: number | null
+  historyTruncated: boolean
   corroborated: boolean
   corroboratingTitle: string | null
   corroboratingAvgPriceFormatted: string | null
@@ -178,8 +180,16 @@ export default function InsidersPage() {
                     WATCH
                   </span>
                 )}
-                <span className="text-xs text-poly-muted">
-                  {s.polymarketLifetimeTrades ?? '?'} lifetime trades
+                <span
+                  className="text-xs text-poly-muted"
+                  title="Trades this wallet had made at or before this fill. The count today is usually higher; freshness is only meaningful as of the fill."
+                >
+                  {s.lifetimeTradesAtFill ?? s.polymarketLifetimeTrades ?? '?'} trades at fill
+                  {s.polymarketLifetimeTrades != null &&
+                    s.lifetimeTradesAtFill != null &&
+                    s.polymarketLifetimeTrades > s.lifetimeTradesAtFill && (
+                      <span className="text-poly-muted/60"> · {s.polymarketLifetimeTrades} now</span>
+                    )}
                 </span>
                 {s.corroborated && (
                   <span

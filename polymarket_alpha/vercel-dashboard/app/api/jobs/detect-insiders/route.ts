@@ -42,6 +42,11 @@ const WATCH_MAX_LIFETIME_TRADES = 10; // 4..10 -> 'watch': near-miss tier, shown
 // from the positions API within days.
 const CORROBORATION_MIN_AVG_PRICE = 0.60;
 
+// Wallet-history paging. Pre-fill trades are the oldest, so freshness is only exact
+// once we reach the end of a wallet's history; 2000 covers any plausible one-shot.
+const HISTORY_PAGE_SIZE = 500;
+const HISTORY_MAX_PAGES = 4;
+
 // API concurrency
 const API_CONCURRENCY = 5;
 
@@ -67,40 +72,69 @@ interface PolymarketTrade {
 }
 
 interface WalletHistory {
-  lifetimeTrades: number;
+  lifetimeTrades: number;    // as of NOW -- drifts upward, kept for reference only
+  timestamps: number[];      // every fetched trade time, for point-in-time counting
   firstTradeAt: Date | null;
   lookupOk: boolean;
+  historyTruncated: boolean; // could not page back far enough to be certain
+}
+
+/**
+ * Point-in-time freshness: how many trades this wallet had made at or before the
+ * triggering fill (inclusive). This is what the tiering uses.
+ *
+ * Counting "trades now" instead is a look-ahead bug: the Eurovision wallet had 1
+ * trade when it bet and has 13 today, so the best signal this system ever produced
+ * would be classified rejected_established on re-verification.
+ */
+function countAtOrBefore(timestamps: number[], fillTimestampSec: number): number {
+  return timestamps.reduce((n, t) => (t <= fillTimestampSec ? n + 1 : n), 0);
 }
 
 async function fetchWalletHistory(wallet: string): Promise<WalletHistory> {
+  const EMPTY: WalletHistory = {
+    lifetimeTrades: 0, timestamps: [],
+    firstTradeAt: null, lookupOk: false, historyTruncated: false,
+  };
+
+  const all: PolymarketTrade[] = [];
+  let truncated = false;
+
   try {
-    // limit=1000 is well above our threshold; we only need to know if the wallet
-    // has more than MAX_LIFETIME_TRADES trades. Fetching more is cheap and
-    // gives us first-trade timestamp as a bonus.
-    const res = await fetch(
-      `${POLYMARKET_TRADES_URL}?user=${wallet}&limit=1000`,
-      { cache: 'no-store' }
-    );
-    if (!res.ok) {
-      return { lifetimeTrades: 0, firstTradeAt: null, lookupOk: false };
+    for (let page = 0; page < HISTORY_MAX_PAGES; page++) {
+      const res = await fetch(
+        `${POLYMARKET_TRADES_URL}?user=${wallet}&limit=${HISTORY_PAGE_SIZE}&offset=${page * HISTORY_PAGE_SIZE}`,
+        { cache: 'no-store' }
+      );
+      if (!res.ok) return EMPTY;
+
+      const batch = (await res.json()) as PolymarketTrade[];
+      if (!Array.isArray(batch)) return EMPTY;
+      all.push(...batch);
+
+      if (batch.length < HISTORY_PAGE_SIZE) break;      // reached end of history
+      if (page === HISTORY_MAX_PAGES - 1) truncated = true;
     }
-    const trades = (await res.json()) as PolymarketTrade[];
-    if (!Array.isArray(trades)) {
-      return { lifetimeTrades: 0, firstTradeAt: null, lookupOk: false };
-    }
-    const lifetimeTrades = trades.length;
-    const firstTs = trades.reduce<number | null>((min, t) => {
-      if (typeof t.timestamp !== 'number') return min;
-      return min === null || t.timestamp < min ? t.timestamp : min;
-    }, null);
-    return {
-      lifetimeTrades,
-      firstTradeAt: firstTs !== null ? new Date(firstTs * 1000) : null,
-      lookupOk: true,
-    };
   } catch {
-    return { lifetimeTrades: 0, firstTradeAt: null, lookupOk: false };
+    return EMPTY;
   }
+
+  const timestamps = all
+    .map(t => t.timestamp)
+    .filter((t): t is number => typeof t === 'number');
+
+  const firstTs = all.reduce<number | null>((min, t) => {
+    if (typeof t.timestamp !== 'number') return min;
+    return min === null || t.timestamp < min ? t.timestamp : min;
+  }, null);
+
+  return {
+    lifetimeTrades: all.length,
+    timestamps,
+    firstTradeAt: firstTs !== null ? new Date(firstTs * 1000) : null,
+    lookupOk: true,
+    historyTruncated: truncated,
+  };
 }
 
 interface Corroboration {
@@ -252,6 +286,7 @@ export async function GET(request: Request) {
     confirmed: 0,
     watch: 0,
     corroborated: 0,
+    historyTruncated: 0,
     rejectedEstablished: 0,
     rejectedLookupFailed: 0,
     skippedExisting: 0,
@@ -340,12 +375,20 @@ export async function GET(request: Request) {
         continue;
       }
 
-      const isConfirmed = hist.lifetimeTrades > 0 && hist.lifetimeTrades <= MAX_LIFETIME_TRADES;
+      // Freshness is measured AT THE FILL, not now. See countAtOrBefore().
+      const fillTsSec = Math.floor(new Date(c.fill_timestamp).getTime() / 1000);
+      const atFill = countAtOrBefore(hist.timestamps, fillTsSec);
+
+      // If we could not page back to the end of this wallet's history, a small
+      // at-fill count is not trustworthy (there may be older trades we never saw).
+      // Reject rather than report a confident-looking wrong number.
+      const trustworthy = !hist.historyTruncated && Number.isFinite(fillTsSec);
+
+      const isConfirmed = trustworthy && atFill > 0 && atFill <= MAX_LIFETIME_TRADES;
       const isWatch =
-        !isConfirmed &&
-        hist.lifetimeTrades > 0 &&
-        hist.lifetimeTrades <= WATCH_MAX_LIFETIME_TRADES;
+        trustworthy && !isConfirmed && atFill > 0 && atFill <= WATCH_MAX_LIFETIME_TRADES;
       const status = isConfirmed ? 'confirmed' : isWatch ? 'watch' : 'rejected_established';
+      if (hist.historyTruncated) metrics.historyTruncated++;
 
       // Only worth an API call for tiers we actually surface.
       const corr =
@@ -360,7 +403,8 @@ export async function GET(request: Request) {
             (alert_event_id, wallet, condition_id, outcome, fill_price, fill_value_usd,
              fill_timestamp, title, event_slug, slug, verification_status,
              polymarket_lifetime_trades, polymarket_first_trade_at, verified_at,
-             corroborated, corroborating_title, corroborating_avg_price, corroborating_value_usd)
+             corroborated, corroborating_title, corroborating_avg_price, corroborating_value_usd,
+             lifetime_trades_at_fill, history_truncated)
           VALUES
             (${c.id}, ${c.wallet}, ${c.condition_id}, ${c.outcome},
              ${c.fill_price}, ${c.fill_value_usd}, ${c.fill_timestamp},
@@ -369,7 +413,8 @@ export async function GET(request: Request) {
              ${hist.lifetimeTrades},
              ${hist.firstTradeAt ? hist.firstTradeAt.toISOString() : null},
              NOW(),
-             ${corr.corroborated}, ${corr.title}, ${corr.avgPrice}, ${corr.valueUsd})
+             ${corr.corroborated}, ${corr.title}, ${corr.avgPrice}, ${corr.valueUsd},
+             ${atFill}, ${hist.historyTruncated})
           ON CONFLICT (alert_event_id) DO NOTHING
         `;
         if (isConfirmed) metrics.confirmed++;

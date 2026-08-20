@@ -2,12 +2,13 @@ name: Collect Trades
 
 on:
   schedule:
-    # Every 15 min. The API caps pagination at offset 3000, which at current volume
-    # reaches back only ~55-65 min of BUY>=$100 flow -- an hourly cron with GitHub's
-    # scheduling drift (measured p90 gap: 135 min) provably dropped trades. Overlap is
-    # safe: the concurrency group serialises runs and the route's advisory lock returns
-    # 409, which this workflow treats as success.
-    - cron: "*/15 * * * *"
+    # BACKUP ONLY. The primary schedule is a Vercel Cron (vercel.json, */15) because
+    # GitHub throttles high-frequency schedules hard -- a */15 cron here was observed
+    # firing at 74-79 min intervals, which exceeds the ~55-65 min the API's 3000-offset
+    # cap can reach back, so trades were still being dropped (ingest_gap_detected=true).
+    # Hourly here is a safety net if Vercel Cron is ever disabled; the route's advisory
+    # lock makes an overlap a no-op 409, which this workflow treats as success.
+    - cron: "5 * * * *"
   workflow_dispatch:
 
 permissions:

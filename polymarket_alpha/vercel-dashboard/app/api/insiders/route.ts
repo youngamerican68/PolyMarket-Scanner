@@ -30,6 +30,8 @@ interface Row {
   market_resolved: boolean | null;
   winning_outcome: string | null;
   verification_status: string;
+  lifetime_trades_at_fill: number | null;
+  history_truncated: boolean | null;
   corroborated: boolean | null;
   corroborating_title: string | null;
   corroborating_avg_price: string | null;
@@ -59,6 +61,8 @@ export async function GET(request: NextRequest) {
         ic.polymarket_first_trade_at::text,
         ic.verified_at::text,
         ic.verification_status,
+        ic.lifetime_trades_at_fill,
+        ic.history_truncated,
         ic.corroborated,
         ic.corroborating_title,
         ic.corroborating_avg_price::text,
@@ -101,6 +105,8 @@ export async function GET(request: NextRequest) {
         fillValueFormatted: `$${Math.round(fillValueUsd).toLocaleString()}`,
         fillTimestamp: r.fill_timestamp,
         tier: r.verification_status === 'confirmed' ? 'confirmed' : 'watch',
+        lifetimeTradesAtFill: r.lifetime_trades_at_fill,
+        historyTruncated: Boolean(r.history_truncated),
         corroborated: Boolean(r.corroborated),
         corroboratingTitle: r.corroborating_title,
         corroboratingAvgPriceFormatted: r.corroborating_avg_price

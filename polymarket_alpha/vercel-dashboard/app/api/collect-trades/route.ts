@@ -807,10 +807,18 @@ export async function POST(request: Request) {
   }
 }
 
-// Reject GET requests
-export async function GET() {
-  return NextResponse.json(
-    { error: 'Method not allowed. Use POST with x-cron-secret header.' },
-    { status: 405, headers: { 'Allow': 'POST' } }
-  );
+// Vercel Cron invokes scheduled endpoints with GET and an
+// `Authorization: Bearer $CRON_SECRET` header (injected automatically when the
+// CRON_SECRET env var is set). GitHub Actions still POSTs. Both run the same job;
+// the route's advisory lock makes an overlap a no-op 409 rather than a double-ingest.
+//
+// Unauthenticated GETs keep the original 405 so the endpoint stays non-public.
+export async function GET(request: Request) {
+  if (!isCronAuthed(request)) {
+    return NextResponse.json(
+      { error: 'Method not allowed. Use POST with Authorization: Bearer <CRON_SECRET>.' },
+      { status: 405, headers: { 'Allow': 'POST' } }
+    );
+  }
+  return POST(request);
 }
