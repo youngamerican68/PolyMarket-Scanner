@@ -298,3 +298,59 @@ Workflow runs were still happening every 10 minutes despite changing to hourly.
 - Historical win tracking if want to identify consistently profitable wallets
 - Alert system (email/Discord) when new sharp convergence detected
 - Extend retention beyond 48 hours for trend analysis
+
+---
+
+## May 6, 2026 - Health & Cost Audit
+
+**Health: green.** All 7 GitHub Actions cron workflows succeeded in last 24h (collect-trades, refresh-prices, sync-positions, detect-insiders, scan-positions, scan-pending, refresh-baselines). `/api/health` reports healthy, last ingestion 9 min ago, 263 alerts/24h, 1 active DB connection.
+
+**Cost picture:**
+- **GitHub Actions: $0.** Repo is public → unlimited free minutes. ~50 runs/day, all <1 min.
+- **Vercel: no incremental cost.** Team `paul-sowells-projects` is on Pro ($20/mo flat) but driven by 14+ other projects. Scanner has had no rebuild in 17 days, no Vercel cron jobs (`vercel.json` is `{"framework":"nextjs"}`), only serves dashboard reads.
+- **Neon Postgres: $0 today, watch storage.** DB is **332 MB / 512 MB free tier (65%)**. Top tables: `alert_events` (114 MB, 47K rows since Dec), `position_sync_overlay` (82 MB), `wallet_position_snapshot` (42 MB). Growth ~75 MB/month → projected to cross 512 MB in ~2-3 months. Mitigation: prune `alert_events` >60 days, or upgrade to Neon Launch ($19/mo).
+- No paid APIs (Polymarket gamma/CLOB/data-api are free).
+
+---
+
+## Aug 19-20, 2026 - Ingestion repair, alerting, and tiering
+
+**Two silent bugs found and fixed in `collect-trades`.** The ingest watermark had been
+frozen at 2026-01-15 for seven months. Cause was twofold: it only advanced when an alert
+was *inserted* (most runs insert zero), and refusing to advance after hitting the page cap
+was a latch — once the watermark fell further behind than one 3000-offset window can reach,
+the boundary could never be crossed again. Every run re-scanned the same blind window and
+dropped whatever fell outside it, while exiting 0. Now the watermark tracks *scan progress*,
+advances regardless, and reports `ingest_gap_detected` when data was provably missed.
+
+**Scheduling moved to Vercel Cron.** Tightening the GitHub schedule to `*/15` did not work —
+GitHub throttles high-frequency crons hard, and it was observed firing at 74-79 min intervals,
+still wider than the ~55-65 min the API's offset cap reaches back. Primary schedule is now a
+Vercel Cron (`vercel.json`, `*/15`); GitHub stays hourly as a backup. Measured over 24h:
+gaps of 8-16 min, `ingest_gap_detected: false` on every sampled run, 1-3 pages per run.
+This supersedes the May 6 note below stating the project has no Vercel cron jobs.
+
+**Telegram alerting on confirmed candidates.** Sweep-based off a new `notified_at` column so
+a delivery failure retries rather than dropping the one alert that month; runs on every
+invocation, not just runs with new candidates. Credentials in Vercel env.
+
+**Watch tier + corroboration.** Wallets with 4-10 lifetime trades now surface as `watch`
+(shown, never alerted) so `/insiders` is not empty ~95% of days. Corroboration flags a fresh
+wallet holding another position on the *same event* at >=60c — motivated by the Eurovision
+wallet, which also held "Bulgaria top 10" at 93.5c for $562. Must be computed at detection
+time: winning positions get redeemed and vanish from the positions API within days.
+
+**Freshness was measured at the wrong time.** Trade counts were taken at verification, which
+only drifts upward. The Eurovision wallet had 1 trade when it bet and has 13 today, so the
+best signal the scanner ever produced would now be classified `rejected_established`. Now
+counted at or before the fill. Backfilled all 162 rows: 16 tiers changed, one of them a
+`confirmed` the bug had hidden.
+
+**Edge claim corrected.** The often-quoted 7x could not be reproduced from current tables.
+Out-of-sample (post-May-25, n=1,916), the <10% + $100-500 filter returns $1.92 per $1 —
+real, but roughly a third of the headline. The *fresh-wallet* layer remains unproven: 5
+confirms across 4 distinct events, 1 winner.
+
+**Storage:** 325 MB / 512 MB (63.6%), flat against May's 332 MB. The weekly maintenance
+workflow added in June contained the growth; the "crosses free tier in 2-3 months"
+projection below did not materialise.

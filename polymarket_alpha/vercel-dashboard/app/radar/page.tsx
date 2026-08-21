@@ -16,6 +16,8 @@ interface RadarSignal {
   slug: string | null
   fillPrice: number
   fillPriceFormatted: string
+  avgPrice: number | null
+  avgPriceFormatted: string
   positionSize: number | null
   positionCost: number | null
   positionCostFormatted: string
@@ -552,7 +554,7 @@ export default function RadarPage() {
                             {signal.outcome}
                           </span>
                           <span className="text-sm text-gray-400">
-                            @ {signal.fillPriceFormatted}
+                            @ {signal.avgPriceFormatted}
                           </span>
                           {signal.marketResolved && (
                             <span className={`px-2 py-0.5 rounded text-xs font-medium ${

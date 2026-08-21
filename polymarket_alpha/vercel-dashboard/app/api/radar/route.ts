@@ -192,6 +192,8 @@ interface RadarSignal {
   // Trade details
   fillPrice: number;
   fillPriceFormatted: string;
+  avgPrice: number | null;  // synced avg cost basis (falls back to fillPrice)
+  avgPriceFormatted: string;
 
   // Position details (from synced data or snapshot)
   positionSize: number | null;
@@ -659,6 +661,10 @@ export async function GET(request: NextRequest) {
         slug: row.slug,
         fillPrice,
         fillPriceFormatted: `${(fillPrice * 100).toFixed(1)}%`,
+        avgPrice: positionAvgPrice,
+        avgPriceFormatted: positionAvgPrice !== null
+          ? `${(positionAvgPrice * 100).toFixed(1)}%`
+          : `${(fillPrice * 100).toFixed(1)}%`,
         positionSize,
         positionCost,
         positionCostFormatted: positionCost
